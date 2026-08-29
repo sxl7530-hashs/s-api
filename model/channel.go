@@ -50,6 +50,7 @@ type Channel struct {
 	ParamOverride     *string `json:"param_override" gorm:"type:text"`
 	HeaderOverride    *string `json:"header_override" gorm:"type:text"`
 	Remark            *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`
+	CostRatio         float64 `json:"cost_ratio" gorm:"default:1"`
 	// add after v0.8.5
 	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"`
 
@@ -448,11 +449,18 @@ func BatchInsertChannels(channels []Channel) error {
 	}()
 
 	for _, chunk := range lo.Chunk(channels, 50) {
+		for i := range chunk {
+			chunk[i].CostRatio = NormalizeChannelCostRatio(chunk[i].CostRatio)
+		}
 		if err := tx.Create(&chunk).Error; err != nil {
 			tx.Rollback()
 			return err
 		}
 		for _, channel_ := range chunk {
+			if err := EnsureChannelCostRatioHistory(tx, channel_.Id, channel_.CostRatio, common.GetTimestamp()); err != nil {
+				tx.Rollback()
+				return err
+			}
 			if err := channel_.AddAbilities(tx); err != nil {
 				tx.Rollback()
 				return err
@@ -531,7 +539,13 @@ func (channel *Channel) GetStatusCodeMapping() string {
 
 func (channel *Channel) Insert() error {
 	var err error
-	err = DB.Create(channel).Error
+	channel.CostRatio = NormalizeChannelCostRatio(channel.CostRatio)
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(channel).Error; err != nil {
+			return err
+		}
+		return EnsureChannelCostRatioHistory(tx, channel.Id, channel.CostRatio, common.GetTimestamp())
+	})
 	if err != nil {
 		return err
 	}
@@ -578,8 +592,14 @@ func (channel *Channel) Update() error {
 			}
 		}
 	}
+	channel.CostRatio = NormalizeChannelCostRatio(channel.CostRatio)
 	var err error
-	err = DB.Model(channel).Updates(channel).Error
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(channel).Updates(channel).Error; err != nil {
+			return err
+		}
+		return EnsureChannelCostRatioHistory(tx, channel.Id, channel.CostRatio, common.GetTimestamp())
+	})
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /admin
+Disallow: /channel
+Disallow: /token
+Disallow: /setup
+Disallow: /sign-in
+Disallow: /sign-up
+Disallow: /forgot-password
+Disallow: /reset
+
+Sitemap: https://viralapi.ai/sitemap.xml

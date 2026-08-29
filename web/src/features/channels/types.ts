@@ -63,6 +63,7 @@ export const channelSchema = z.object({
   param_override: z.string().nullish(),
   header_override: z.string().nullish(),
   remark: z.string().default(''),
+  cost_ratio: z.number().default(1),
   max_input_tokens: z.number().default(0),
   channel_info: channelInfoSchema.default({
     is_multi_key: false,
@@ -74,6 +75,15 @@ export const channelSchema = z.object({
 })
 
 export type Channel = z.infer<typeof channelSchema>
+
+export interface ChannelCostRatioHistory {
+  id: number
+  channel_id: number
+  ratio: number
+  effective_from: number
+  effective_to?: number | null
+  created_time: number
+}
 
 // ============================================================================
 // Channel Settings Types

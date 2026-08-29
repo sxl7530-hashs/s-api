@@ -19,7 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute } from '@tanstack/react-router'
 
 import { About } from '@/features/about'
+import { seoHead } from '@/lib/seo'
 
 export const Route = createFileRoute('/about/')({
+  head: () => seoHead('关于 New API', undefined, '/about/'),
   component: About,
 })

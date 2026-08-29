@@ -27,6 +27,7 @@ import type {
   ChannelBalanceResponse,
   ChannelOpsResponse,
   ChannelTestResponse,
+  ChannelCostRatioHistory,
   CopyChannelParams,
   CopyChannelResponse,
   FetchModelsResponse,
@@ -102,6 +103,13 @@ export async function searchChannels(
  */
 export async function getChannel(id: number): Promise<GetChannelResponse> {
   const res = await api.get(`/api/channel/${id}`)
+  return res.data
+}
+
+export async function getChannelCostRatioHistory(
+  id: number
+): Promise<{ success: boolean; message?: string; data?: ChannelCostRatioHistory[] }> {
+  const res = await api.get(`/api/channel/${id}/cost_ratio_history`)
   return res.data
 }
 

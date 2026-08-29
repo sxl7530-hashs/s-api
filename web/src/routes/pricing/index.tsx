@@ -22,6 +22,7 @@ import z from 'zod'
 import { Pricing } from '@/features/pricing'
 import { getFreshModuleAccess } from '@/lib/nav-modules'
 import { useAuthStore } from '@/stores/auth-store'
+import { seoHead } from '@/lib/seo'
 
 const pricingSearchSchema = z.object({
   search: z.string().optional(),
@@ -37,6 +38,7 @@ const pricingSearchSchema = z.object({
 })
 
 export const Route = createFileRoute('/pricing/')({
+  head: () => seoHead('AI API 价格与模型计费', undefined, '/pricing/'),
   validateSearch: pricingSearchSchema,
   beforeLoad: async ({ location }) => {
     const access = await getFreshModuleAccess('pricing')

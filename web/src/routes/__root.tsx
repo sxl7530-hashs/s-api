@@ -20,6 +20,7 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import {
   createRootRouteWithContext,
+  HeadContent,
   Outlet,
   redirect,
   useNavigate,
@@ -94,6 +95,7 @@ function RootComponent() {
 
   return (
     <ThemeCustomizationProvider>
+      <HeadContent />
       <NavigationProgress />
       <Outlet />
       <Toaster closeButton duration={5000} position='top-center' richColors />

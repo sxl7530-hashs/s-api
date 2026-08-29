@@ -22,6 +22,7 @@ import { AuthenticatedLayout } from '@/components/layout'
 import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/_authenticated')({
+  head: () => ({ meta: [{ name: 'robots', content: 'noindex,nofollow,noarchive' }] }),
   beforeLoad: ({ location }) => {
     const { auth } = useAuthStore.getState()
 

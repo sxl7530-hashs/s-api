@@ -19,7 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute } from '@tanstack/react-router'
 
 import { Home } from '@/features/home'
+import { seoHead } from '@/lib/seo'
 
 export const Route = createFileRoute('/')({
+  head: () => seoHead('统一 AI API 网关与多模型聚合平台', undefined, '/'),
   component: Home,
 })

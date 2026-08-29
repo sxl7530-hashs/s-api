@@ -39,7 +39,8 @@ type tokenRequest struct {
 
 type tokenResponse struct {
 	*model.Token
-	AutoGroups []string `json:"auto_groups"`
+	AutoGroups     []string `json:"auto_groups"`
+	AutoGroupsMode string   `json:"auto_groups_mode"`
 }
 
 func maxTokenQuota() int {
@@ -66,7 +67,14 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 	if len(autoGroups) == 0 {
 		autoGroups = nil
 	}
-	return &tokenResponse{Token: &maskedToken, AutoGroups: autoGroups}
+	mode := "none"
+	if token.Group == "auto" {
+		mode = "inherit"
+		if len(autoGroups) > 0 {
+			mode = "custom"
+		}
+	}
+	return &tokenResponse{Token: &maskedToken, AutoGroups: autoGroups, AutoGroupsMode: mode}
 }
 
 func buildMaskedTokenResponses(tokens []*model.Token) []*tokenResponse {

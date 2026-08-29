@@ -18,10 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
+import { noIndexHead } from '@/lib/seo'
+
 import { SetupWizard } from '@/features/setup'
 import { getSetupStatus } from '@/features/setup/api'
 
 export const Route = createFileRoute('/setup/')({
+  head: () => noIndexHead,
   beforeLoad: async () => {
     const status = await getSetupStatus().catch((error) => {
       if (import.meta.env.DEV) {

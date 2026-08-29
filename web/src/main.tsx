@@ -118,6 +118,9 @@ if (!rootElement) {
   try {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
     const apply = (name: string) => {
+      // Keep route-specific SEO titles; only brand the generic shell title.
+      const currentTitle = document.title.trim()
+      if (currentTitle && currentTitle !== 'New API' && currentTitle !== name) return
       document.title = name
       const metaTitle = document.querySelector(
         'meta[name="title"]'

@@ -309,6 +309,7 @@ func migrateDB() error {
 
 	err := DB.AutoMigrate(
 		&Channel{},
+		&ChannelCostRatioHistory{},
 		&Token{},
 		&User{},
 		&UserSession{},
@@ -345,6 +346,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := initializeChannelCostRatioHistory(); err != nil {
+		return err
+	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}
@@ -372,6 +376,7 @@ func migrateDBFast() error {
 		name  string
 	}{
 		{&Channel{}, "Channel"},
+		{&ChannelCostRatioHistory{}, "ChannelCostRatioHistory"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&UserSession{}, "UserSession"},
@@ -442,6 +447,26 @@ func migrateDBFast() error {
 		}
 	}
 	common.SysLog("database migrated")
+	return nil
+}
+
+func initializeChannelCostRatioHistory() error {
+	var channels []Channel
+	if err := DB.Select("id", "cost_ratio").Find(&channels).Error; err != nil {
+		return err
+	}
+	now := common.GetTimestamp()
+	for _, channel := range channels {
+		var count int64
+		if err := DB.Model(&ChannelCostRatioHistory{}).Where("channel_id = ?", channel.Id).Count(&count).Error; err != nil {
+			return err
+		}
+		if count == 0 {
+			if err := EnsureChannelCostRatioHistory(DB, channel.Id, channel.CostRatio, now); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

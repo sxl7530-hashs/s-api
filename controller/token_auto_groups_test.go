@@ -109,6 +109,21 @@ func TestAddTokenEmptyAutoGroupsInheritGlobalAuto(t *testing.T) {
 	}
 }
 
+func TestTokenResponseReportsLegacyCompatibleAutoGroupsMode(t *testing.T) {
+	inherited := buildMaskedTokenResponse(&model.Token{Group: "auto"})
+	assert.Equal(t, "inherit", inherited.AutoGroupsMode)
+	assert.Nil(t, inherited.AutoGroups)
+
+	customToken := &model.Token{Group: "auto"}
+	require.NoError(t, customToken.SetAutoGroups([]string{"vip", "default"}))
+	custom := buildMaskedTokenResponse(customToken)
+	assert.Equal(t, "custom", custom.AutoGroupsMode)
+	assert.Equal(t, []string{"vip", "default"}, custom.AutoGroups)
+
+	legacySingleGroup := buildMaskedTokenResponse(&model.Token{Group: "default"})
+	assert.Equal(t, "none", legacySingleGroup.AutoGroupsMode)
+}
+
 func TestAddTokenPersistsOrderedAutoGroupsSnapshot(t *testing.T) {
 	configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
 	user := setupTokenAutoGroupsControllerTest(t)

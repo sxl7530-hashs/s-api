@@ -22,6 +22,7 @@ import z from 'zod'
 import { ModelDetails } from '@/features/pricing/components/model-details'
 import { getFreshModuleAccess } from '@/lib/nav-modules'
 import { useAuthStore } from '@/stores/auth-store'
+import { modelSeoHead } from '@/lib/seo'
 
 const modelDetailsSearchSchema = z.object({
   search: z.string().optional(),
@@ -37,6 +38,7 @@ const modelDetailsSearchSchema = z.object({
 })
 
 export const Route = createFileRoute('/pricing/$modelId/')({
+  head: ({ params }) => modelSeoHead(params.modelId),
   validateSearch: modelDetailsSearchSchema,
   beforeLoad: async ({ location }) => {
     const access = await getFreshModuleAccess('pricing')

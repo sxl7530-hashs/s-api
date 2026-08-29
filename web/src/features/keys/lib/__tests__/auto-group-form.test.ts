@@ -61,6 +61,27 @@ describe('API key Auto group form mapping', () => {
     expect(apiKeySchema.parse(legacyApiKey).auto_groups).toBe(null)
   })
 
+  test('uses the explicit compatibility mode returned by the server', () => {
+    const inherited = transformApiKeyToFormDefaults(
+      { ...baseApiKey, auto_groups_mode: 'inherit', auto_groups: null },
+      ['vip', 'default'],
+      5
+    )
+    const custom = transformApiKeyToFormDefaults(
+      {
+        ...baseApiKey,
+        auto_groups_mode: 'custom',
+        auto_groups: ['vip', 'default'],
+      },
+      ['vip', 'default'],
+      5
+    )
+
+    expect(inherited.auto_groups_mode).toBe('inherit')
+    expect(custom.auto_groups_mode).toBe('custom')
+    expect(custom.auto_groups).toEqual(['vip', 'default'])
+  })
+
   test('creates an Auto token that inherits the global order', () => {
     const defaults = getApiKeyFormDefaultValues(true)
 

@@ -173,7 +173,11 @@ export function transformApiKeyToFormDefaults(
   const autoGroups = storedAutoGroups
     .filter((group) => availableSet.has(group))
     .slice(0, Math.max(0, maxAutoGroups))
-  const autoGroupsMode = storedAutoGroups.length > 0 ? 'custom' : 'inherit'
+  const autoGroupsMode =
+    apiKey.auto_groups_mode === 'custom' ||
+    (!apiKey.auto_groups_mode && storedAutoGroups.length > 0)
+      ? 'custom'
+      : 'inherit'
 
   return {
     name: apiKey.name,

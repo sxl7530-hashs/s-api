@@ -982,6 +982,10 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 	originProxy := originChannel.GetSetting().Proxy
+	// Older clients do not send cost_ratio; preserve the stored value.
+	if channel.CostRatio <= 0 {
+		channel.CostRatio = originChannel.CostRatio
+	}
 	proxyChanged := false
 	if _, settingProvided := requestData["setting"]; settingProvided {
 		newProxy, _ := service.NormalizeProxyURL(channel.GetSetting().Proxy)
