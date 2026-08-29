@@ -156,14 +156,29 @@ export function ApiKeysMutateDrawer({
 
   const models = modelsData?.data || []
   const groups = useMemo<ApiKeyGroupOption[]>(
-    () =>
-      Object.entries(groupsData?.data || {}).map(([key, info]) => ({
+    () => {
+      const configured = Object.entries(groupsData?.data || {}).map(
+        ([key, info]) => ({
         value: key,
         label: key,
         desc: info.desc || key,
         ratio: info.ratio,
-      })),
-    [groupsData]
+        })
+      )
+      // Keep the custom multi-group entry available even when the administrator
+      // has not configured a global Auto group list. The selected groups are
+      // still validated by the backend against the user's usable groups.
+      if (!configured.some((group) => group.value === 'auto')) {
+        configured.unshift({
+          value: 'auto',
+          label: t('Auto'),
+          desc: t('Choose and order the groups this API key will try.'),
+          ratio: '',
+        })
+      }
+      return configured
+    },
+    [groupsData, t]
   )
   const backendHasAuto = groups.some((g) => g.value === 'auto')
   const availableAutoGroupNames = useMemo(
