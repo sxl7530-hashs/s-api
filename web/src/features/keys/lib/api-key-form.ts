@@ -156,7 +156,9 @@ export function transformFormDataToPayload(
       data.group === 'auto' && data.auto_groups_mode === 'custom'
         ? data.auto_groups
         : [],
-    cross_group_retry: data.group === 'auto' ? !!data.cross_group_retry : false,
+    // Multi-group routing always advances in the customer's selected order.
+    // Keep the legacy field enabled for the existing backend distributor.
+    cross_group_retry: data.group === 'auto',
   }
 }
 

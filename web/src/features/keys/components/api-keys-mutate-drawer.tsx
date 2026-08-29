@@ -245,7 +245,10 @@ export function ApiKeysMutateDrawer({
       }
     } else {
       form.reset(
-        getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
+        getApiKeyFormDefaultValues(
+          (defaultUseAutoGroup || availableAutoGroupNames.length > 1) &&
+            backendHasAuto
+        )
       )
       setInitializedTarget(target)
     }
@@ -265,6 +268,7 @@ export function ApiKeysMutateDrawer({
     apiKeyFetched,
     apiKeyFetching,
     availableAutoGroupNames,
+    groups.length,
     maxAutoGroups,
     initializedTarget,
   ])
@@ -493,33 +497,6 @@ export function ApiKeysMutateDrawer({
                         />
                       </FormControl>
                       <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
-              {selectedGroup === 'auto' && (
-                <FormField
-                  control={form.control}
-                  name='cross_group_retry'
-                  render={({ field }) => (
-                    <FormItem className={sideDrawerSwitchItemClassName()}>
-                      <div className='flex flex-col gap-0.5'>
-                        <FormLabel className='text-sm'>
-                          {t('Cross-group retry')}
-                        </FormLabel>
-                        <FormDescription className='line-clamp-2 text-xs sm:line-clamp-none'>
-                          {t(
-                            'When enabled, if channels in the current group fail, it will try channels in the next group in order.'
-                          )}
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={!!field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
                     </FormItem>
                   )}
                 />
