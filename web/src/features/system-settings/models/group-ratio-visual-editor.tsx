@@ -24,6 +24,7 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react'
+import { Reorder } from 'motion/react'
 import {
   useState,
   useMemo,
@@ -368,11 +369,19 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
               onValueChange={handleAutoGroupAdd}
             />
             {autoGroupsList.length > 0 && (
-              <div className='space-y-2'>
+              <Reorder.Group
+                axis='y'
+                values={autoGroupsList}
+                onReorder={(list) =>
+                  onChange('AutoGroups', JSON.stringify(list, null, 2))
+                }
+                className='space-y-2'
+              >
                 {autoGroupsList.map((group, index) => (
-                  <div
+                  <Reorder.Item
                     key={group}
-                    className='flex items-center gap-2 rounded-md border p-3'
+                    value={group}
+                    className='flex cursor-grab touch-none items-center gap-2 rounded-md border bg-background p-3 active:cursor-grabbing'
                   >
                     <GripVertical className='text-muted-foreground h-4 w-4' />
                     <span className='font-medium'>{group}</span>
@@ -402,9 +411,9 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
                         <Trash2 className='h-4 w-4' />
                       </Button>
                     </div>
-                  </div>
+                  </Reorder.Item>
                 ))}
-              </div>
+              </Reorder.Group>
             )}
           </div>
         </CardContent>
