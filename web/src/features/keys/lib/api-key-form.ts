@@ -48,19 +48,6 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
     })
     .superRefine((data, ctx) => {
       if (data.group === 'auto') {
-        if (
-          data.auto_groups_mode === 'custom' &&
-          data.auto_groups.length === 0
-        ) {
-          ctx.addIssue({
-            code: 'custom',
-            path: ['auto_groups'],
-            message: t(
-              'Select at least one Auto group or restore global Auto.'
-            ),
-          })
-        }
-
         if (data.auto_groups.length > autoGroupLimit) {
           ctx.addIssue({
             code: 'custom',
@@ -118,14 +105,14 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
 }
 
 export function getApiKeyFormDefaultValues(
-  defaultUseAutoGroup: boolean
+  _defaultUseAutoGroup: boolean
 ): ApiKeyFormValues {
   return {
     ...API_KEY_FORM_DEFAULT_VALUES,
-    group: defaultUseAutoGroup ? 'auto' : DEFAULT_GROUP,
+    group: DEFAULT_GROUP,
     auto_groups_mode: 'inherit',
     auto_groups: [],
-    cross_group_retry: defaultUseAutoGroup,
+    cross_group_retry: false,
   }
 }
 
@@ -156,9 +143,7 @@ export function transformFormDataToPayload(
       data.group === 'auto' && data.auto_groups_mode === 'custom'
         ? data.auto_groups
         : [],
-    // Multi-group routing always advances in the customer's selected order.
-    // Keep the legacy field enabled for the existing backend distributor.
-    cross_group_retry: data.group === 'auto',
+    cross_group_retry: data.group === 'auto' ? !!data.cross_group_retry : false,
   }
 }
 

@@ -738,6 +738,36 @@ export function DetailsDialog(props: DetailsDialogProps) {
           )}
         </div>
 
+        {/* Error details use the structured fields written with the same log
+            row, so the dialog cannot accidentally show consume-log metadata. */}
+        {props.log.type === 5 && (
+          <DetailSection
+            icon={<AlertTriangle className='size-3.5' aria-hidden='true' />}
+            label={t('Error')}
+            variant='danger'
+          >
+            {other?.error_code && (
+              <DetailRow
+                label={t('Error Code (optional)')}
+                value={String(other.error_code)}
+                mono
+              />
+            )}
+            {other?.status_code != null && (
+              <DetailRow
+                label={t('Status Code')}
+                value={String(other.status_code)}
+                mono
+              />
+            )}
+            {details && (
+              <div className='bg-background/60 mt-1 rounded border p-2 text-xs leading-relaxed break-all whitespace-pre-wrap'>
+                {details}
+              </div>
+            )}
+          </DetailSection>
+        )}
+
         {/* Request conversion (admin only, not for refund) */}
         {showConversion && (
           <DetailSection label={t('Request Conversion')}>

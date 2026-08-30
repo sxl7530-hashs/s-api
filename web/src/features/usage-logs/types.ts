@@ -114,6 +114,10 @@ export interface ToolSurchargeItem {
 }
 
 export interface LogOtherData {
+  // Structured error metadata for type=5 logs.
+  error_type?: string
+  error_code?: string
+  status_code?: number
   admin_info?: {
     is_multi_key?: boolean
     multi_key_index?: number

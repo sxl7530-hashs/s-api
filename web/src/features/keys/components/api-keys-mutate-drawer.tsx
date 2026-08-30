@@ -245,10 +245,7 @@ export function ApiKeysMutateDrawer({
       }
     } else {
       form.reset(
-        getApiKeyFormDefaultValues(
-          (defaultUseAutoGroup || availableAutoGroupNames.length > 1) &&
-            backendHasAuto
-        )
+        getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
       )
       setInitializedTarget(target)
     }
@@ -268,7 +265,6 @@ export function ApiKeysMutateDrawer({
     apiKeyFetched,
     apiKeyFetching,
     availableAutoGroupNames,
-    groups.length,
     maxAutoGroups,
     initializedTarget,
   ])
@@ -444,6 +440,14 @@ export function ApiKeysMutateDrawer({
                         onValueChange={(group) => {
                           field.onChange(group)
                           if (group === 'auto') {
+                            // Auto is independent from the default group;
+                            // start with an empty, explicitly editable list.
+                            form.setValue('auto_groups', [], {
+                              shouldDirty: true,
+                            })
+                            form.setValue('auto_groups_mode', 'custom', {
+                              shouldDirty: true,
+                            })
                             form.setValue('cross_group_retry', true, {
                               shouldDirty: true,
                             })

@@ -146,6 +146,7 @@ func Distribute() func(c *gin.Context) {
 							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
 						}
 						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
+						recordDistributorError(c, modelRequest.Model, usingGroup, message, http.StatusServiceUnavailable)
 						// 如果错误，但是渠道不为空，说明是数据库一致性问题
 						//if channel != nil {
 						//	common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))
@@ -155,7 +156,9 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if channel == nil {
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
+						message := i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model})
+						recordDistributorError(c, modelRequest.Model, usingGroup, message, http.StatusServiceUnavailable)
+						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
 						return
 					}
 				}
@@ -168,6 +171,22 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+func recordDistributorError(c *gin.Context, modelName, group, message string, status int) {
+	if !constant.ErrorLogEnabled {
+		return
+	}
+	// Once a request has entered channel retry, the relay controller owns the
+	// final aggregate error record. The distributor must not duplicate it.
+	if len(c.GetStringSlice("use_channel")) > 0 {
+		return
+	}
+	other := map[string]interface{}{"request_path": c.Request.URL.Path, "error_code": string(types.ErrorCodeModelNotFound), "status_code": status}
+	if used := c.GetStringSlice("use_channel"); len(used) > 0 {
+		other["admin_info"] = map[string]interface{}{"use_channel": used}
+	}
+	model.RecordErrorLog(c, c.GetInt("id"), c.GetInt("channel_id"), modelName, c.GetString("token_name"), message, c.GetInt("token_id"), 0, common.GetContextKeyBool(c, constant.ContextKeyIsStream), group, other)
 }
 
 // channelSupportsRequestPath reports whether a channel can serve the request path.

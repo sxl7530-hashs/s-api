@@ -91,6 +91,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
+			recordUnhandledRelayError(c, newAPIError)
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
@@ -197,6 +198,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
 			newAPIError = channelErr
+			// Channel selection failures happen before a concrete channel exists,
+			// so persist them immediately for the unified error log.
+			recordUnhandledRelayError(c, channelErr)
 			break
 		}
 		addUsedChannel(c, channel.Id)
@@ -370,7 +374,11 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
-	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
+	// Auto routing can try several groups/channels. Keep only the final
+	// aggregate failure for that mode; fixed-group requests retain per-channel
+	// failure records for retry diagnostics.
+	isAutoRouting := isAutoRoutingContext(c) || strings.Contains(err.Error(), "under group auto") || strings.Contains(err.Error(), "分组 auto")
+	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) && !isAutoRouting {
 		// 保存错误日志到mysql中
 		userId := c.GetInt("id")
 		tokenName := c.GetString("token_name")
@@ -403,8 +411,58 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		}
 		useTimeSeconds := int(time.Since(startTime).Seconds())
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+		c.Set(string(constant.ContextKeyErrorLogRecorded), true)
 	}
 
+}
+
+// recordUnhandledRelayError captures failures that happen before channel
+// selection (for example model_not_found or an empty group).
+func recordUnhandledRelayError(c *gin.Context, err *types.NewAPIError) {
+	// A concrete channel error is persisted by processChannelError. The
+	// request-level fallback is only needed when no channel was selected.
+	isAutoRouting := isAutoRoutingContext(c) || strings.Contains(err.Error(), "under group auto") || strings.Contains(err.Error(), "分组 auto")
+	if err == nil || common.GetContextKeyBool(c, constant.ContextKeyErrorLogRecorded) || (!isAutoRouting && c.GetInt("channel_id") > 0) {
+		return
+	}
+	other := map[string]interface{}{
+		"request_path": c.Request.URL.Path,
+		"error_type":   err.GetErrorType(),
+		"error_code":   err.GetErrorCode(),
+		"status_code":  err.StatusCode,
+		"channel_id":   c.GetInt("channel_id"),
+	}
+	if name := c.GetString("channel_name"); name != "" {
+		other["channel_name"] = name
+	}
+	if used := c.GetStringSlice("use_channel"); len(used) > 0 {
+		other["admin_info"] = map[string]interface{}{"use_channel": used}
+	}
+	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	modelName := c.GetString("original_model")
+	if modelName == "" {
+		modelName = common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+	}
+	model.RecordErrorLog(c, c.GetInt("id"), c.GetInt("channel_id"), modelName,
+		c.GetString("token_name"), err.MaskSensitiveErrorWithStatusCode(), c.GetInt("token_id"),
+		int(time.Since(startTime).Seconds()), common.GetContextKeyBool(c, constant.ContextKeyIsStream),
+		c.GetString("group"), other)
+	c.Set(string(constant.ContextKeyErrorLogRecorded), true)
+}
+
+func isAutoRoutingContext(c *gin.Context) bool {
+	if common.GetContextKeyString(c, constant.ContextKeyTokenGroup) == "auto" {
+		return true
+	}
+	value, ok := common.GetContextKey(c, constant.ContextKeyTokenAutoGroups)
+	if !ok {
+		return false
+	}
+	groups, ok := value.([]string)
+	return ok && len(groups) > 0
 }
 
 func RelayMidjourney(c *gin.Context) {

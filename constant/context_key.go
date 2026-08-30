@@ -73,4 +73,6 @@ const (
 	// fallback in authHelper (finishAdminAudit) skips its record to avoid
 	// duplicate entries.
 	ContextKeyAuditLogged ContextKey = "audit_logged"
+	// ContextKeyErrorLogRecorded prevents duplicate request/channel error logs.
+	ContextKeyErrorLogRecorded ContextKey = "error_log_recorded"
 )
