@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -81,7 +80,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	defer service.CloseResponseBodyGracefully(resp)
 
 	var usage = &dto.Usage{}
-	var responseTextBuilder strings.Builder
+	var responseTextBuilder service.ResponseAccumulator
+	defer responseTextBuilder.Close()
 	imageCounter := &relaycommon.ImageGenerationCallCounter{}
 	imageCommitted := false
 
@@ -107,6 +107,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 					}
 					if streamResponse.Response.Usage.TotalTokens != 0 {
 						usage.TotalTokens = streamResponse.Response.Usage.TotalTokens
+					}
+					// A completed provider usage is authoritative; release the
+					// fallback text buffer before the handler returns.
+					if usage.CompletionTokens > 0 {
+						_ = responseTextBuilder.Close()
 					}
 					if streamResponse.Response.Usage.InputTokensDetails != nil {
 						usage.PromptTokensDetails.CachedTokens = streamResponse.Response.Usage.InputTokensDetails.CachedTokens
@@ -159,8 +164,14 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	})
 
 	if usage.CompletionTokens == 0 {
+		if accErr := responseTextBuilder.Err(); accErr != nil {
+			return nil, types.NewError(accErr, types.ErrorCodeCountTokenFailed)
+		}
 		// 计算输出文本的 token 数量
-		tempStr := responseTextBuilder.String()
+		tempStr, readErr := responseTextBuilder.String()
+		if readErr != nil {
+			return nil, types.NewError(readErr, types.ErrorCodeCountTokenFailed)
+		}
 		if len(tempStr) > 0 {
 			// 非正常结束，使用输出文本的 token 数量
 			completionTokens := service.CountTextToken(tempStr, info.UpstreamModelName)

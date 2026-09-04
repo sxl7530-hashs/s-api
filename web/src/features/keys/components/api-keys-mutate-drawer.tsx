@@ -51,6 +51,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import {
   Sheet,
   SheetClose,
@@ -72,6 +73,7 @@ import {
   updateApiKey,
   getApiKey,
   getTokenAutoGroups,
+	getTokenGroupProfiles,
 } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
@@ -130,6 +132,13 @@ export function ApiKeysMutateDrawer({
     queryFn: getUserGroups,
     enabled: open,
     staleTime: 0,
+  })
+
+  const { data: groupProfilesData } = useQuery({
+    queryKey: ['token-group-profiles'],
+    queryFn: getTokenGroupProfiles,
+    enabled: open,
+    staleTime: 60_000,
   })
 
   const {
@@ -212,6 +221,11 @@ export function ApiKeysMutateDrawer({
     resolver: zodResolver(schema),
     defaultValues: getApiKeyFormDefaultValues(defaultUseAutoGroup),
   })
+  const selectedProfileId = form.watch('token_group_profile_id') || 0
+  const quickProfiles = useMemo(
+    () => (groupProfilesData?.data || []).filter((profile) => profile.enabled),
+    [groupProfilesData]
+  )
 
   // Load existing data when updating
   useEffect(() => {
@@ -414,6 +428,83 @@ export function ApiKeysMutateDrawer({
                 iconTone='info'
               />
               <FormField
+				control={form.control}
+				name='token_group_profile_id'
+				render={({ field }) => (
+				  <FormItem>
+					<FormLabel>{t('Token group')}</FormLabel>
+					<FormControl>
+					  <NativeSelect value={String(field.value)} onChange={(event) => {
+						const profileId = Number(event.target.value)
+						field.onChange(profileId)
+						if (profileId > 0) {
+						  form.setValue('group', 'auto', { shouldDirty: true })
+						  form.setValue('auto_groups', [], { shouldDirty: true })
+						  form.setValue('auto_groups_mode', 'inherit', { shouldDirty: true })
+						  form.setValue('cross_group_retry', true, { shouldDirty: true })
+						}
+					  }}>
+						<NativeSelectOption value='0'>{t('Custom')}</NativeSelectOption>
+						{(groupProfilesData?.data || []).map((profile) => (
+						  <NativeSelectOption key={profile.id} value={String(profile.id)}>
+							{profile.name}{profile.recommended ? ` (${t('Recommended')})` : ''}
+						  </NativeSelectOption>
+						))}
+					  </NativeSelect>
+					</FormControl>
+					<FormDescription>{(groupProfilesData?.data || []).find((profile) => profile.id === field.value)?.description}</FormDescription>
+					{selectedProfileId !== 0 && (() => {
+					  const profile = quickProfiles.find((item) => item.id === selectedProfileId)
+					  if (!profile) return null
+					  return (
+						<div className='rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5'>
+						  <div className='flex items-center justify-between gap-2'>
+							<span className='text-xs font-semibold text-primary'>{profile.name}</span>
+							<span className='text-[11px] text-muted-foreground'>{t('Configured route order')}</span>
+						  </div>
+						  {profile.description && <p className='mt-1 text-xs text-muted-foreground'>{profile.description}</p>}
+						  <div className='mt-2 flex flex-wrap items-center gap-1.5'>
+							{profile.route_groups.map((group, index) => (
+							  <span key={`${group}-${index}`} className='inline-flex items-center gap-1 rounded-full bg-background px-2 py-0.5 text-xs font-medium shadow-sm'>
+								<span className='text-muted-foreground'>{index + 1}.</span>{group}
+							  </span>
+							))}
+						  </div>
+						</div>
+					  )
+					})()}
+					{quickProfiles.length > 0 && selectedProfileId === 0 && (
+					  <div className='rounded-lg border border-primary/20 bg-primary/5 p-2.5'>
+						<div className='mb-2 text-xs font-medium text-primary'>{t('Quick select')}</div>
+						<div className='flex flex-wrap gap-2'>
+						  {quickProfiles.map((profile) => (
+							<Button
+							  key={profile.id}
+							  type='button'
+							  size='sm'
+							  variant={selectedProfileId === profile.id ? 'default' : 'outline'}
+							  className='h-8 max-w-full gap-1.5 rounded-full px-3 text-xs'
+							  onClick={() => {
+								field.onChange(profile.id)
+								form.setValue('group', 'auto', { shouldDirty: true })
+								form.setValue('auto_groups', [], { shouldDirty: true })
+								form.setValue('auto_groups_mode', 'inherit', { shouldDirty: true })
+								form.setValue('cross_group_retry', true, { shouldDirty: true })
+							  }}
+							>
+							  {profile.recommended && <span aria-hidden='true'>★</span>}
+							  <span className='truncate'>{profile.name}</span>
+							</Button>
+						  ))}
+						</div>
+					  </div>
+					)}
+					<FormMessage />
+				  </FormItem>
+				)}
+			  />
+
+			  <FormField
                 control={form.control}
                 name='name'
                 render={({ field }) => (
@@ -427,7 +518,7 @@ export function ApiKeysMutateDrawer({
                 )}
               />
 
-              <FormField
+              {selectedProfileId === 0 && <FormField
                 control={form.control}
                 name='group'
                 render={({ field }) => (
@@ -463,9 +554,9 @@ export function ApiKeysMutateDrawer({
                     <FormMessage />
                   </FormItem>
                 )}
-              />
+              />}
 
-              {selectedGroup === 'auto' && (
+	              {selectedGroup === 'auto' && selectedProfileId === 0 && (
                 <FormField
                   control={form.control}
                   name='auto_groups'

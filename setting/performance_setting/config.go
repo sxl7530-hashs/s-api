@@ -15,6 +15,15 @@ type PerformanceSetting struct {
 	DiskCacheMaxSizeMB int `json:"disk_cache_max_size_mb"`
 	// DiskCachePath 磁盘缓存目录
 	DiskCachePath string `json:"disk_cache_path"`
+	// DiskCacheCriticalWatermarkPercent 达到该水位后拒绝新的大请求（百分比）
+	DiskCacheCriticalWatermarkPercent int `json:"disk_cache_critical_watermark_percent"`
+	// DiskCacheUnknownLengthDiskFirst 未提供 Content-Length 时是否直接流式写盘
+	DiskCacheUnknownLengthDiskFirst bool `json:"disk_cache_unknown_length_disk_first"`
+	// DiskCacheMaxRequestMB 单个请求允许占用的最大缓存空间（MB，0 表示不额外限制）
+	DiskCacheMaxRequestMB   int  `json:"disk_cache_max_request_mb"`
+	DiskCacheAutoSizing     bool `json:"disk_cache_auto_sizing"`
+	DiskCacheMaxDiskPercent int  `json:"disk_cache_max_disk_percent"`
+	DiskCacheMinFreeSpaceMB int  `json:"disk_cache_min_free_space_mb"`
 
 	// MonitorEnabled 是否启用性能监控
 	MonitorEnabled bool `json:"monitor_enabled"`
@@ -28,10 +37,17 @@ type PerformanceSetting struct {
 
 // 默认配置
 var performanceSetting = PerformanceSetting{
-	DiskCacheEnabled:     false,
-	DiskCacheThresholdMB: 10,   // 超过 10MB 使用磁盘缓存
-	DiskCacheMaxSizeMB:   1024, // 最大 1GB 磁盘缓存
-	DiskCachePath:        "",   // 空表示使用系统临时目录
+	DiskCacheEnabled:                  false,
+	DiskCacheThresholdMB:              10, // 超过 10MB 使用磁盘缓存
+	DiskCacheMaxSizeMB:                0,  // 0 表示自动模式下不启用固定硬上限
+	DiskCachePath:                     "", // 空表示使用系统临时目录
+	DiskCacheCriticalWatermarkPercent: 90,
+	DiskCacheUnknownLengthDiskFirst:   true,
+	DiskCacheMaxRequestMB:             4096,
+	// false 保持旧版固定容量行为；管理员可在后台开启自动模式。
+	DiskCacheAutoSizing:     false,
+	DiskCacheMaxDiskPercent: 50,
+	DiskCacheMinFreeSpaceMB: 30720,
 
 	MonitorEnabled:         true,
 	MonitorCPUThreshold:    90,
@@ -48,11 +64,33 @@ func init() {
 
 // syncToCommon 将配置同步到 common 包
 func syncToCommon() {
+	// 兼容旧版本已保存的配置：新增字段为零值时回填安全默认值。
+	if performanceSetting.DiskCacheThresholdMB <= 0 {
+		performanceSetting.DiskCacheThresholdMB = 1
+	}
+	if performanceSetting.DiskCacheCriticalWatermarkPercent <= 0 || performanceSetting.DiskCacheCriticalWatermarkPercent > 100 {
+		performanceSetting.DiskCacheCriticalWatermarkPercent = 90
+	}
+	if performanceSetting.DiskCacheMaxRequestMB < 0 {
+		performanceSetting.DiskCacheMaxRequestMB = 0
+	}
+	if performanceSetting.DiskCacheMaxDiskPercent <= 0 || performanceSetting.DiskCacheMaxDiskPercent > 100 {
+		performanceSetting.DiskCacheMaxDiskPercent = 50
+	}
+	if performanceSetting.DiskCacheMinFreeSpaceMB < 0 {
+		performanceSetting.DiskCacheMinFreeSpaceMB = 0
+	}
 	common.SetDiskCacheConfig(common.DiskCacheConfig{
-		Enabled:     performanceSetting.DiskCacheEnabled,
-		ThresholdMB: performanceSetting.DiskCacheThresholdMB,
-		MaxSizeMB:   performanceSetting.DiskCacheMaxSizeMB,
-		Path:        performanceSetting.DiskCachePath,
+		Enabled:                  performanceSetting.DiskCacheEnabled,
+		ThresholdMB:              performanceSetting.DiskCacheThresholdMB,
+		MaxSizeMB:                performanceSetting.DiskCacheMaxSizeMB,
+		Path:                     performanceSetting.DiskCachePath,
+		CriticalWatermarkPercent: performanceSetting.DiskCacheCriticalWatermarkPercent,
+		UnknownLengthDiskFirst:   performanceSetting.DiskCacheUnknownLengthDiskFirst,
+		MaxRequestMB:             performanceSetting.DiskCacheMaxRequestMB,
+		AutoSizing:               performanceSetting.DiskCacheAutoSizing,
+		MaxDiskPercent:           performanceSetting.DiskCacheMaxDiskPercent,
+		MinFreeSpaceMB:           performanceSetting.DiskCacheMinFreeSpaceMB,
 	})
 
 	common.SetPerformanceMonitorConfig(common.PerformanceMonitorConfig{

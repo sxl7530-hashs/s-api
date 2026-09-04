@@ -91,6 +91,15 @@ func newRelayHTTPTransport() *http.Transport {
 	transport.MaxIdleConns = common.RelayMaxIdleConns
 	transport.MaxIdleConnsPerHost = common.RelayMaxIdleConnsPerHost
 	transport.IdleConnTimeout = time.Duration(common.RelayIdleConnTimeout) * time.Second
+	// Bound the wait for upstream response headers. Without this guard a
+	// connected upstream that never sends headers retains the request, body and
+	// goroutine indefinitely. Keep the bound generous enough for slow models;
+	// streaming idle behaviour remains governed by the stream scanner timeout.
+	if common.RelayResponseHeaderTimeout > 0 {
+		transport.ResponseHeaderTimeout = time.Duration(common.RelayResponseHeaderTimeout) * time.Second
+	} else {
+		transport.ResponseHeaderTimeout = 0
+	}
 	transport.ForceAttemptHTTP2 = true
 	if common.TLSInsecureSkipVerify {
 		transport.TLSClientConfig = common.InsecureTLSConfig

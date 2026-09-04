@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
 type ChatToResponsesStreamEvent struct {
@@ -33,8 +34,8 @@ type ChatToResponsesStreamState struct {
 	nextOutputIndex   int
 	toolsByIndex      map[int]*chatToResponsesStreamTool
 	outputOrder       []chatToResponsesOutputRef
-	text              strings.Builder
-	reasoning         strings.Builder
+	text              *kitutil.SpillStringWriter
+	reasoning         *kitutil.SpillStringWriter
 }
 
 type chatToResponsesStreamTool struct {
@@ -42,7 +43,7 @@ type chatToResponsesStreamTool struct {
 	OutputIndex int
 	ID          string
 	Name        string
-	Arguments   strings.Builder
+	Arguments   *kitutil.SpillStringWriter
 	Done        bool
 }
 
@@ -58,6 +59,8 @@ func NewChatToResponsesStreamState(id string, model string) *ChatToResponsesStre
 		Created:         time.Now().Unix(),
 		Usage:           &dto.Usage{},
 		status:          "completed",
+		text:            kitutil.NewSpillStringWriter(),
+		reasoning:       kitutil.NewSpillStringWriter(),
 		textOutputIndex: -1,
 		reasoningIndex:  -1,
 		toolsByIndex:    make(map[int]*chatToResponsesStreamTool),
@@ -204,6 +207,7 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
 			OutputIndex: s.nextIndex("tool", chatIndex),
 			ID:          strings.TrimSpace(toolCall.ID),
 			Name:        strings.TrimSpace(toolCall.Function.Name),
+			Arguments:   kitutil.NewSpillStringWriter(),
 		}
 		if tool.ID == "" {
 			tool.ID = fmt.Sprintf("%s_call_%d", s.ID, chatIndex)

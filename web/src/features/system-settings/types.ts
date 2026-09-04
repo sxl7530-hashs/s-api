@@ -358,6 +358,12 @@ export type OperationsSettings = {
   'performance_setting.disk_cache_threshold_mb': number
   'performance_setting.disk_cache_max_size_mb': number
   'performance_setting.disk_cache_path': string
+  'performance_setting.disk_cache_critical_watermark_percent': number
+  'performance_setting.disk_cache_unknown_length_disk_first': boolean
+  'performance_setting.disk_cache_max_request_mb': number
+  'performance_setting.disk_cache_auto_sizing': boolean
+  'performance_setting.disk_cache_max_disk_percent': number
+  'performance_setting.disk_cache_min_free_space_mb': number
   'performance_setting.monitor_enabled': boolean
   'performance_setting.monitor_cpu_threshold': number
   'performance_setting.monitor_memory_threshold': number

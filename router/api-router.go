@@ -236,6 +236,8 @@ func SetApiRouter(router *gin.Engine) {
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
 		{
+			tokenRoute.GET("/group-profiles", controller.ListTokenGroupProfiles)
+			tokenRoute.GET("/group-profiles/help", controller.TokenGroupProfileHelp)
 			tokenRoute.GET("/", controller.GetAllTokens)
 			tokenRoute.GET("/search", middleware.SearchRateLimit(), controller.SearchTokens)
 			tokenRoute.GET("/auto-groups", controller.GetTokenAutoGroups)
@@ -246,6 +248,14 @@ func SetApiRouter(router *gin.Engine) {
 			tokenRoute.DELETE("/:id", controller.DeleteToken)
 			tokenRoute.POST("/batch", controller.DeleteTokenBatch)
 			tokenRoute.POST("/batch/keys", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.GetTokenKeysBatch)
+		}
+		tokenGroupProfileAdminRoute := apiRouter.Group("/token-group-profiles")
+		tokenGroupProfileAdminRoute.Use(middleware.AdminAuth())
+		{
+			tokenGroupProfileAdminRoute.GET("/", controller.AdminListTokenGroupProfiles)
+			tokenGroupProfileAdminRoute.POST("/", controller.CreateTokenGroupProfile)
+			tokenGroupProfileAdminRoute.PUT("/:id", controller.UpdateTokenGroupProfile)
+			tokenGroupProfileAdminRoute.DELETE("/:id", controller.DeleteTokenGroupProfile)
 		}
 
 		usageRoute := apiRouter.Group("/usage")

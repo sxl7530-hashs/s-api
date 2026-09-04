@@ -21,8 +21,8 @@ import z from 'zod'
 
 import { Pricing } from '@/features/pricing'
 import { getFreshModuleAccess } from '@/lib/nav-modules'
+import { noIndexHead, seoHead } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth-store'
-import { seoHead } from '@/lib/seo'
 
 const pricingSearchSchema = z.object({
   search: z.string().optional(),
@@ -38,7 +38,12 @@ const pricingSearchSchema = z.object({
 })
 
 export const Route = createFileRoute('/pricing/')({
-  head: () => seoHead('AI API 价格与模型计费', undefined, '/pricing/'),
+  head: async () => {
+    const access = await getFreshModuleAccess('pricing')
+    return access.enabled && !access.requireAuth
+      ? seoHead('AI API 价格与模型计费', undefined, '/pricing/')
+      : noIndexHead
+  },
   validateSearch: pricingSearchSchema,
   beforeLoad: async ({ location }) => {
     const access = await getFreshModuleAccess('pricing')

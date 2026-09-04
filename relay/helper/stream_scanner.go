@@ -31,6 +31,9 @@ const (
 	// but connected client (full TCP buffer, no server WriteTimeout) could hang
 	// the handler forever.
 	streamWriteTimeout = 30 * time.Second
+	// streamDebugPreviewBytes bounds diagnostic logging for individual SSE
+	// frames. The complete frame is still parsed and forwarded unchanged.
+	streamDebugPreviewBytes = 4096
 )
 
 func getScannerBufferSize() int {
@@ -86,6 +89,12 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	ctx, cancel := context.WithCancel(context.Background())
 
 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
+	// A zero/negative timeout would make time.NewTicker panic and take down
+	// the request handler. Keep the historical timeout semantics while making
+	// the stream lifecycle safe for older or partially initialized settings.
+	if streamingTimeout <= 0 {
+		streamingTimeout = 5 * time.Minute
+	}
 
 	var (
 		stopChan    = make(chan bool, 3) // 增加缓冲区避免阻塞
@@ -249,7 +258,11 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 			ticker.Reset(streamingTimeout)
 			data := scanner.Text()
-			logger.LogDebug(c, "stream scanner data: %s", data)
+			if len(data) > streamDebugPreviewBytes {
+				logger.LogDebug(c, "stream scanner data: %s...[truncated, bytes=%d]", data[:streamDebugPreviewBytes], len(data))
+			} else {
+				logger.LogDebug(c, "stream scanner data: %s", data)
+			}
 
 			if len(data) < 6 {
 				continue

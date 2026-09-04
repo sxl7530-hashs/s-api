@@ -19,7 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute } from '@tanstack/react-router'
 
 import { PrivacyPolicy } from '@/features/legal'
+import { seoHead } from '@/lib/seo'
 
 export const Route = createFileRoute('/privacy-policy')({
+  head: () =>
+    seoHead(
+      '隐私政策',
+      '了解 New API 如何收集、使用和保护您的信息。',
+      '/privacy-policy'
+    ),
   component: PrivacyPolicy,
 })

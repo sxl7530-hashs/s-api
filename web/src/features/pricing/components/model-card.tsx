@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -221,14 +222,18 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         </div>
 
         <div className='flex shrink-0 items-center gap-1.5'>
-          <button
-            type='button'
-            onClick={props.onClick}
+          <Link
+            to='/pricing/$modelId'
+            params={{ modelId: props.model.model_name }}
+            onClick={(event) => {
+              event.preventDefault()
+              props.onClick()
+            }}
             className='text-muted-foreground hover:text-foreground hover:bg-muted inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors sm:px-2.5 sm:py-1.5'
           >
             {t('Details')}
             <ChevronRight className='size-3.5' />
-          </button>
+          </Link>
           <button
             type='button'
             onClick={handleCopy}

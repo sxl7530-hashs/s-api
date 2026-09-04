@@ -40,6 +40,10 @@ type ReplayableBody interface {
 // ErrStorageClosed 存储已关闭错误
 var ErrStorageClosed = fmt.Errorf("body storage is closed")
 
+// ErrDiskCacheUnavailable indicates that a large payload cannot be admitted
+// without falling back to unbounded memory buffering.
+var ErrDiskCacheUnavailable = fmt.Errorf("disk cache capacity unavailable")
+
 // memoryStorage 内存存储实现
 type memoryStorage struct {
 	data   []byte
@@ -82,6 +86,8 @@ func (m *memoryStorage) Close() error {
 	defer m.mu.Unlock()
 	if atomic.CompareAndSwapInt32(&m.closed, 0, 1) {
 		DecrementMemoryBuffers(m.size)
+		m.data = nil
+		m.reader = nil
 	}
 	return nil
 }
@@ -288,14 +294,16 @@ func CreateBodyStorage(data []byte) (BodyStorage, error) {
 	threshold := GetDiskCacheThresholdBytes()
 
 	// 检查是否应该使用磁盘缓存
-	if IsDiskCacheEnabled() &&
-		size >= threshold &&
-		IsDiskCacheAvailable(size) {
+	if IsDiskCacheEnabled() && size >= threshold {
+		if !TryReserveDiskCache(size) {
+			return nil, ErrDiskCacheUnavailable
+		}
 		storage, err := newDiskStorage(data, GetDiskCachePath())
+		ReleaseDiskCacheReservation(size)
 		if err != nil {
-			// 如果磁盘存储失败，回退到内存存储
-			SysError(fmt.Sprintf("failed to create disk storage, falling back to memory: %v", err))
-			return newMemoryStorage(data), nil
+			// 大请求禁止回退到内存，避免磁盘异常时并发请求触发 OOM。
+			SysError(fmt.Sprintf("failed to create disk storage: %v", err))
+			return nil, fmt.Errorf("%w: %v", ErrDiskCacheUnavailable, err)
 		}
 		return storage, nil
 	}
@@ -306,13 +314,32 @@ func CreateBodyStorage(data []byte) (BodyStorage, error) {
 // CreateBodyStorageFromReader 从 Reader 创建存储（用于大请求的流式处理）
 func CreateBodyStorageFromReader(reader io.Reader, contentLength int64, maxBytes int64) (BodyStorage, error) {
 	threshold := GetDiskCacheThresholdBytes()
+	if configuredMax := GetDiskCacheMaxRequestBytes(); configuredMax > 0 && (maxBytes <= 0 || configuredMax < maxBytes) {
+		maxBytes = configuredMax
+	}
+	if contentLength > 0 && maxBytes > 0 && contentLength > maxBytes {
+		return nil, ErrRequestBodyTooLarge
+	}
+	diskFirstUnknownLength := GetDiskCacheConfig().UnknownLengthDiskFirst && contentLength <= 0
 
 	// 如果启用了磁盘缓存且内容长度超过阈值，直接使用磁盘存储
 	if IsDiskCacheEnabled() &&
-		contentLength > 0 &&
-		contentLength >= threshold &&
-		IsDiskCacheAvailable(contentLength) {
+		((contentLength > 0 && contentLength >= threshold) || diskFirstUnknownLength) {
+		var reserved int64
+		reserveSize := contentLength
+		if reserveSize <= 0 {
+			reserveSize = maxBytes
+		}
+		if reserveSize > 0 && TryReserveDiskCache(reserveSize) {
+			reserved = reserveSize
+		}
+		if reserved == 0 {
+			return nil, ErrDiskCacheUnavailable
+		}
 		storage, err := newDiskStorageFromReader(reader, maxBytes, GetDiskCachePath())
+		if reserved > 0 {
+			ReleaseDiskCacheReservation(reserved)
+		}
 		if err != nil {
 			if IsRequestBodyTooLargeError(err) {
 				return nil, err

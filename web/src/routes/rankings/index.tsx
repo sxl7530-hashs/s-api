@@ -21,8 +21,8 @@ import z from 'zod'
 
 import { Rankings } from '@/features/rankings'
 import { getFreshModuleAccess } from '@/lib/nav-modules'
+import { noIndexHead, seoHead } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth-store'
-import { seoHead } from '@/lib/seo'
 
 const rankingsSearchSchema = z.object({
   period: z
@@ -32,7 +32,12 @@ const rankingsSearchSchema = z.object({
 })
 
 export const Route = createFileRoute('/rankings/')({
-  head: () => seoHead('AI 模型排行榜与使用趋势', undefined, '/rankings/'),
+  head: async () => {
+    const access = await getFreshModuleAccess('rankings')
+    return access.enabled && !access.requireAuth
+      ? seoHead('AI 模型排行榜与使用趋势', undefined, '/rankings/')
+      : noIndexHead
+  },
   validateSearch: rankingsSearchSchema,
   beforeLoad: async ({ location }) => {
     const access = await getFreshModuleAccess('rankings')

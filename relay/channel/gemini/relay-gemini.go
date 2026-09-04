@@ -148,7 +148,8 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	var usage = &dto.Usage{}
 	var imageCount int
 	var hasBillableUsageMetadata bool
-	responseText := strings.Builder{}
+	var responseText service.ResponseAccumulator
+	defer responseText.Close()
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		var geminiResponse dto.GeminiChatResponse
@@ -178,8 +179,29 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		// 更新使用量统计
 		if metadata := geminiResponse.GetUsageMetadata(); dto.HasGeminiUsageMetadataTokens(metadata) {
 			mappedUsage := buildUsageFromGeminiMetadata(metadata, info.GetEstimatePromptTokens())
-			*usage = mappedUsage
+			// Usage metadata can arrive on multiple chunks and some providers send
+			// a later prompt-only snapshot. Never let a later partial snapshot
+			// reduce already observed billable output tokens.
+			if mappedUsage.PromptTokens > usage.PromptTokens {
+				usage.PromptTokens = mappedUsage.PromptTokens
+			}
+			if mappedUsage.CompletionTokens > usage.CompletionTokens {
+				usage.CompletionTokens = mappedUsage.CompletionTokens
+			}
+			if mappedUsage.TotalTokens > usage.TotalTokens {
+				usage.TotalTokens = mappedUsage.TotalTokens
+			}
+			usage.PromptTokensDetails = mappedUsage.PromptTokensDetails
+			usage.CompletionTokenDetails = mappedUsage.CompletionTokenDetails
+			usage.BillingUsage = mappedUsage.BillingUsage
+			usage.UsageSemantic = mappedUsage.UsageSemantic
 			hasBillableUsageMetadata = true
+			// Once the provider supplies billable usage, the accumulated fallback
+			// text is no longer needed for normal settlement. Drop its backing
+			// storage so long streams do not retain the full response until return.
+			if usage.CompletionTokens > 0 {
+				_ = responseText.Close()
+			}
 		}
 
 		if !callback(data, &geminiResponse) {
@@ -188,8 +210,15 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	})
 
 	if !hasBillableUsageMetadata {
+		if accErr := responseText.Err(); accErr != nil {
+			return nil, types.NewError(accErr, types.ErrorCodeCountTokenFailed)
+		}
 		if info.ReceivedResponseCount > 0 {
-			usage = service.ResponseText2Usage(c, responseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+			text, textErr := responseText.String()
+			if textErr != nil {
+				return nil, types.NewError(textErr, types.ErrorCodeCountTokenFailed)
+			}
+			usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		} else {
 			usage = &dto.Usage{}
 		}
@@ -200,7 +229,11 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 		attachEstimatedGeminiBillingUsage(usage)
 	} else {
-		patchGeminiZeroCompletionUsage(c, info, usage, responseText.String(), imageCount)
+		text, textErr := responseText.String()
+		if textErr != nil {
+			return nil, types.NewError(textErr, types.ErrorCodeCountTokenFailed)
+		}
+		patchGeminiZeroCompletionUsage(c, info, usage, text, imageCount)
 	}
 
 	return usage, nil
@@ -311,7 +344,7 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 }
 
 func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := service.ReadResponseBodyLimited(resp, service.DefaultMaxUpstreamResponseBytes)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
@@ -392,7 +425,7 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
-	responseBody, readErr := io.ReadAll(resp.Body)
+	responseBody, readErr := service.ReadResponseBodyLimited(resp, service.DefaultMaxUpstreamResponseBytes)
 	if readErr != nil {
 		return nil, types.NewOpenAIError(readErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}

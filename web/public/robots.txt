@@ -9,5 +9,9 @@ Disallow: /sign-in
 Disallow: /sign-up
 Disallow: /forgot-password
 Disallow: /reset
+Disallow: /api/
+Disallow: /v1/
+Disallow: /mj/
+Disallow: /pg/
 
 Sitemap: https://viralapi.ai/sitemap.xml

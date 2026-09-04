@@ -508,6 +508,20 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 	}
 	common.SetContextKey(c, constant.ContextKeyTokenGroup, token.Group)
 	common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, token.CrossGroupRetry)
+	if token.TokenGroupProfileID != 0 {
+		profile, err := model.GetEnabledTokenGroupProfile(token.TokenGroupProfileID)
+		if err != nil {
+			return fmt.Errorf("token group profile is unavailable: %w", err)
+		}
+		routeGroups := profile.GetRouteGroups()
+		if len(routeGroups) == 0 {
+			return fmt.Errorf("token group profile has no route groups")
+		}
+		common.SetContextKey(c, constant.ContextKeyTokenGroup, "auto")
+		common.SetContextKey(c, constant.ContextKeyTokenAutoGroups, routeGroups)
+		common.SetContextKey(c, constant.ContextKeyTokenGroupProfile, true)
+		common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, true)
+	}
 	if token.AutoGroups != "" {
 		autoGroups, err := token.GetAutoGroups()
 		if err != nil {

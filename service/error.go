@@ -18,6 +18,8 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
+const maxUpstreamErrorBodyBytes = 64 << 10
+
 func MidjourneyErrorWrapper(code int, desc string) *taskdto.MidjourneyResponse {
 	return &taskdto.MidjourneyResponse{
 		Code:        code,
@@ -87,9 +89,14 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
 func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
 	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 
-	responseBody, err := io.ReadAll(resp.Body)
+	// Error payloads are diagnostic only. Bound the read so a malformed or
+	// malicious upstream cannot make an error path allocate an unbounded body.
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamErrorBodyBytes+1))
 	if err != nil {
 		return
+	}
+	if len(responseBody) > maxUpstreamErrorBodyBytes {
+		responseBody = responseBody[:maxUpstreamErrorBodyBytes]
 	}
 	CloseResponseBodyGracefully(resp)
 	var errResponse dto.GeneralErrorResponse

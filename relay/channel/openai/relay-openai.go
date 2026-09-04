@@ -108,13 +108,14 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	defer service.CloseResponseBodyGracefully(resp)
+	var responseTextBuilder service.ResponseAccumulator
+	defer responseTextBuilder.Close()
 
 	model := info.UpstreamModelName
 	var responseId string
 	var createAt int64 = 0
 	var systemFingerprint string
 	var containStreamUsage bool
-	var responseTextBuilder strings.Builder
 	var toolCount int
 	var usage = &dto.Usage{}
 	var lastStreamData string
@@ -179,7 +180,14 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	if !containStreamUsage {
-		usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+		if accErr := responseTextBuilder.Err(); accErr != nil {
+			return nil, types.NewError(accErr, types.ErrorCodeCountTokenFailed)
+		}
+		text, textErr := responseTextBuilder.String()
+		if textErr != nil {
+			return nil, types.NewError(textErr, types.ErrorCodeCountTokenFailed)
+		}
+		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		usage.CompletionTokens += toolCount * 7
 	}
 
@@ -191,6 +199,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
+	_ = responseTextBuilder.Close()
 	return usage, nil
 }
 

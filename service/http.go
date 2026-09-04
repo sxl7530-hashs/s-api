@@ -8,10 +8,37 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 
 	"github.com/gin-gonic/gin"
 )
+
+const DefaultMaxUpstreamResponseBytes int64 = 32 << 20
+
+var ErrUpstreamResponseTooLarge = fmt.Errorf("upstream response body exceeds the configured limit")
+
+// ReadResponseBodyLimited reads a complete upstream response while enforcing
+// a hard memory bound. Responses below the limit are returned unchanged.
+func ReadResponseBodyLimited(resp *http.Response, maxBytes int64) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("upstream response body is nil")
+	}
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxUpstreamResponseBytes
+		if constant.MaxUpstreamResponseMB > 0 {
+			maxBytes = int64(constant.MaxUpstreamResponseMB) << 20
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, ErrUpstreamResponseTooLarge
+	}
+	return data, nil
+}
 
 func CloseResponseBodyGracefully(httpResponse *http.Response) {
 	if httpResponse == nil || httpResponse.Body == nil {

@@ -31,7 +31,7 @@ type ResponsesToChatStreamState struct {
 	callIDToKey                map[string]string
 	pendingArgsByOutputIndex   map[int]string
 	pendingArgsByItemID        map[string]string
-	usageText                  strings.Builder
+	usageText                  *kitutil.SpillStringWriter
 }
 
 type responsesStreamTool struct {
@@ -58,6 +58,7 @@ func NewResponsesToChatStreamState(model string, includeUsage bool) *ResponsesTo
 		callIDToKey:              make(map[string]string),
 		pendingArgsByOutputIndex: make(map[int]string),
 		pendingArgsByItemID:      make(map[string]string),
+		usageText:                kitutil.NewSpillStringWriter(),
 	}
 }
 

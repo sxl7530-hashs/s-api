@@ -15,14 +15,32 @@ type DiskCacheConfig struct {
 	MaxSizeMB int
 	// Path 磁盘缓存目录
 	Path string
+	// CriticalWatermarkPercent 达到该缓存水位后拒绝新的磁盘缓存请求
+	CriticalWatermarkPercent int
+	// UnknownLengthDiskFirst 未提供 Content-Length 时是否直接流式写盘
+	UnknownLengthDiskFirst bool
+	// MaxRequestMB 单个请求允许占用的最大缓存空间（0 表示不额外限制）
+	MaxRequestMB int
+	// AutoSizing 按磁盘总容量比例和最低剩余空间动态计算上限
+	AutoSizing bool
+	// MaxDiskPercent 自动模式最多使用磁盘总容量的百分比
+	MaxDiskPercent int
+	// MinFreeSpaceMB 无论如何都必须保留的磁盘空间（MB）
+	MinFreeSpaceMB int
 }
 
 // 全局磁盘缓存配置
 var diskCacheConfig = DiskCacheConfig{
-	Enabled:     false,
-	ThresholdMB: 10,
-	MaxSizeMB:   1024,
-	Path:        "",
+	Enabled:                  false,
+	ThresholdMB:              10,
+	MaxSizeMB:                0,
+	Path:                     "",
+	CriticalWatermarkPercent: 90,
+	UnknownLengthDiskFirst:   true,
+	MaxRequestMB:             4096,
+	AutoSizing:               true,
+	MaxDiskPercent:           50,
+	MinFreeSpaceMB:           30720,
 }
 var diskCacheConfigMu sync.RWMutex
 
@@ -68,12 +86,22 @@ func GetDiskCachePath() string {
 	return diskCacheConfig.Path
 }
 
+func GetDiskCacheMaxRequestBytes() int64 {
+	diskCacheConfigMu.RLock()
+	defer diskCacheConfigMu.RUnlock()
+	if diskCacheConfig.MaxRequestMB <= 0 {
+		return 0
+	}
+	return int64(diskCacheConfig.MaxRequestMB) << 20
+}
+
 // DiskCacheStats 磁盘缓存统计信息
 type DiskCacheStats struct {
 	// 当前活跃的磁盘缓存文件数
 	ActiveDiskFiles int64 `json:"active_disk_files"`
 	// 当前磁盘缓存总大小（字节）
 	CurrentDiskUsageBytes int64 `json:"current_disk_usage_bytes"`
+	ReservedDiskBytes     int64 `json:"reserved_disk_bytes"`
 	// 当前内存缓存数量
 	ActiveMemoryBuffers int64 `json:"active_memory_buffers"`
 	// 当前内存缓存总大小（字节）
@@ -89,12 +117,14 @@ type DiskCacheStats struct {
 }
 
 var diskCacheStats DiskCacheStats
+var diskCacheReserveMu sync.Mutex
 
 // GetDiskCacheStats 获取缓存统计信息
 func GetDiskCacheStats() DiskCacheStats {
 	stats := DiskCacheStats{
 		ActiveDiskFiles:         atomic.LoadInt64(&diskCacheStats.ActiveDiskFiles),
 		CurrentDiskUsageBytes:   atomic.LoadInt64(&diskCacheStats.CurrentDiskUsageBytes),
+		ReservedDiskBytes:       atomic.LoadInt64(&diskCacheStats.ReservedDiskBytes),
 		ActiveMemoryBuffers:     atomic.LoadInt64(&diskCacheStats.ActiveMemoryBuffers),
 		CurrentMemoryUsageBytes: atomic.LoadInt64(&diskCacheStats.CurrentMemoryUsageBytes),
 		DiskCacheHits:           atomic.LoadInt64(&diskCacheStats.DiskCacheHits),
@@ -109,6 +139,13 @@ func GetDiskCacheStats() DiskCacheStats {
 func IncrementDiskFiles(size int64) {
 	atomic.AddInt64(&diskCacheStats.ActiveDiskFiles, 1)
 	atomic.AddInt64(&diskCacheStats.CurrentDiskUsageBytes, size)
+}
+
+// AddDiskCacheUsage updates bytes for an already-counted cache file.
+func AddDiskCacheUsage(size int64) {
+	if size > 0 {
+		atomic.AddInt64(&diskCacheStats.CurrentDiskUsageBytes, size)
+	}
 }
 
 // DecrementDiskFiles 减少磁盘文件计数
@@ -168,10 +205,70 @@ func SyncDiskCacheStats() {
 
 // IsDiskCacheAvailable 检查是否可以创建新的磁盘缓存
 func IsDiskCacheAvailable(requestSize int64) bool {
+	diskCacheReserveMu.Lock()
+	defer diskCacheReserveMu.Unlock()
+	return isDiskCacheAvailable(requestSize)
+}
+
+func isDiskCacheAvailable(requestSize int64) bool {
 	if !IsDiskCacheEnabled() {
 		return false
 	}
+	config := GetDiskCacheConfig()
 	maxBytes := GetDiskCacheMaxSizeBytes()
+	if config.AutoSizing {
+		space := GetDiskSpaceInfo()
+		percent := config.MaxDiskPercent
+		if percent <= 0 || percent > 100 {
+			percent = 50
+		}
+		percentLimit := int64(space.Total) * int64(percent) / 100
+		freeLimit := atomic.LoadInt64(&diskCacheStats.CurrentDiskUsageBytes) + int64(space.Free) - int64(config.MinFreeSpaceMB)<<20
+		if freeLimit < 0 {
+			freeLimit = 0
+		}
+		if percentLimit > 0 && (maxBytes <= 0 || percentLimit < maxBytes) {
+			maxBytes = percentLimit
+		}
+		if freeLimit < maxBytes || maxBytes <= 0 {
+			maxBytes = freeLimit
+		}
+	}
 	currentUsage := atomic.LoadInt64(&diskCacheStats.CurrentDiskUsageBytes)
-	return currentUsage+requestSize <= maxBytes
+	watermark := GetDiskCacheConfig().CriticalWatermarkPercent
+	if watermark <= 0 || watermark > 100 {
+		watermark = 90
+	}
+	allowedBytes := maxBytes * int64(watermark) / 100
+	if requestSize < 0 || (GetDiskCacheMaxRequestBytes() > 0 && requestSize > GetDiskCacheMaxRequestBytes()) {
+		return false
+	}
+	return currentUsage+atomic.LoadInt64(&diskCacheStats.ReservedDiskBytes)+requestSize <= allowedBytes
+}
+
+func TryReserveDiskCache(requestSize int64) bool {
+	diskCacheReserveMu.Lock()
+	defer diskCacheReserveMu.Unlock()
+	if requestSize <= 0 {
+		return GetDiskCacheConfig().Enabled
+	}
+	if !isDiskCacheAvailable(requestSize) {
+		return false
+	}
+	atomic.AddInt64(&diskCacheStats.ReservedDiskBytes, requestSize)
+	return true
+}
+
+func ReleaseDiskCacheReservation(size int64) {
+	if size <= 0 {
+		return
+	}
+	diskCacheReserveMu.Lock()
+	defer diskCacheReserveMu.Unlock()
+	old := atomic.LoadInt64(&diskCacheStats.ReservedDiskBytes)
+	next := old - size
+	if next < 0 {
+		next = 0
+	}
+	atomic.StoreInt64(&diskCacheStats.ReservedDiskBytes, next)
 }

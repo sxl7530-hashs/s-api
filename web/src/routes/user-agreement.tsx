@@ -19,7 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute } from '@tanstack/react-router'
 
 import { UserAgreement } from '@/features/legal'
+import { seoHead } from '@/lib/seo'
 
 export const Route = createFileRoute('/user-agreement')({
+  head: () =>
+    seoHead(
+      '用户协议',
+      '阅读 New API 的服务条款、用户责任和使用规范。',
+      '/user-agreement'
+    ),
   component: UserAgreement,
 })

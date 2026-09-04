@@ -34,6 +34,17 @@ export const apiKeySchema = z.object({
   created_time: z.number(),
   accessed_time: z.number(),
   group: z.string().nullish().default(''),
+  token_group_profile_id: z
+    .preprocess((value) => (value === null || value === '' ? undefined : value), z.number())
+    .optional(),
+  token_group_profile: z
+    .object({
+      id: z.number(),
+      name: z.string(),
+      description: z.string().nullish(),
+      route_groups: z.array(z.string()).nullish().default([]),
+    })
+    .nullish(),
   auto_groups: z.array(z.string()).nullish().default(null),
   auto_groups_mode: z.enum(['inherit', 'custom', 'none']).optional(),
   cross_group_retry: z
@@ -93,6 +104,7 @@ export interface ApiKeyFormData {
   model_limits: string
   allow_ips: string
   group: string
+	 token_group_profile_id: number
   auto_groups: string[]
   cross_group_retry: boolean
 }
@@ -100,6 +112,18 @@ export interface ApiKeyFormData {
 export interface TokenAutoGroupsConfig {
   groups: string[]
   max_count: number
+}
+
+export interface TokenGroupProfile {
+  id: number
+  name: string
+  slug: string
+  description: string
+  enabled: boolean
+  display_order: number
+  recommended: boolean
+  route_groups: string[]
+  model_scope: string[]
 }
 
 // ============================================================================

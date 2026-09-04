@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"io"
 	"net/http"
 	"strings"
 
@@ -159,7 +158,17 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 			common.SysLog("claude response usage is not complete, maybe upstream error")
 		}
 		// 只补缺失字段，不整份覆盖——保留 message_start 已拿到的 cache 字段
-		fallback := service.ResponseText2Usage(c, claudeInfo.ResponseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+		var completionTokens int
+		if claudeInfo.ResponseTextSpill != nil {
+			if reader, readerErr := claudeInfo.ResponseTextSpill.NewReader(); readerErr == nil {
+				completionTokens, readerErr = service.EstimateTokenReader(service.Claude, reader)
+				_ = reader.Close()
+			}
+		} else {
+			completionTokens = service.CountTextToken(claudeInfo.ResponseText.String(), info.UpstreamModelName)
+		}
+		fallback := &dto.Usage{PromptTokens: info.GetEstimatePromptTokens(), CompletionTokens: completionTokens}
+		fallback.TotalTokens = fallback.PromptTokens + fallback.CompletionTokens
 		if claudeInfo.Usage.CompletionTokens == 0 ||
 			(!claudeInfo.Done && fallback.CompletionTokens > claudeInfo.Usage.CompletionTokens) {
 			claudeInfo.Usage.CompletionTokens = fallback.CompletionTokens
@@ -199,6 +208,11 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		ResponseText: strings.Builder{},
 		Usage:        &dto.Usage{},
 	}
+	defer func() {
+		if claudeInfo.ResponseTextSpill != nil {
+			_ = claudeInfo.ResponseTextSpill.Close()
+		}
+	}()
 	var err *types.NewAPIError
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		err = HandleStreamResponseData(c, info, claudeInfo, data)
@@ -275,7 +289,12 @@ func ClaudeHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayI
 		ResponseText: strings.Builder{},
 		Usage:        &dto.Usage{},
 	}
-	responseBody, err := io.ReadAll(resp.Body)
+	defer func() {
+		if claudeInfo.ResponseTextSpill != nil {
+			_ = claudeInfo.ResponseTextSpill.Close()
+		}
+	}()
+	responseBody, err := service.ReadResponseBodyLimited(resp, service.DefaultMaxUpstreamResponseBytes)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 	}

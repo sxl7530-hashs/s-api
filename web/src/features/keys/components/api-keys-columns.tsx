@@ -196,13 +196,21 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
       cell: ({ row }) => {
         const apiKey = row.original
         const group = row.getValue('group') as string
+        const profile = apiKey.token_group_profile
         return (
-          <ApiKeyGroupCell
-            group={group}
-            ratio={groupRatios[group]}
-            crossGroupRetry={apiKey.cross_group_retry}
-            shouldReduceMotion={shouldReduceMotion}
-          />
+          <div className='space-y-1'>
+            {profile && (
+              <div className='max-w-[210px] truncate text-xs font-medium text-primary' title={profile.description || profile.name}>
+                {profile.name}
+              </div>
+            )}
+            <ApiKeyGroupCell
+              group={group}
+              ratio={groupRatios[group]}
+              crossGroupRetry={apiKey.cross_group_retry}
+              shouldReduceMotion={shouldReduceMotion}
+            />
+          </div>
         )
       },
       size: 220,

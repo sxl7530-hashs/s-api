@@ -311,6 +311,7 @@ func migrateDB() error {
 		&Channel{},
 		&ChannelCostRatioHistory{},
 		&Token{},
+		&TokenGroupProfile{},
 		&User{},
 		&UserSession{},
 		&AuthFlow{},

@@ -19,9 +19,23 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute } from '@tanstack/react-router'
 
 import { Home } from '@/features/home'
-import { seoHead } from '@/lib/seo'
+import { seoHead, SITE_URL } from '@/lib/seo'
 
 export const Route = createFileRoute('/')({
-  head: () => seoHead('统一 AI API 网关与多模型聚合平台', undefined, '/'),
+  head: () => ({
+    ...seoHead('统一 AI API 网关与多模型聚合平台', undefined, '/'),
+    scripts: [
+      {
+        type: 'application/ld+json',
+        children: JSON.stringify({
+          '@context': 'https://schema.org',
+          '@type': 'WebSite',
+          name: 'New API',
+          description: '统一 AI API 网关与多模型聚合平台',
+          url: `${SITE_URL}/`,
+        }),
+      },
+    ],
+  }),
   component: Home,
 })

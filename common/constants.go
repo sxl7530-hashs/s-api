@@ -161,6 +161,10 @@ var BatchUpdateInterval int
 
 var RelayTimeout int // unit is second
 
+// RelayResponseHeaderTimeout bounds only the wait for upstream response headers.
+// It does not limit the duration of a response body or a streaming generation.
+var RelayResponseHeaderTimeout = 300 // unit is second; configurable via RELAY_RESPONSE_HEADER_TIMEOUT
+
 var RelayIdleConnTimeout int // unit is second
 var RelayMaxIdleConns int
 var RelayMaxIdleConnsPerHost int

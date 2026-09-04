@@ -17,8 +17,42 @@ type ClaudeResponseInfo struct {
 	Created      int64
 	Model        string
 	ResponseText strings.Builder
-	Usage        *dto.Usage
-	Done         bool
+	// ResponseTextSpill receives long stream text after the in-memory builder
+	// reaches its compatibility threshold. The builder remains for short
+	// responses and existing callers/tests.
+	ResponseTextSpill *kitutil.SpillStringWriter
+	Usage             *dto.Usage
+	Done              bool
+}
+
+const claudeResponseMemoryLimit = 256 << 10
+
+func (info *ClaudeResponseInfo) appendResponseText(value string) {
+	if info == nil || value == "" {
+		return
+	}
+	if info.ResponseTextSpill != nil {
+		_, _ = info.ResponseTextSpill.WriteString(value)
+		return
+	}
+	if info.ResponseText.Len()+len(value) <= claudeResponseMemoryLimit {
+		info.ResponseText.WriteString(value)
+		return
+	}
+	info.ResponseTextSpill = kitutil.NewSpillStringWriter()
+	_, _ = info.ResponseTextSpill.WriteString(info.ResponseText.String())
+	info.ResponseText.Reset()
+	_, _ = info.ResponseTextSpill.WriteString(value)
+}
+
+func (info *ClaudeResponseInfo) ResponseTextString() string {
+	if info == nil {
+		return ""
+	}
+	if info.ResponseTextSpill != nil {
+		return info.ResponseTextSpill.String()
+	}
+	return info.ResponseText.String()
 }
 
 func StopReasonClaudeToOpenAI(reason string) string {
@@ -355,10 +389,10 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 	} else if claudeResponse.Type == "content_block_delta" {
 		if claudeResponse.Delta != nil {
 			if claudeResponse.Delta.Text != nil {
-				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Text)
+				claudeInfo.appendResponseText(*claudeResponse.Delta.Text)
 			}
 			if claudeResponse.Delta.Thinking != nil {
-				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Thinking)
+				claudeInfo.appendResponseText(*claudeResponse.Delta.Thinking)
 			}
 		}
 	} else if claudeResponse.Type == "message_delta" {

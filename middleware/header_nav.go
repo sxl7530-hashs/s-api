@@ -122,6 +122,13 @@ func HeaderNavModuleAuth(module string) gin.HandlerFunc {
 	}
 }
 
+// IsHeaderNavModulePublic reports whether a navigation module is enabled for
+// anonymous visitors and therefore eligible for public SEO links.
+func IsHeaderNavModulePublic(module string) bool {
+	access := getHeaderNavAccess(module)
+	return access.Enabled && !access.RequireAuth
+}
+
 func HeaderNavModulePublicOrUserAuth(module string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		access := getHeaderNavAccess(module)

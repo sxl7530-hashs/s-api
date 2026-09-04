@@ -112,9 +112,18 @@ const OPERATIONS_SECTIONS = [
           'performance_setting.disk_cache_threshold_mb':
             settings['performance_setting.disk_cache_threshold_mb'] ?? 10,
           'performance_setting.disk_cache_max_size_mb':
-            settings['performance_setting.disk_cache_max_size_mb'] ?? 1024,
+            settings['performance_setting.disk_cache_max_size_mb'] ?? 0,
           'performance_setting.disk_cache_path':
             settings['performance_setting.disk_cache_path'] ?? '',
+          'performance_setting.disk_cache_critical_watermark_percent':
+            settings['performance_setting.disk_cache_critical_watermark_percent'] ?? 90,
+          'performance_setting.disk_cache_unknown_length_disk_first':
+            settings['performance_setting.disk_cache_unknown_length_disk_first'] ?? true,
+          'performance_setting.disk_cache_max_request_mb':
+            settings['performance_setting.disk_cache_max_request_mb'] ?? 4096,
+          'performance_setting.disk_cache_auto_sizing': settings['performance_setting.disk_cache_auto_sizing'] ?? false,
+          'performance_setting.disk_cache_max_disk_percent': settings['performance_setting.disk_cache_max_disk_percent'] ?? 50,
+          'performance_setting.disk_cache_min_free_space_mb': settings['performance_setting.disk_cache_min_free_space_mb'] ?? 30720,
           'performance_setting.monitor_enabled':
             settings['performance_setting.monitor_enabled'] ?? false,
           'performance_setting.monitor_cpu_threshold':

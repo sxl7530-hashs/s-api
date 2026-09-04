@@ -65,7 +65,13 @@ type PerformanceConfig struct {
 	// 磁盘缓存最大大小（MB）
 	DiskCacheMaxSizeMB int `json:"disk_cache_max_size_mb"`
 	// 磁盘缓存路径
-	DiskCachePath string `json:"disk_cache_path"`
+	DiskCachePath                     string `json:"disk_cache_path"`
+	DiskCacheCriticalWatermarkPercent int    `json:"disk_cache_critical_watermark_percent"`
+	DiskCacheUnknownLengthDiskFirst   bool   `json:"disk_cache_unknown_length_disk_first"`
+	DiskCacheMaxRequestMB             int    `json:"disk_cache_max_request_mb"`
+	DiskCacheAutoSizing               bool   `json:"disk_cache_auto_sizing"`
+	DiskCacheMaxDiskPercent           int    `json:"disk_cache_max_disk_percent"`
+	DiskCacheMinFreeSpaceMB           int    `json:"disk_cache_min_free_space_mb"`
 	// 是否在容器中运行
 	IsRunningInContainer bool `json:"is_running_in_container"`
 
@@ -96,15 +102,21 @@ func GetPerformanceStats(c *gin.Context) {
 	diskConfig := common.GetDiskCacheConfig()
 	monitorConfig := common.GetPerformanceMonitorConfig()
 	config := PerformanceConfig{
-		DiskCacheEnabled:       diskConfig.Enabled,
-		DiskCacheThresholdMB:   diskConfig.ThresholdMB,
-		DiskCacheMaxSizeMB:     diskConfig.MaxSizeMB,
-		DiskCachePath:          diskConfig.Path,
-		IsRunningInContainer:   common.IsRunningInContainer(),
-		MonitorEnabled:         monitorConfig.Enabled,
-		MonitorCPUThreshold:    monitorConfig.CPUThreshold,
-		MonitorMemoryThreshold: monitorConfig.MemoryThreshold,
-		MonitorDiskThreshold:   monitorConfig.DiskThreshold,
+		DiskCacheEnabled:                  diskConfig.Enabled,
+		DiskCacheThresholdMB:              diskConfig.ThresholdMB,
+		DiskCacheMaxSizeMB:                diskConfig.MaxSizeMB,
+		DiskCachePath:                     diskConfig.Path,
+		DiskCacheCriticalWatermarkPercent: diskConfig.CriticalWatermarkPercent,
+		DiskCacheUnknownLengthDiskFirst:   diskConfig.UnknownLengthDiskFirst,
+		DiskCacheMaxRequestMB:             diskConfig.MaxRequestMB,
+		DiskCacheAutoSizing:               diskConfig.AutoSizing,
+		DiskCacheMaxDiskPercent:           diskConfig.MaxDiskPercent,
+		DiskCacheMinFreeSpaceMB:           diskConfig.MinFreeSpaceMB,
+		IsRunningInContainer:              common.IsRunningInContainer(),
+		MonitorEnabled:                    monitorConfig.Enabled,
+		MonitorCPUThreshold:               monitorConfig.CPUThreshold,
+		MonitorMemoryThreshold:            monitorConfig.MemoryThreshold,
+		MonitorDiskThreshold:              monitorConfig.DiskThreshold,
 	}
 
 	// 获取磁盘空间信息

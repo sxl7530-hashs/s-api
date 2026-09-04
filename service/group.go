@@ -103,6 +103,12 @@ func GetRequestAutoGroups(c *gin.Context, userGroup string) []string {
 	if !ok {
 		return []string{}
 	}
+	// An administrator business profile is already an explicit routing policy.
+	// Do not apply the user's selectable-group filter to it; otherwise a valid
+	// profile silently loses routes for users in another billing group.
+	if common.GetContextKeyBool(c, constant.ContextKeyTokenGroupProfile) {
+		return groups
+	}
 	return FilterUserTokenAutoGroups(userGroup, groups)
 }
 

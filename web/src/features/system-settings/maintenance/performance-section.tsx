@@ -74,8 +74,14 @@ const perfSchema = z.object({
   performance_setting: z.object({
     disk_cache_enabled: z.boolean(),
     disk_cache_threshold_mb: z.coerce.number().min(1),
-    disk_cache_max_size_mb: z.coerce.number().min(100),
+    disk_cache_max_size_mb: z.coerce.number().min(0),
     disk_cache_path: z.string(),
+    disk_cache_critical_watermark_percent: z.coerce.number().min(50).max(99),
+    disk_cache_unknown_length_disk_first: z.boolean(),
+    disk_cache_max_request_mb: z.coerce.number().min(0),
+    disk_cache_auto_sizing: z.boolean(),
+    disk_cache_max_disk_percent: z.coerce.number().min(1).max(90),
+    disk_cache_min_free_space_mb: z.coerce.number().min(0),
     monitor_enabled: z.boolean(),
     monitor_cpu_threshold: z.coerce.number().min(0),
     monitor_memory_threshold: z.coerce.number().min(0).max(100),
@@ -91,6 +97,12 @@ type FlatPerfDefaults = {
   'performance_setting.disk_cache_threshold_mb': number
   'performance_setting.disk_cache_max_size_mb': number
   'performance_setting.disk_cache_path': string
+  'performance_setting.disk_cache_critical_watermark_percent': number
+  'performance_setting.disk_cache_unknown_length_disk_first': boolean
+  'performance_setting.disk_cache_max_request_mb': number
+  'performance_setting.disk_cache_auto_sizing': boolean
+  'performance_setting.disk_cache_max_disk_percent': number
+  'performance_setting.disk_cache_min_free_space_mb': number
   'performance_setting.monitor_enabled': boolean
   'performance_setting.monitor_cpu_threshold': number
   'performance_setting.monitor_memory_threshold': number
@@ -105,6 +117,12 @@ const buildFormDefaults = (defaults: FlatPerfDefaults): PerfFormInput => ({
     disk_cache_max_size_mb:
       defaults['performance_setting.disk_cache_max_size_mb'],
     disk_cache_path: defaults['performance_setting.disk_cache_path'] ?? '',
+    disk_cache_critical_watermark_percent: defaults['performance_setting.disk_cache_critical_watermark_percent'] ?? 90,
+    disk_cache_unknown_length_disk_first: defaults['performance_setting.disk_cache_unknown_length_disk_first'] ?? true,
+    disk_cache_max_request_mb: defaults['performance_setting.disk_cache_max_request_mb'] ?? 4096,
+    disk_cache_auto_sizing: defaults['performance_setting.disk_cache_auto_sizing'] ?? true,
+    disk_cache_max_disk_percent: defaults['performance_setting.disk_cache_max_disk_percent'] ?? 50,
+    disk_cache_min_free_space_mb: defaults['performance_setting.disk_cache_min_free_space_mb'] ?? 30720,
     monitor_enabled: defaults['performance_setting.monitor_enabled'],
     monitor_cpu_threshold:
       defaults['performance_setting.monitor_cpu_threshold'],
@@ -124,6 +142,12 @@ const normalizeFormValues = (values: PerfFormValues): FlatPerfDefaults => ({
     values.performance_setting.disk_cache_max_size_mb,
   'performance_setting.disk_cache_path':
     values.performance_setting.disk_cache_path ?? '',
+  'performance_setting.disk_cache_critical_watermark_percent': values.performance_setting.disk_cache_critical_watermark_percent,
+  'performance_setting.disk_cache_unknown_length_disk_first': values.performance_setting.disk_cache_unknown_length_disk_first,
+  'performance_setting.disk_cache_max_request_mb': values.performance_setting.disk_cache_max_request_mb,
+  'performance_setting.disk_cache_auto_sizing': values.performance_setting.disk_cache_auto_sizing,
+  'performance_setting.disk_cache_max_disk_percent': values.performance_setting.disk_cache_max_disk_percent,
+  'performance_setting.disk_cache_min_free_space_mb': values.performance_setting.disk_cache_min_free_space_mb,
   'performance_setting.monitor_enabled':
     values.performance_setting.monitor_enabled,
   'performance_setting.monitor_cpu_threshold':
@@ -331,6 +355,18 @@ export function PerformanceSection(props: Props) {
           </div>
 
           <div className='grid grid-cols-1 gap-4 md:grid-cols-3'>
+            <FormField control={form.control} name='performance_setting.disk_cache_auto_sizing' render={({ field }) => (
+              <SettingsSwitchItem><SettingsSwitchContent><FormLabel>{t('Auto-size cache from disk capacity')}</FormLabel></SettingsSwitchContent><FormControl><Switch checked={field.value} onCheckedChange={field.onChange} disabled={!diskEnabled} /></FormControl></SettingsSwitchItem>
+            )} />
+            <FormField control={form.control} name='performance_setting.disk_cache_max_disk_percent' render={({ field }) => (
+              <FormItem><FormLabel>{t('Maximum disk usage for cache (%)')}</FormLabel><FormControl><Input type='number' min={1} max={90} step={1} {...safeNumberFieldProps(field)} disabled={!diskEnabled || !form.watch('performance_setting.disk_cache_auto_sizing')} /></FormControl><FormDescription>{t('Automatic mode uses this percentage of the disk')}</FormDescription><FormMessage /></FormItem>
+            )} />
+            <FormField control={form.control} name='performance_setting.disk_cache_min_free_space_mb' render={({ field }) => (
+              <FormItem><FormLabel>{t('Minimum free disk space (MB)')}</FormLabel><FormControl><Input type='number' min={0} step={1} {...safeNumberFieldProps(field)} disabled={!diskEnabled || !form.watch('performance_setting.disk_cache_auto_sizing')} /></FormControl><FormDescription>{t('Always keep this space free')}</FormDescription><FormMessage /></FormItem>
+            )} />
+          </div>
+
+          <div className='grid grid-cols-1 gap-4 md:grid-cols-3'>
             <FormField
               control={form.control}
               name='performance_setting.disk_cache_enabled'
@@ -379,7 +415,7 @@ export function PerformanceSection(props: Props) {
                   <FormControl>
                     <Input
                       type='number'
-                      min={100}
+                      min={0}
                       step={1}
                       {...safeNumberFieldProps(field)}
                       disabled={!diskEnabled}
@@ -396,6 +432,49 @@ export function PerformanceSection(props: Props) {
                     )}
                   <FormMessage />
                 </FormItem>
+              )}
+            />
+          </div>
+
+          <div className='grid grid-cols-1 gap-4 md:grid-cols-3'>
+            <FormField
+              control={form.control}
+              name='performance_setting.disk_cache_critical_watermark_percent'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Cache Critical Watermark (%)')}</FormLabel>
+                  <FormControl>
+                    <Input type='number' min={50} max={99} step={1} {...safeNumberFieldProps(field)} disabled={!diskEnabled} />
+                  </FormControl>
+                  <FormDescription>{t('Reject new large requests after this cache usage')}</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='performance_setting.disk_cache_max_request_mb'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Max Cache Per Request (MB)')}</FormLabel>
+                  <FormControl>
+                    <Input type='number' min={0} step={1} {...safeNumberFieldProps(field)} disabled={!diskEnabled} />
+                  </FormControl>
+                  <FormDescription>{t('Set 0 for no additional per-request limit')}</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='performance_setting.disk_cache_unknown_length_disk_first'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Use Disk First for Unknown-Length Requests')}</FormLabel>
+                  </SettingsSwitchContent>
+                  <FormControl><Switch checked={field.value} onCheckedChange={field.onChange} disabled={!diskEnabled} /></FormControl>
+                </SettingsSwitchItem>
               )}
             />
           </div>
