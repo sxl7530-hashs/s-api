@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, KeyRound, Settings2, WalletCards } from 'lucide-react'
+import { ArrowRight, ChevronDown, KeyRound, Search, Settings2, WalletCards } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm, type SubmitErrorHandler } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -74,6 +74,7 @@ import {
   getApiKey,
   getTokenAutoGroups,
 	getTokenGroupProfiles,
+	getTokenGroupProfileHelp,
 } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
@@ -84,10 +85,7 @@ import {
   transformApiKeyToFormDefaults,
 } from '../lib'
 import type { ApiKey } from '../types'
-import {
-  ApiKeyGroupCombobox,
-  type ApiKeyGroupOption,
-} from './api-key-group-combobox'
+import { type ApiKeyGroupOption } from './api-key-group-combobox'
 import { useApiKeys } from './api-keys-provider'
 import { AutoGroupOrderEditor } from './auto-group-order-editor'
 
@@ -112,6 +110,9 @@ export function ApiKeysMutateDrawer({
   const [initializedTarget, setInitializedTarget] = useState<string | null>(
     null
   )
+  const [modelHelpQuery, setModelHelpQuery] = useState('')
+  const [groupPickerOpen, setGroupPickerOpen] = useState(false)
+  const [profilePickerOpen, setProfilePickerOpen] = useState(false)
   const defaultUseAutoGroup = status?.default_use_auto_group === true
 
   // Fetch models
@@ -139,6 +140,13 @@ export function ApiKeysMutateDrawer({
     queryFn: getTokenGroupProfiles,
     enabled: open,
     staleTime: 60_000,
+  })
+
+  const { data: modelHelpData, isFetching: modelHelpFetching } = useQuery({
+    queryKey: ['token-group-profile-help', modelHelpQuery.trim()],
+    queryFn: () => getTokenGroupProfileHelp(modelHelpQuery.trim()),
+    enabled: open && modelHelpQuery.trim().length >= 2,
+    staleTime: 30_000,
   })
 
   const {
@@ -287,6 +295,23 @@ export function ApiKeysMutateDrawer({
     isUpdate && currentRow ? `update:${currentRow.id}` : 'create'
   const isFormInitialized = initializedTarget === formTarget
   const selectedGroup = form.watch('group')
+  const selectedAutoGroups = form.watch('auto_groups') || []
+  const selectedGroups = selectedGroup === 'auto' ? selectedAutoGroups : selectedGroup ? [selectedGroup] : []
+  const selectableGroups = groups.filter((group) => group.value !== 'auto')
+  const setSelectedGroups = (values: string[]) => {
+    const next = values.slice(0, maxAutoGroups)
+    if (next.length <= 1) {
+      form.setValue('group', next[0] || '', { shouldDirty: true, shouldValidate: true })
+      form.setValue('auto_groups', [], { shouldDirty: true, shouldValidate: true })
+      form.setValue('auto_groups_mode', 'inherit', { shouldDirty: true })
+      form.setValue('cross_group_retry', false, { shouldDirty: true })
+    } else {
+      form.setValue('group', 'auto', { shouldDirty: true, shouldValidate: true })
+      form.setValue('auto_groups', next, { shouldDirty: true, shouldValidate: true })
+      form.setValue('auto_groups_mode', 'custom', { shouldDirty: true })
+      form.setValue('cross_group_retry', true, { shouldDirty: true })
+    }
+  }
 
   // Correct group after groups load: if the form value is not in available groups, fall back
   useEffect(() => {
@@ -386,8 +411,21 @@ export function ApiKeysMutateDrawer({
   const quotaPlaceholder = tokensOnly
     ? t('Enter quota in tokens')
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
-  const autoGroupsMode = form.watch('auto_groups_mode')
   const unlimitedQuota = form.watch('unlimited_quota')
+  const modelHelpProfiles = modelHelpData?.data?.profiles?.length
+    ? modelHelpData.data.profiles
+    : modelHelpQuery.trim().length >= 2
+      ? quickProfiles
+      : []
+  const visibleModelHelpProfiles = modelHelpProfiles.filter(
+    (profile) => profile.id !== selectedProfileId
+  )
+  useEffect(() => {
+    if (modelHelpQuery.trim().length >= 2) {
+      setProfilePickerOpen(false)
+      setGroupPickerOpen((modelHelpData?.data?.groups?.length || 0) <= 5)
+    }
+  }, [modelHelpQuery, modelHelpData])
 
   return (
     <Sheet
@@ -442,6 +480,12 @@ export function ApiKeysMutateDrawer({
 						  form.setValue('auto_groups', [], { shouldDirty: true })
 						  form.setValue('auto_groups_mode', 'inherit', { shouldDirty: true })
 						  form.setValue('cross_group_retry', true, { shouldDirty: true })
+						} else {
+						  const fallback = selectableGroups.find((group) => group.value === 'default')?.value || selectableGroups[0]?.value || ''
+						  form.setValue('group', fallback, { shouldDirty: true })
+						  form.setValue('auto_groups', [], { shouldDirty: true })
+						  form.setValue('auto_groups_mode', 'inherit', { shouldDirty: true })
+						  form.setValue('cross_group_retry', false, { shouldDirty: true })
 						}
 					  }}>
 						<NativeSelectOption value='0'>{t('Custom')}</NativeSelectOption>
@@ -463,43 +507,49 @@ export function ApiKeysMutateDrawer({
 							<span className='text-[11px] text-muted-foreground'>{t('Configured route order')}</span>
 						  </div>
 						  {profile.description && <p className='mt-1 text-xs text-muted-foreground'>{profile.description}</p>}
-						  <div className='mt-2 flex flex-wrap items-center gap-1.5'>
+						  <div className='mt-2 space-y-1.5'>
 							{profile.route_groups.map((group, index) => (
-							  <span key={`${group}-${index}`} className='inline-flex items-center gap-1 rounded-full bg-background px-2 py-0.5 text-xs font-medium shadow-sm'>
-								<span className='text-muted-foreground'>{index + 1}.</span>{group}
-							  </span>
+								<span key={`${group}-${index}`} className='flex items-start gap-2 rounded-md bg-background px-2 py-1 text-xs font-medium shadow-sm'>
+								<span className='shrink-0 text-muted-foreground'>{index + 1}.</span>
+								<span className='min-w-0'>
+									<span className='block'>{group} ×{String(groups.find((item) => item.value === group)?.ratio ?? '—')}</span>
+									<span className='block text-[11px] font-normal leading-relaxed text-muted-foreground'>
+										· {groups.find((item) => item.value === group)?.desc || t('Configured group')}
+									</span>
+								</span>
+								</span>
 							))}
 						  </div>
 						</div>
 					  )
 					})()}
-					{quickProfiles.length > 0 && selectedProfileId === 0 && (
-					  <div className='rounded-lg border border-primary/20 bg-primary/5 p-2.5'>
-						<div className='mb-2 text-xs font-medium text-primary'>{t('Quick select')}</div>
-						<div className='flex flex-wrap gap-2'>
-						  {quickProfiles.map((profile) => (
-							<Button
-							  key={profile.id}
-							  type='button'
-							  size='sm'
-							  variant={selectedProfileId === profile.id ? 'default' : 'outline'}
-							  className='h-8 max-w-full gap-1.5 rounded-full px-3 text-xs'
-							  onClick={() => {
-								field.onChange(profile.id)
-								form.setValue('group', 'auto', { shouldDirty: true })
-								form.setValue('auto_groups', [], { shouldDirty: true })
-								form.setValue('auto_groups_mode', 'inherit', { shouldDirty: true })
-								form.setValue('cross_group_retry', true, { shouldDirty: true })
-							  }}
-							>
-							  {profile.recommended && <span aria-hidden='true'>★</span>}
-							  <span className='truncate'>{profile.name}</span>
-							</Button>
-						  ))}
-						</div>
-					  </div>
-					)}
 					<FormMessage />
+					{quickProfiles.length > 0 && selectedProfileId === 0 && (
+					  <Collapsible open={profilePickerOpen} onOpenChange={setProfilePickerOpen} className='rounded-lg border border-primary/20 bg-primary/5 p-2.5'>
+					    <CollapsibleTrigger render={<Button type='button' variant='ghost' size='sm' className='h-8 w-full justify-between px-1 text-xs text-primary' />}>
+					      <span>{t('Choose portable group')}</span>
+					      <ChevronDown className={cn('size-4 transition-transform', profilePickerOpen && 'rotate-180')} />
+					    </CollapsibleTrigger>
+					    <CollapsibleContent className='pt-2'>
+					      <div className='flex flex-wrap gap-2'>
+					        {quickProfiles.map((profile) => (
+					          <Button key={profile.id} type='button' size='sm' variant='outline' className='h-auto max-w-full gap-1.5 rounded-md px-3 py-1.5 text-left text-xs' onClick={() => {
+					            field.onChange(profile.id)
+					            form.setValue('group', 'auto', { shouldDirty: true })
+					            form.setValue('auto_groups', [], { shouldDirty: true })
+					            form.setValue('auto_groups_mode', 'inherit', { shouldDirty: true })
+					            form.setValue('cross_group_retry', true, { shouldDirty: true })
+					          }}>
+					            <span className='min-w-0'>
+					              <span className='block truncate font-medium'>{profile.name}</span>
+					              {profile.description && <span className='block max-w-56 truncate text-[11px] text-muted-foreground'>{profile.description}</span>}
+					            </span>
+					          </Button>
+					        ))}
+					      </div>
+					    </CollapsibleContent>
+					  </Collapsible>
+					)}
 				  </FormItem>
 				)}
 			  />
@@ -521,40 +571,128 @@ export function ApiKeysMutateDrawer({
               {selectedProfileId === 0 && <FormField
                 control={form.control}
                 name='group'
-                render={({ field }) => (
+                render={() => (
                   <FormItem>
                     <FormLabel>{t('Group')}</FormLabel>
                     <FormControl>
-                      <ApiKeyGroupCombobox
-                        options={groups}
-                        value={field.value}
-                        onValueChange={(group) => {
-                          field.onChange(group)
-                          if (group === 'auto') {
-                            // Auto is independent from the default group;
-                            // start with an empty, explicitly editable list.
-                            form.setValue('auto_groups', [], {
-                              shouldDirty: true,
-                            })
-                            form.setValue('auto_groups_mode', 'custom', {
-                              shouldDirty: true,
-                            })
-                            form.setValue('cross_group_retry', true, {
-                              shouldDirty: true,
-                            })
-                            return
-                          }
-                          form.setValue('cross_group_retry', false, {
-                            shouldDirty: true,
-                          })
-                        }}
-                        placeholder={t('Select a group')}
+                      <MultiSelect
+                        options={selectableGroups.map((group) => ({
+                          label: `${group.label} ×${String(group.ratio ?? '—')}`,
+                          value: group.value,
+                          description: group.desc,
+                        }))}
+                        selected={selectedGroups}
+                        onChange={setSelectedGroups}
+                        placeholder={t('Select groups')}
+                        maxVisibleChips={6}
                       />
                     </FormControl>
+                    <FormDescription>{t('Select one or more groups. Requests follow this order and use the configured group limit.')}</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />}
+
+              {selectedProfileId === 0 && <div className='rounded-lg border border-dashed border-muted-foreground/30 p-3'>
+                <div className='flex items-center gap-2 text-sm font-medium'>
+                  <Search className='size-4 text-muted-foreground' />
+                  {t('Find a group by model')}
+                </div>
+                <p className='mt-1 text-xs text-muted-foreground'>
+                  {t('Enter a model name to see available groups and rates.')}
+                </p>
+                <Input
+                  className='mt-2'
+                  value={modelHelpQuery}
+                  onChange={(event) => setModelHelpQuery(event.target.value)}
+                  placeholder={t('For example, opus-4.6 or gpt-5.5')}
+                />
+                {modelHelpQuery.trim().length >= 2 && (
+                  <div className='mt-3 space-y-2'>
+                    {modelHelpFetching && <p className='text-xs text-muted-foreground'>{t('Searching...')}</p>}
+                    {!modelHelpFetching && modelHelpProfiles.length === 0 && (
+                      <p className='text-xs text-muted-foreground'>{t('No matching groups found')}</p>
+                    )}
+                    {!modelHelpFetching && modelHelpProfiles.length > 0 && (modelHelpData?.data?.exact_match === false || !modelHelpData?.data) && (
+                      <p className='text-xs text-muted-foreground'>{t('No exact model match; showing configured groups')}</p>
+                    )}
+                    {visibleModelHelpProfiles.length > 0 && (
+                      <Collapsible open={profilePickerOpen} onOpenChange={setProfilePickerOpen} className='rounded-lg border border-primary/20 bg-primary/5 p-2.5'>
+                        <CollapsibleTrigger render={<Button type='button' variant='ghost' size='sm' className='h-8 w-full justify-between px-1 text-xs text-primary' />}>
+                          <span>{t('Choose portable group')} · {t('{{count}} available', { count: visibleModelHelpProfiles.length })}</span>
+                          <ChevronDown className={cn('size-4 transition-transform', profilePickerOpen && 'rotate-180')} />
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className='pt-2 space-y-2'>
+                        {visibleModelHelpProfiles.slice(0, 3).map((profile) => (
+                          <button
+                            key={profile.id}
+                            type='button'
+                            className='flex w-full items-start justify-between gap-3 rounded-md border bg-background px-3 py-2 text-left hover:bg-muted/50'
+                            onClick={() => {
+                              form.setValue('token_group_profile_id', profile.id, { shouldDirty: true })
+                              form.setValue('group', 'auto', { shouldDirty: true })
+                              form.setValue('auto_groups', [], { shouldDirty: true })
+                              form.setValue('auto_groups_mode', 'inherit', { shouldDirty: true })
+                              form.setValue('cross_group_retry', true, { shouldDirty: true })
+                            }}
+                          >
+                        <span className='min-w-0'>
+                          <span className='block text-xs font-semibold'>{profile.name}{profile.recommended ? ` · ${t('Recommended')}` : ''}</span>
+                          <span className='mt-0.5 block text-xs text-muted-foreground'>{profile.description}</span>
+                          <span className='mt-1 block text-[11px] text-muted-foreground'>
+                            {profile.model_scope?.length
+                              ? `${t('Supported models')}: ${profile.model_scope.join(', ')}`
+                              : t('Covers models available in the listed groups')}
+                          </span>
+                          <span className='mt-1 flex flex-wrap gap-1'>
+                            {profile.route_groups.map((group) => (
+                              <span key={group} className='rounded bg-muted px-1.5 py-0.5 text-[10px]'>
+                                {group} ×{String(modelHelpData?.data?.available_groups?.[group] ?? groups.find((item) => item.value === group)?.ratio ?? '—')} · {groups.find((item) => item.value === group)?.desc || t('Configured group')}
+                              </span>
+                            ))}
+                          </span>
+                        </span>
+                        <span className='shrink-0 text-xs text-primary'>{t('Use this group')}</span>
+                          </button>
+                        ))}
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )}
+                    {selectedProfileId === 0 && (modelHelpData?.data?.groups || []).length > 0 && (
+                      <Collapsible open={groupPickerOpen} onOpenChange={setGroupPickerOpen} className='pt-1'>
+                        <CollapsibleTrigger
+                          render={<Button type='button' variant='outline' size='sm' className='h-8 w-full justify-between text-xs' />}
+                        >
+                          <span>{t('Choose ordinary groups')} · {t('{{count}} selected', { count: selectedGroups.length })}</span>
+                          <ChevronDown className={cn('size-4 transition-transform', groupPickerOpen && 'rotate-180')} />
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className='mt-2 space-y-1.5'>
+                        <div className='text-xs font-medium text-muted-foreground'>{t('Available groups')}</div>
+                        {(modelHelpData?.data?.groups || []).map((group) => {
+                          const isSelected = selectedGroups.includes(group.name)
+                          const atLimit = selectedGroups.length >= maxAutoGroups && !isSelected
+                          return (
+                            <button
+                              key={group.name}
+                              type='button'
+                              disabled={atLimit}
+                              className='flex w-full items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-left hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-50'
+                              onClick={() => setSelectedGroups(isSelected ? selectedGroups.filter((item) => item !== group.name) : [...selectedGroups, group.name])}
+                            >
+                              <span className='min-w-0'>
+                                <span className='block text-xs font-semibold'>{group.name} ×{String(group.ratio)}{group.matched ? '' : ` · ${t('Candidate')}`}</span>
+                                <span className='block text-[11px] font-normal leading-relaxed text-muted-foreground'>{group.desc}</span>
+                              </span>
+                              <span className='shrink-0 text-xs text-primary'>{isSelected ? t('Selected') : t('Add')}</span>
+                            </button>
+                          )
+                        })}
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )}
+                  </div>
+                )}
+              </div>}
 
 	              {selectedGroup === 'auto' && selectedProfileId === 0 && (
                 <FormField
@@ -562,32 +700,27 @@ export function ApiKeysMutateDrawer({
                   name='auto_groups'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('Auto group order')}</FormLabel>
-                      <FormDescription>
-                        {t(
-                          'Choose and order the groups this API key will try.'
-                        )}
-                      </FormDescription>
+                      <FormLabel>{t('Group order')}</FormLabel>
+                      <FormDescription>{t('Requests try groups from left to right; if one fails, the next group is tried.')}</FormDescription>
+                      <div className='flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-medium text-primary'>
+                        <span>{t('Request order')}</span>
+                        {selectedAutoGroups.map((group, index) => (
+                          <span key={group} className='inline-flex min-w-0 items-center gap-1'>
+                            {index > 0 && <ArrowRight className='size-3.5 shrink-0' aria-hidden='true' />}
+                            <span className='max-w-28 truncate rounded bg-background px-1.5 py-0.5'>{group}</span>
+                          </span>
+                        ))}
+                      </div>
                       <FormControl>
                         <AutoGroupOrderEditor
                           value={field.value}
-                          mode={autoGroupsMode}
+                          mode='custom'
                           options={groups}
                           globalOptions={globalAutoGroupOptions}
                           maxCount={maxAutoGroups}
                           onChange={(value) => {
-                            form.setValue('auto_groups_mode', value.mode, {
-                              shouldDirty: true,
-                              shouldValidate: false,
-                            })
-                            form.setValue(
-                              'auto_groups',
-                              value.groups.slice(0, maxAutoGroups),
-                              {
-                                shouldDirty: true,
-                                shouldValidate: true,
-                              }
-                            )
+                            form.setValue('auto_groups_mode', 'custom', { shouldDirty: true })
+                            form.setValue('auto_groups', value.groups.slice(0, maxAutoGroups), { shouldDirty: true, shouldValidate: true })
                           }}
                         />
                       </FormControl>

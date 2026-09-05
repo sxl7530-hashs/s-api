@@ -126,6 +126,14 @@ export interface TokenGroupProfile {
   model_scope: string[]
 }
 
+export interface TokenGroupProfileHelpResponse {
+  model: string
+  profiles: TokenGroupProfile[]
+  exact_match?: boolean
+  available_groups: Record<string, number | string>
+  groups?: Array<{ name: string; desc: string; ratio: number | string; matched: boolean }>
+}
+
 // ============================================================================
 // Dialog Types
 // ============================================================================

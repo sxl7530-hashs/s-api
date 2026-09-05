@@ -41,6 +41,7 @@ import { cn } from '@/lib/utils'
 export type Option = {
   label: string
   value: string
+  description?: string
 }
 
 interface MultiSelectProps {
@@ -377,7 +378,14 @@ export function MultiSelect(props: MultiSelectProps) {
                       </span>
                     </>
                   ) : (
-                    <span className='truncate'>{label}</span>
+                  <span className='min-w-0'>
+                    <span className='block truncate'>{label}</span>
+                    {props.options.find((option) => option.value === item)?.description && (
+                      <span className='block truncate text-[11px] font-normal leading-relaxed text-muted-foreground'>
+                        {props.options.find((option) => option.value === item)?.description}
+                      </span>
+                    )}
+                  </span>
                   )}
                 </ComboboxItem>
               )

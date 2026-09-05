@@ -2,10 +2,12 @@ package controller
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -141,6 +143,36 @@ func DeleteTokenGroupProfile(c *gin.Context) {
 // TokenGroupProfileHelp returns profiles matching a model name for the token creation helper.
 func TokenGroupProfileHelp(c *gin.Context) {
 	modelName := strings.TrimSpace(c.Query("model"))
+	normalize := func(value string) string {
+		value = strings.ToLower(value)
+		value = strings.NewReplacer("-", "", "_", "", ".", "", " ", "").Replace(value)
+		return value
+	}
+	normalizedModel := normalize(modelName)
+	userGroup, _ := model.GetUserGroup(c.GetInt("id"), false)
+	usableGroups := service.GetUserUsableGroups(userGroup)
+	groupRatios := ratio_setting.GetGroupRatioCopy()
+	groupsOut := make([]gin.H, 0, len(usableGroups))
+	for groupName, description := range usableGroups {
+		if groupName == "auto" {
+			continue
+		}
+		if _, ok := groupRatios[groupName]; !ok {
+			continue
+		}
+		matched := modelName == ""
+		if modelName != "" {
+			for _, enabledModel := range model.GetGroupEnabledModels(groupName) {
+				n := normalize(enabledModel)
+				if n == normalizedModel || strings.Contains(n, normalizedModel) || strings.Contains(normalizedModel, n) {
+					matched = true
+					break
+				}
+			}
+		}
+		groupsOut = append(groupsOut, gin.H{"name": groupName, "desc": description, "ratio": service.GetUserGroupRatio(userGroup, groupName), "matched": matched})
+	}
+	sort.Slice(groupsOut, func(i, j int) bool { return groupsOut[i]["name"].(string) < groupsOut[j]["name"].(string) })
 	var rows []model.TokenGroupProfile
 	q := model.DB.Where("enabled = ?", true).Order("recommended desc").Order("display_order asc")
 	if err := q.Find(&rows).Error; err != nil {
@@ -148,21 +180,50 @@ func TokenGroupProfileHelp(c *gin.Context) {
 		return
 	}
 	out := make([]gin.H, 0, len(rows))
+	matchedCount := 0
 	for i := range rows {
 		scope := rows[i].GetModelScope()
-		if modelName != "" && len(scope) > 0 {
+		if modelName != "" {
 			matched := false
-			for _, s := range scope {
-				if s == modelName || s == "*" {
-					matched = true
-					break
+			if len(scope) > 0 {
+				for _, s := range scope {
+					if s == "*" || normalize(s) == normalizedModel || strings.Contains(normalize(s), normalizedModel) || strings.Contains(normalizedModel, normalize(s)) {
+						matched = true
+						break
+					}
+				}
+			} else {
+				// An empty model scope means "all models in the configured
+				// route groups". This keeps older/admin-created profiles useful
+				// without requiring a second model-maintenance workflow.
+				for _, group := range rows[i].GetRouteGroups() {
+					for _, enabledModel := range model.GetGroupEnabledModels(group) {
+						normalizedEnabledModel := normalize(enabledModel)
+						if normalizedEnabledModel == normalizedModel || strings.Contains(normalizedEnabledModel, normalizedModel) || strings.Contains(normalizedModel, normalizedEnabledModel) {
+							matched = true
+							break
+						}
+					}
+					if matched {
+						break
+					}
 				}
 			}
 			if !matched {
 				continue
 			}
+			matchedCount++
 		}
 		out = append(out, profileResponse(&rows[i]))
 	}
-	common.ApiSuccess(c, gin.H{"model": modelName, "profiles": out, "available_groups": ratio_setting.GetGroupRatioCopy()})
+	// Keep the helper useful when administrators configured route groups but
+	// model metadata has not been synced yet. The UI labels these as general
+	// candidates instead of claiming an exact model match.
+	if modelName != "" && matchedCount == 0 {
+		out = out[:0]
+		for i := range rows {
+			out = append(out, profileResponse(&rows[i]))
+		}
+	}
+	common.ApiSuccess(c, gin.H{"model": modelName, "profiles": out, "groups": groupsOut, "exact_match": matchedCount > 0, "available_groups": ratio_setting.GetGroupRatioCopy()})
 }

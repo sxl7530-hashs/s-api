@@ -27,6 +27,7 @@ import type {
   ApiKeyFormData,
   TokenAutoGroupsConfig,
 	TokenGroupProfile,
+	TokenGroupProfileHelpResponse,
 } from './types'
 
 // ============================================================================
@@ -44,6 +45,13 @@ export async function getApiKeys(
 
 export async function getTokenGroupProfiles(): Promise<ApiResponse<TokenGroupProfile[]>> {
   const res = await api.get('/api/token/group-profiles')
+  return res.data
+}
+
+export async function getTokenGroupProfileHelp(
+  model: string
+): Promise<ApiResponse<TokenGroupProfileHelpResponse>> {
+  const res = await api.get(`/api/token/group-profiles/help?model=${encodeURIComponent(model)}`)
   return res.data
 }
 

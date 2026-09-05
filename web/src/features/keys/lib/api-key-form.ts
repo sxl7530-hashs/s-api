@@ -53,7 +53,7 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
           ctx.addIssue({
             code: 'custom',
             path: ['auto_groups'],
-            message: t('Select at most {{max}} Auto groups', {
+            message: t('Select at most {{max}} groups', {
               max: autoGroupLimit,
             }),
           })
@@ -63,7 +63,7 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
           ctx.addIssue({
             code: 'custom',
             path: ['auto_groups'],
-            message: t('Auto groups must not contain duplicates'),
+            message: t('Groups must not contain duplicates'),
           })
         }
       }
