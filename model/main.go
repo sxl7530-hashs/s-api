@@ -27,6 +27,17 @@ var commonFalseVal string
 var logKeyCol string
 var logGroupCol string
 
+func jsonScanBytes(value interface{}) []byte {
+	switch v := value.(type) {
+	case []byte:
+		return v
+	case string:
+		return []byte(v)
+	default:
+		return nil
+	}
+}
+
 func initCol() {
 	// init common column names
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
