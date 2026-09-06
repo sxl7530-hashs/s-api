@@ -1,114 +1,11 @@
 package service
 
 import (
-	"io"
 	"math"
 	"strings"
 	"sync"
 	"unicode"
-	"unicode/utf8"
 )
-
-type streamingTokenEstimator struct {
-	m               multipliers
-	count           float64
-	currentWordType int
-}
-
-func (e *streamingTokenEstimator) consume(text string) {
-	for _, r := range text {
-		if unicode.IsSpace(r) {
-			e.currentWordType = 0
-			if r == '\n' || r == '\t' {
-				e.count += e.m.Newline
-			} else {
-				e.count += e.m.Space
-			}
-			continue
-		}
-		if isCJK(r) {
-			e.currentWordType = 0
-			e.count += e.m.CJK
-			continue
-		}
-		if isEmoji(r) {
-			e.currentWordType = 0
-			e.count += e.m.Emoji
-			continue
-		}
-		if isLatinOrNumber(r) {
-			newType := 1
-			if unicode.IsNumber(r) {
-				newType = 2
-			}
-			if e.currentWordType == 0 || e.currentWordType != newType {
-				if newType == 2 {
-					e.count += e.m.Number
-				} else {
-					e.count += e.m.Word
-				}
-				e.currentWordType = newType
-			}
-			continue
-		}
-		e.currentWordType = 0
-		if isMathSymbol(r) {
-			e.count += e.m.MathSymbol
-		} else if r == '@' {
-			e.count += e.m.AtSign
-		} else if isURLDelim(r) {
-			e.count += e.m.URLDelim
-		} else {
-			e.count += e.m.Symbol
-		}
-	}
-}
-
-func (e *streamingTokenEstimator) result() int { return int(math.Ceil(e.count)) + e.m.BasePad }
-
-// EstimateTokenReader counts a complete stream without materializing it. A
-// trailing word is carried between chunks so chunk boundaries do not change
-// the estimator's word-transition semantics.
-func EstimateTokenReader(provider Provider, reader io.Reader) (int, error) {
-	e := &streamingTokenEstimator{m: getMultipliers(provider)}
-	buf := make([]byte, 64<<10)
-	carry := ""
-	for {
-		n, err := reader.Read(buf)
-		if n > 0 {
-			part := carry + string(buf[:n])
-			carry = ""
-			for len(part) > 0 {
-				_, size := utf8.DecodeLastRuneInString(part)
-				last := []rune(part)[len([]rune(part))-1]
-				if isLatinOrNumber(last) {
-					start := len(part) - size
-					for start > 0 {
-						r, s := utf8.DecodeLastRuneInString(part[:start])
-						if !isLatinOrNumber(r) {
-							break
-						}
-						start -= s
-					}
-					carry, part = part[start:], part[:start]
-				} else {
-					e.consume(part)
-					part = ""
-				}
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return 0, err
-		}
-	}
-	if carry != "" {
-		e.consume(carry)
-	}
-	return e.result(), nil
-}
 
 // Provider 定义模型厂商大类
 type Provider string

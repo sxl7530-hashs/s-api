@@ -4,12 +4,10 @@ import (
 	"io"
 	"net/http"
 
-	taskdto "github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/relaykit/types"
-	hosttypes "github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,7 +34,7 @@ type Adaptor interface {
 type TaskAdaptor interface {
 	Init(info *relaycommon.RelayInfo)
 
-	ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *taskdto.TaskError
+	ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
 
 	// ── Billing ──────────────────────────────────────────────────────
 
@@ -48,7 +46,7 @@ type TaskAdaptor interface {
 	EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64
 
 	// AdjustBillingOnSubmit returns adjusted OtherRatios from the upstream
-	// submit response. Called after a successful ParseResponse.
+	// submit response. Called after a successful DoResponse.
 	// If the upstream returned actual parameters that differ from the estimate
 	// (e.g. actual seconds), return updated ratios so the caller can recalculate
 	// the quota and settle the delta with the pre-charge.
@@ -69,67 +67,17 @@ type TaskAdaptor interface {
 	BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error)
 
 	DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error)
-	ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*TaskSubmitResponse, *taskdto.TaskError)
+	DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, err *dto.TaskError)
 
 	GetModelList() []string
 	GetChannelName() string
 
 	// ── Polling ──────────────────────────────────────────────────────
 
-	FetchTask(baseUrl, key string, task *model.Task, proxy string) (*http.Response, error)
-	ParseTaskResult(task *model.Task, resp *http.Response, respBody []byte) (*relaycommon.TaskInfo, error)
-}
-
-// TaskSubmitResponse is the transport-independent result of parsing an
-// upstream task submission. Parsing must not write to the client response.
-type TaskSubmitResponse struct {
-	UpstreamTaskID string
-	TaskData       []byte
-	ClientResponse any
-	Immediate      *relaycommon.TaskInfo
-	PluginState    []byte
+	FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error)
+	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
 }
 
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
-}
-
-type TaskArtifact = hosttypes.TaskArtifact
-
-type TaskArtifactClientRequest struct {
-	Method  string            `json:"method"`
-	Headers map[string]string `json:"headers,omitempty"`
-}
-
-type TaskArtifactProvider interface {
-	ListArtifacts(task *model.Task) ([]TaskArtifact, error)
-}
-
-type TaskContentRequest struct {
-	URL            string
-	Method         string
-	Headers        map[string]string
-	Body           []byte
-	Credentialless bool
-}
-
-type TaskContentRequestProvider interface {
-	BuildContentRequest(task *model.Task, artifactKey string, clientRequest TaskArtifactClientRequest) (*TaskContentRequest, error)
-}
-
-type TaskUsageFactsProvider interface {
-	ExtractUsageFacts(c *gin.Context, info *relaycommon.RelayInfo) map[string]any
-}
-
-// TaskValidatedBillingProvider lets an adaptor reject invalid usage facts at
-// the existing estimate point, after model mapping and before quota
-// multiplication. Non-plugin task adaptors keep using EstimateBilling.
-type TaskValidatedBillingProvider interface {
-	EstimateBillingValidated(c *gin.Context, info *relaycommon.RelayInfo) (map[string]float64, error)
-}
-
-// TaskValidatedUsageFactsProvider is the tiered-billing counterpart to
-// TaskValidatedBillingProvider.
-type TaskValidatedUsageFactsProvider interface {
-	ExtractUsageFactsValidated(c *gin.Context, info *relaycommon.RelayInfo) (map[string]any, error)
 }

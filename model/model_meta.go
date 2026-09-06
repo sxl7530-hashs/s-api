@@ -105,7 +105,8 @@ func GetVendorModelCounts() (map[int64]int64, error) {
 }
 
 func GetAllModels(offset int, limit int) ([]*Model, error) {
-	models, _, err := SearchModels("", "", "", "", offset, limit)
+	var models []*Model
+	err := DB.Order("id DESC").Offset(offset).Limit(limit).Find(&models).Error
 	return models, err
 }
 
@@ -191,7 +192,7 @@ func GetPreferredModelOwnerChannelTypes(modelNames []string, groups []string) (m
 	return result, nil
 }
 
-func SearchModels(keyword string, vendor string, status string, syncOfficial string, offset int, limit int) ([]*Model, int64, error) {
+func SearchModels(keyword string, vendor string, offset int, limit int) ([]*Model, int64, error) {
 	var models []*Model
 	db := DB.Model(&Model{})
 	if keyword != "" {
@@ -205,12 +206,6 @@ func SearchModels(keyword string, vendor string, status string, syncOfficial str
 			db = db.Joins("JOIN vendors ON vendors.id = models.vendor_id").Where("vendors.name LIKE ?", "%"+vendor+"%")
 		}
 	}
-	if statusValue, ok := parseModelStatusFilter(status); ok {
-		db = db.Where("models.status = ?", statusValue)
-	}
-	if syncValue, ok := parseModelSyncFilter(syncOfficial); ok {
-		db = db.Where("models.sync_official = ?", syncValue)
-	}
 	var total int64
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -219,42 +214,4 @@ func SearchModels(keyword string, vendor string, status string, syncOfficial str
 		return nil, 0, err
 	}
 	return models, total, nil
-}
-
-// parseModelStatusFilter maps UI/API status values to the models.status column.
-// Returns ok=false when no status filter should be applied.
-func parseModelStatusFilter(status string) (value int, ok bool) {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "", "all":
-		return 0, false
-	case "enabled", "1":
-		return 1, true
-	case "disabled", "0":
-		return 0, true
-	default:
-		n, err := strconv.Atoi(status)
-		if err != nil {
-			return 0, false
-		}
-		return n, true
-	}
-}
-
-// parseModelSyncFilter maps UI/API sync values to the models.sync_official column.
-// Returns ok=false when no sync filter should be applied.
-func parseModelSyncFilter(syncOfficial string) (value int, ok bool) {
-	switch strings.ToLower(strings.TrimSpace(syncOfficial)) {
-	case "", "all":
-		return 0, false
-	case "yes", "1":
-		return 1, true
-	case "no", "0":
-		return 0, true
-	default:
-		n, err := strconv.Atoi(syncOfficial)
-		if err != nil {
-			return 0, false
-		}
-		return n, true
-	}
 }

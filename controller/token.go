@@ -7,168 +7,28 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
-	"github.com/shopspring/decimal"
 )
 
-type tokenAutoGroupsInput struct {
-	Set    bool
-	Groups []string
-}
-
-func (input *tokenAutoGroupsInput) UnmarshalJSON(data []byte) error {
-	input.Set = true
-	if strings.TrimSpace(string(data)) == "null" {
-		input.Groups = nil
-		return nil
-	}
-	return common.Unmarshal(data, &input.Groups)
-}
-
-type tokenRequest struct {
-	model.Token
-	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
-}
-
-type tokenResponse struct {
-	*model.Token
-	AutoGroups        []string                   `json:"auto_groups"`
-	AutoGroupsMode    string                     `json:"auto_groups_mode"`
-	TokenGroupProfile *tokenGroupProfileResponse `json:"token_group_profile,omitempty"`
-}
-
-// tokenGroupProfileResponse keeps the persisted JSON blobs private while
-// returning the arrays expected by the dashboard/API-key client.
-type tokenGroupProfileResponse struct {
-	ID           int      `json:"id"`
-	Name         string   `json:"name"`
-	Slug         string   `json:"slug"`
-	Description  string   `json:"description"`
-	Enabled      bool     `json:"enabled"`
-	DisplayOrder int      `json:"display_order"`
-	Recommended  bool     `json:"recommended"`
-	RouteGroups  []string `json:"route_groups"`
-	ModelScope   []string `json:"model_scope"`
-}
-
-func maxTokenQuota() int {
-	quota, err := common.WalletQuotaFromDecimalStrict(
-		decimal.NewFromInt(1_000_000_000).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
-	)
-	if err != nil {
-		return common.MaxWalletQuota
-	}
-	return quota
-}
-
-func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
+func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	if token == nil {
 		return nil
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
-	autoGroups, err := token.GetAutoGroups()
-	if err != nil {
-		common.SysError(fmt.Sprintf("failed to parse auto groups for token %d: %v", token.Id, err))
-		autoGroups = nil
-	}
-	if len(autoGroups) == 0 {
-		autoGroups = nil
-	}
-	mode := "none"
-	if token.Group == "auto" {
-		mode = "inherit"
-		if len(autoGroups) > 0 {
-			mode = "custom"
-		}
-	}
-	var profile *tokenGroupProfileResponse
-	if token.TokenGroupProfileID != 0 {
-		if p, err := model.GetEnabledTokenGroupProfile(token.TokenGroupProfileID); err == nil {
-			profile = &tokenGroupProfileResponse{
-				ID: p.ID, Name: p.Name, Slug: p.Slug, Description: p.Description,
-				Enabled: p.Enabled, DisplayOrder: p.DisplayOrder, Recommended: p.Recommended,
-				RouteGroups: p.GetRouteGroups(), ModelScope: p.GetModelScope(),
-			}
-		}
-	}
-	return &tokenResponse{Token: &maskedToken, AutoGroups: autoGroups, AutoGroupsMode: mode, TokenGroupProfile: profile}
+	return &maskedToken
 }
 
-func validateTokenGroupProfile(id int) error {
-	if id == 0 {
-		return nil
-	}
-	var p model.TokenGroupProfile
-	if err := model.DB.Where("id = ? AND enabled = ?", id, true).First(&p).Error; err != nil {
-		return fmt.Errorf("令牌业务分组不存在或已停用")
-	}
-	return nil
-}
-
-func buildMaskedTokenResponses(tokens []*model.Token) []*tokenResponse {
-	maskedTokens := make([]*tokenResponse, 0, len(tokens))
+func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
+	maskedTokens := make([]*model.Token, 0, len(tokens))
 	for _, token := range tokens {
 		maskedTokens = append(maskedTokens, buildMaskedTokenResponse(token))
 	}
 	return maskedTokens
-}
-
-func getTokenRequestUserGroup(c *gin.Context) (string, error) {
-	if userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup); userGroup != "" {
-		return userGroup, nil
-	}
-	if userGroup := c.GetString("group"); userGroup != "" {
-		return userGroup, nil
-	}
-	return model.GetUserGroup(c.GetInt("id"), false)
-}
-
-func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) bool {
-	if len(groups) == 0 {
-		if err := token.SetAutoGroups(nil); err != nil {
-			common.ApiError(c, err)
-			return false
-		}
-		return true
-	}
-
-	maxCount := setting.GetMaxTokenAutoGroups()
-	if len(groups) > maxCount {
-		common.ApiErrorI18n(c, i18n.MsgTokenAutoGroupsTooMany, map[string]any{"Max": maxCount})
-		return false
-	}
-
-	userGroup, err := getTokenRequestUserGroup(c)
-	if err != nil {
-		common.ApiError(c, err)
-		return false
-	}
-	seen := make(map[string]struct{}, len(groups))
-	for _, group := range groups {
-		if _, ok := seen[group]; ok {
-			common.ApiErrorI18n(c, i18n.MsgTokenAutoGroupsDuplicate, map[string]any{"Group": group})
-			return false
-		}
-		seen[group] = struct{}{}
-		if !service.IsUserSelectableGroup(userGroup, group) {
-			common.ApiErrorI18n(c, i18n.MsgTokenAutoGroupsInvalid, map[string]any{"Group": group})
-			return false
-		}
-	}
-
-	if err := token.SetAutoGroups(groups); err != nil {
-		common.ApiError(c, err)
-		return false
-	}
-	return true
 }
 
 func GetAllTokens(c *gin.Context) {
@@ -215,18 +75,6 @@ func GetToken(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, buildMaskedTokenResponse(token))
-}
-
-func GetTokenAutoGroups(c *gin.Context) {
-	userGroup, err := getTokenRequestUserGroup(c)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	common.ApiSuccess(c, gin.H{
-		"groups":    service.GetUserAutoGroup(userGroup),
-		"max_count": setting.GetMaxTokenAutoGroups(),
-	})
 }
 
 func GetTokenKey(c *gin.Context) {
@@ -317,13 +165,12 @@ func GetTokenUsage(c *gin.Context) {
 }
 
 func AddToken(c *gin.Context) {
-	request := tokenRequest{}
-	err := c.ShouldBindJSON(&request)
+	token := model.Token{}
+	err := c.ShouldBindJSON(&token)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	token := request.Token
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
@@ -334,7 +181,7 @@ func AddToken(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
 			return
 		}
-		maxQuotaValue := maxTokenQuota()
+		maxQuotaValue := int((1000000000 * common.QuotaPerUnit))
 		if token.RemainQuota > maxQuotaValue {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
 			return
@@ -354,26 +201,6 @@ func AddToken(c *gin.Context) {
 		})
 		return
 	}
-	if token.Group == "auto" {
-		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {
-			return
-		}
-	} else {
-		token.CrossGroupRetry = false
-		_ = token.SetAutoGroups(nil)
-	}
-	if err := validateTokenGroupProfile(token.TokenGroupProfileID); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	// A business profile is a complete routing preset. Normalize legacy or
-	// stale clients that only send the profile id so saving remains safe and
-	// deterministic across frontend versions.
-	if token.TokenGroupProfileID > 0 {
-		token.Group = "auto"
-		token.CrossGroupRetry = true
-		_ = token.SetAutoGroups(nil)
-	}
 	key, err := common.GenerateKey()
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgTokenGenerateFailed)
@@ -381,21 +208,19 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	cleanToken := model.Token{
-		UserId:              c.GetInt("id"),
-		Name:                token.Name,
-		Key:                 key,
-		CreatedTime:         common.GetTimestamp(),
-		AccessedTime:        common.GetTimestamp(),
-		ExpiredTime:         token.ExpiredTime,
-		RemainQuota:         token.RemainQuota,
-		UnlimitedQuota:      token.UnlimitedQuota,
-		ModelLimitsEnabled:  token.ModelLimitsEnabled,
-		ModelLimits:         token.ModelLimits,
-		AllowIps:            token.AllowIps,
-		Group:               token.Group,
-		CrossGroupRetry:     token.CrossGroupRetry,
-		AutoGroups:          token.AutoGroups,
-		TokenGroupProfileID: token.TokenGroupProfileID,
+		UserId:             c.GetInt("id"),
+		Name:               token.Name,
+		Key:                key,
+		CreatedTime:        common.GetTimestamp(),
+		AccessedTime:       common.GetTimestamp(),
+		ExpiredTime:        token.ExpiredTime,
+		RemainQuota:        token.RemainQuota,
+		UnlimitedQuota:     token.UnlimitedQuota,
+		ModelLimitsEnabled: token.ModelLimitsEnabled,
+		ModelLimits:        token.ModelLimits,
+		AllowIps:           token.AllowIps,
+		Group:              token.Group,
+		CrossGroupRetry:    token.CrossGroupRetry,
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -425,13 +250,12 @@ func DeleteToken(c *gin.Context) {
 func UpdateToken(c *gin.Context) {
 	userId := c.GetInt("id")
 	statusOnly := c.Query("status_only")
-	request := tokenRequest{}
-	err := c.ShouldBindJSON(&request)
+	token := model.Token{}
+	err := c.ShouldBindJSON(&token)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	token := request.Token
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
@@ -441,7 +265,7 @@ func UpdateToken(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
 			return
 		}
-		maxQuotaValue := maxTokenQuota()
+		maxQuotaValue := int((1000000000 * common.QuotaPerUnit))
 		if token.RemainQuota > maxQuotaValue {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
 			return
@@ -474,25 +298,7 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
-		cleanToken.TokenGroupProfileID = token.TokenGroupProfileID
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
-		if err := validateTokenGroupProfile(cleanToken.TokenGroupProfileID); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		if cleanToken.TokenGroupProfileID > 0 {
-			cleanToken.Group = "auto"
-			cleanToken.CrossGroupRetry = true
-			_ = cleanToken.SetAutoGroups(nil)
-		}
-		if cleanToken.Group != "auto" {
-			cleanToken.CrossGroupRetry = false
-			_ = cleanToken.SetAutoGroups(nil)
-		} else if request.AutoGroups.Set {
-			if !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups) {
-				return
-			}
-		}
 	}
 	err = cleanToken.Update()
 	if err != nil {

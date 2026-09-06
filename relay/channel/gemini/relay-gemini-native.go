@@ -1,18 +1,20 @@
 package gemini
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
-	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -34,14 +36,41 @@ func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, re
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-	countGeminiBillableFunctionCalls(info, &geminiResponse)
 
 	if len(geminiResponse.Candidates) == 0 && geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
 		common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", *geminiResponse.PromptFeedback.BlockReason))
 	}
 
-	// 计算使用量（优先上游 UsageMetadata，缺失时本地估算并保留 Gemini 计费语义）
-	usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
+	// 计算使用量（基于 UsageMetadata）
+	usage := buildUsageFromGeminiMetadata(geminiResponse.UsageMetadata, info.GetEstimatePromptTokens())
+
+	// CUSTOM: 图片生成模型检查：确保图片生成成功，否则不扣费
+	if model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+		for _, candidate := range geminiResponse.Candidates {
+			if candidate.FinishReason != nil && *candidate.FinishReason != "STOP" {
+				finishReason := *candidate.FinishReason
+				errMsg := fmt.Sprintf("image generation failed: finish_reason=%s", finishReason)
+				common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_native_image_gen_failed_reason=%s", finishReason))
+				return &usage, types.NewOpenAIError(
+					errors.New(errMsg),
+					types.ErrorCodeEmptyResponse,
+					http.StatusInternalServerError,
+					types.ErrOptionWithSkipRetry(),
+				)
+			}
+		}
+		if !hasImageInGeminiResponse(geminiResponse.Candidates) {
+			errMsg := "image generation failed: no image in response (model may have refused to generate)"
+			logger.LogWarn(c, errMsg)
+			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "gemini_native_image_gen_no_image")
+			return &usage, types.NewOpenAIError(
+				errors.New(errMsg),
+				types.ErrorCodeEmptyResponse,
+				http.StatusInternalServerError,
+				types.ErrOptionWithSkipRetry(),
+			)
+		}
+	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
@@ -82,7 +111,7 @@ func NativeGeminiEmbeddingHandler(c *gin.Context, resp *http.Response, info *rel
 func GeminiTextGenerationStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	helper.SetEventStreamHeaders(c)
 
-	return geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
+	usage, _, err := geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
 		err := helper.StringData(c, data)
 		if err != nil {
 			logger.LogError(c, "failed to write stream data: "+err.Error())
@@ -91,4 +120,5 @@ func GeminiTextGenerationStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 		info.SendResponseCount++
 		return true
 	})
+	return usage, err
 }

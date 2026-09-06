@@ -11,13 +11,12 @@ import (
 	_ "image/png"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/image/webp"
@@ -171,17 +170,6 @@ func loadFromURL(c *gin.Context, url string, reason ...string) (*types.CachedFil
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("failed to download file, status code: %d", resp.StatusCode)
 	}
-	// For large responses, avoid retaining the complete raw file bytes while
-	// producing the base64 payload. The raw download is streamed to disk first;
-	// the public CachedFileData contract remains unchanged.
-	if common.IsDiskCacheEnabled() && (resp.ContentLength < 0 || resp.ContentLength >= common.GetDiskCacheThresholdBytes()) {
-		if cached, handled, diskErr := loadURLDiskFirst(resp, url); handled {
-			if diskErr != nil {
-				return nil, diskErr
-			}
-			return cached, nil
-		}
-	}
 
 	// 读取文件内容（限制大小）
 	if common.DebugEnabled {
@@ -245,92 +233,6 @@ func loadFromURL(c *gin.Context, url string, reason ...string) (*types.CachedFil
 	}
 
 	return cachedData, nil
-}
-
-func loadURLDiskFirst(resp *http.Response, url string) (*types.CachedFileData, bool, error) {
-	maxFileSize := int64(constant.MaxFileDownloadMB) << 20
-	rawPath, rawFile, err := common.CreateDiskCacheFile(common.DiskCacheTypeFile)
-	if err != nil {
-		return nil, false, nil
-	}
-	removeRaw := true
-	var rawTracked int64
-	defer func() {
-		_ = rawFile.Close()
-		if rawTracked > 0 {
-			common.DecrementDiskFiles(rawTracked)
-		}
-		if removeRaw {
-			_ = os.Remove(rawPath)
-		}
-	}()
-	written, err := io.Copy(rawFile, io.LimitReader(resp.Body, maxFileSize+1))
-	if err != nil {
-		return nil, true, fmt.Errorf("failed to stream file content: %w", err)
-	}
-	if written > maxFileSize {
-		return nil, true, fmt.Errorf("file size exceeds maximum allowed size: %dMB", constant.MaxFileDownloadMB)
-	}
-	// Track the raw staging file while it coexists with the final Base64 file,
-	// so concurrent requests see the real disk pressure.
-	rawTracked = written
-	common.IncrementDiskFiles(rawTracked)
-	if _, err = rawFile.Seek(0, io.SeekStart); err != nil {
-		return nil, true, err
-	}
-	sample := make([]byte, 64<<10)
-	nSample, _ := rawFile.Read(sample)
-	mimeType := smartDetectMimeType(resp, url, sample[:nSample])
-	if _, err = rawFile.Seek(0, io.SeekStart); err != nil {
-		return nil, true, err
-	}
-	// Encode directly into the final cache file. This avoids retaining raw
-	// bytes and the complete base64 value at the same time during conversion.
-	b64Path, b64File, err := common.CreateDiskCacheFile(common.DiskCacheTypeFile)
-	if err != nil {
-		return nil, true, err
-	}
-	encoder := base64.NewEncoder(base64.StdEncoding, b64File)
-	_, encodeErr := io.Copy(encoder, rawFile)
-	closeErr := encoder.Close()
-	fileCloseErr := b64File.Close()
-	if encodeErr != nil || closeErr != nil || fileCloseErr != nil {
-		_ = os.Remove(b64Path)
-		if encodeErr != nil {
-			return nil, true, encodeErr
-		}
-		if closeErr != nil {
-			return nil, true, closeErr
-		}
-		return nil, true, fileCloseErr
-	}
-	b64Info, err := os.Stat(b64Path)
-	if err != nil {
-		_ = os.Remove(b64Path)
-		return nil, true, err
-	}
-	// MIME detection only needs the response headers for the common case. The
-	// existing byte-based path remains responsible for detailed image config.
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
-	cached := types.NewDiskCachedData(b64Path, mimeType, written)
-	if strings.HasPrefix(mimeType, "image/") {
-		if _, seekErr := rawFile.Seek(0, io.SeekStart); seekErr == nil {
-			if config, format, configErr := decodeImageConfigReader(rawFile); configErr == nil {
-				cached.ImageConfig = &config
-				cached.ImageFormat = format
-				if mimeType == "application/octet-stream" || mimeType == "" {
-					cached.MimeType = "image/" + format
-				}
-			}
-		}
-	}
-	cached.DiskSize = b64Info.Size()
-	cached.OnClose = func(size int64) { common.DecrementDiskFiles(size) }
-	common.IncrementDiskFiles(b64Info.Size())
-	removeRaw = true
-	return cached, true, nil
 }
 
 // shouldUseDiskCache 判断是否应该使用磁盘缓存
@@ -586,22 +488,6 @@ func decodeImageConfig(data []byte) (image.Config, string, error) {
 		return image.Config{}, "", fmt.Errorf("failed to decode HEIF/HEIC image dimensions")
 	}
 
-	return image.Config{}, "", fmt.Errorf("failed to decode image config: unsupported format")
-}
-
-func decodeImageConfigReader(reader io.ReadSeeker) (image.Config, string, error) {
-	if _, err := reader.Seek(0, io.SeekStart); err != nil {
-		return image.Config{}, "", err
-	}
-	config, format, err := image.DecodeConfig(reader)
-	if err == nil {
-		return config, format, nil
-	}
-	if _, err = reader.Seek(0, io.SeekStart); err == nil {
-		if config, err = webp.DecodeConfig(reader); err == nil {
-			return config, "webp", nil
-		}
-	}
 	return image.Config{}, "", fmt.Errorf("failed to decode image config: unsupported format")
 }
 

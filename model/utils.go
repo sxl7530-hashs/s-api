@@ -2,8 +2,6 @@ package model
 
 import (
 	"errors"
-	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -44,22 +42,11 @@ func InitBatchUpdater() {
 func addNewRecord(type_ int, id int, value int) {
 	batchUpdateLocks[type_].Lock()
 	defer batchUpdateLocks[type_].Unlock()
-	old, ok := batchUpdateStores[type_][id]
-	if !ok {
+	if _, ok := batchUpdateStores[type_][id]; !ok {
 		batchUpdateStores[type_][id] = value
-		return
+	} else {
+		batchUpdateStores[type_][id] += value
 	}
-
-	sum := old + value
-	if (value > 0 && sum < old) || (value < 0 && sum > old) {
-		common.SysError(fmt.Sprintf("batch update overflow: type=%d id=%d old=%d value=%d", type_, id, old, value))
-		if value > 0 {
-			sum = math.MaxInt
-		} else {
-			sum = math.MinInt
-		}
-	}
-	batchUpdateStores[type_][id] = sum
 }
 
 func batchUpdate() {

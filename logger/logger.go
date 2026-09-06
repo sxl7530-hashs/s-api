@@ -77,10 +77,7 @@ func LogInfo(ctx context.Context, msg string) {
 	logHelper(ctx, loggerINFO, msg)
 }
 
-func LogWarn(ctx context.Context, msg string, args ...any) {
-	if len(args) > 0 {
-		msg = fmt.Sprintf(msg, args...)
-	}
+func LogWarn(ctx context.Context, msg string) {
 	logHelper(ctx, loggerWarn, msg)
 }
 

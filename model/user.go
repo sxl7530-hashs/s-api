@@ -8,71 +8,15 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const UserNameMaxLength = 20
-
-var userSortColumns = map[string]string{
-	"id":            "id",
-	"username":      "username",
-	"quota":         "quota",
-	"group":         "group",
-	"created_at":    "created_at",
-	"last_login_at": "last_login_at",
-}
-
-type UserSortOptions struct {
-	SortBy    string
-	SortOrder string
-}
-
-func NewUserSortOptions(sortBy string, sortOrder string) UserSortOptions {
-	normalizedSortBy := strings.ToLower(strings.TrimSpace(sortBy))
-	normalizedSortOrder := strings.ToLower(strings.TrimSpace(sortOrder))
-	if _, ok := userSortColumns[normalizedSortBy]; !ok {
-		normalizedSortBy = "id"
-		normalizedSortOrder = "desc"
-	} else if normalizedSortOrder != "asc" {
-		normalizedSortOrder = "desc"
-	}
-
-	return UserSortOptions{
-		SortBy:    normalizedSortBy,
-		SortOrder: normalizedSortOrder,
-	}
-}
-
-func (options UserSortOptions) Apply(query *gorm.DB) *gorm.DB {
-	columnName, ok := userSortColumns[options.SortBy]
-	if !ok {
-		columnName = "id"
-	}
-	q := query.Order(clause.OrderByColumn{
-		Column: clause.Column{Name: columnName},
-		Desc:   options.SortOrder != "asc",
-	})
-	if columnName != "id" {
-		q = q.Order(clause.OrderByColumn{
-			Column: clause.Column{Name: "id"},
-			Desc:   true,
-		})
-	}
-	return q
-}
-
-func resolveUserSortOptions(sortOptions []UserSortOptions) UserSortOptions {
-	if len(sortOptions) == 0 {
-		return NewUserSortOptions("", "")
-	}
-	return sortOptions[0]
-}
 
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
@@ -101,6 +45,7 @@ type User struct {
 	AffQuota         int                        `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
 	AffHistoryQuota  int                        `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
 	InviterId        int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
+	RebatePercent    float64                    `json:"rebate_percent" gorm:"default:-1;column:rebate_percent"` // 个人返利比例，-1 表示使用全局设置
 	DeletedAt        gorm.DeletedAt             `gorm:"index"`
 	LinuxDOId        string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting          string                     `json:"setting" gorm:"type:text;column:setting"`
@@ -108,22 +53,18 @@ type User struct {
 	StripeCustomer   string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
 	CreatedAt        int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`
 	LastLoginAt      int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
-	AuthVersion      int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
 	AdminPermissions map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
-		Id:          user.Id,
-		Group:       user.Group,
-		Quota:       user.Quota,
-		Status:      user.Status,
-		Role:        user.Role,
-		Username:    user.Username,
-		Setting:     user.Setting,
-		Email:       user.Email,
-		AuthVersion: user.AuthVersion,
-		CacheSchema: userCacheSchemaVersion,
+		Id:       user.Id,
+		Group:    user.Group,
+		Quota:    user.Quota,
+		Status:   user.Status,
+		Username: user.Username,
+		Setting:  user.Setting,
+		Email:    user.Email,
 	}
 	return cache
 }
@@ -137,22 +78,6 @@ func (user *User) GetAccessToken() string {
 
 func (user *User) SetAccessToken(token string) {
 	user.AccessToken = &token
-}
-
-// UpdateUserAccessToken rotates a dashboard personal access token without
-// writing a stale user snapshot back over concurrently updated fields.
-func UpdateUserAccessToken(id int, token string) error {
-	if id == 0 {
-		return errors.New("id 为空！")
-	}
-	result := DB.Model(&User{}).Where("id = ?", id).Update("access_token", token)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
 }
 
 func (user *User) GetSetting() dto.UserSetting {
@@ -190,30 +115,6 @@ func UpdateUserSetting(userId int, setting dto.UserSetting) error {
 	return updateUserSettingCache(userId, settingValue)
 }
 
-// userBindColumns 允许通过 UpdateUserBindColumn 更新的第三方账号绑定列白名单。
-// 列名只可能来自代码内部的 provider 实现，白名单是防御纵深，不依赖调用方自律。
-var userBindColumns = map[string]bool{
-	"github_id":   true,
-	"discord_id":  true,
-	"oidc_id":     true,
-	"linux_do_id": true,
-	"wechat_id":   true,
-}
-
-// UpdateUserBindColumn 第三方账号绑定字段的专用更新。
-// 绑定操作必须只写绑定列：若改为“读取完整用户 → 改一个字段 → 整体更新”，
-// 读快照期间并发发生的封禁、降权或分组变更会被旧快照覆盖恢复。
-// 角色、状态、分组只允许通过各自带锁/CAS 的专用方法修改。
-func UpdateUserBindColumn(userId int, column string, value string) error {
-	if userId <= 0 {
-		return errors.New("id 为空！")
-	}
-	if !userBindColumns[column] {
-		return fmt.Errorf("invalid user bind column: %s", column)
-	}
-	return DB.Model(&User{}).Where("id = ?", userId).Update(column, value).Error
-}
-
 // 根据用户角色生成默认的边栏配置
 func generateDefaultSidebarConfigForRole(userRole int) string {
 	defaultConfig := map[string]interface{}{}
@@ -237,9 +138,10 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 
 	// 个人中心区域 - 所有用户都可以访问
 	defaultConfig["personal"] = map[string]interface{}{
-		"enabled":  true,
-		"topup":    true,
-		"personal": true,
+		"enabled":    true,
+		"topup":      true,
+		"personal":   true,
+		"invitation": true,
 	}
 
 	// 管理员区域 - 根据角色决定
@@ -386,7 +288,7 @@ func GetMaxUserId() int {
 	return user.Id
 }
 
-func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (users []*User, total int64, err error) {
+func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err error) {
 	// Start transaction
 	tx := DB.Begin()
 	if tx.Error != nil {
@@ -406,8 +308,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 	}
 
 	// Get paginated users within same transaction
-	order := resolveUserSortOptions(sortOptions)
-	err = order.Apply(tx.Unscoped()).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password", "access_token").Find(&users).Error
+	err = tx.Unscoped().Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password", "access_token").Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -421,7 +322,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 	return users, total, nil
 }
 
-func SearchUsers(keyword string, group string, role *int, status *int, startIdx int, num int, sortOptions ...UserSortOptions) ([]*User, int64, error) {
+func SearchUsers(keyword string, group string, role *int, status *int, startIdx int, num int) ([]*User, int64, error) {
 	var users []*User
 	var total int64
 	var err error
@@ -475,8 +376,7 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	}
 
 	// 获取分页数据
-	order := resolveUserSortOptions(sortOptions)
-	err = order.Apply(query.Omit("password", "access_token")).Limit(num).Offset(startIdx).Find(&users).Error
+	err = query.Omit("password", "access_token").Order("id desc").Limit(num).Offset(startIdx).Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -525,29 +425,29 @@ func HardDeleteUserById(id int) error {
 	if id == 0 {
 		return errors.New("id 为空！")
 	}
-	user := User{Id: id}
-	return user.HardDelete()
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := deleteUserOAuthBindingsByUserId(tx, id); err != nil {
+			return err
+		}
+		return tx.Unscoped().Delete(&User{}, "id = ?", id).Error
+	})
 }
 
-func inviteUser(inviterId int) error {
-	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]interface{}{
-		"aff_count":   gorm.Expr("aff_count + ?", 1),
-		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
-		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
-	})
-	if result.Error != nil {
-		return result.Error
+func inviteUser(inviterId int) (err error) {
+	user, err := GetUserById(inviterId, true)
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	user.AffCount++
+	user.AffQuota += common.QuotaForInviter
+	user.AffHistoryQuota += common.QuotaForInviter
+	return DB.Save(user).Error
 }
 
 func (user *User) TransferAffQuotaToQuota(quota int) error {
 	// 检查quota是否小于最小额度
 	if float64(quota) < common.QuotaPerUnit {
-		return fmt.Errorf("转移额度最小为%s！", logger.LogQuota(common.QuotaFromFloat(common.QuotaPerUnit)))
+		return fmt.Errorf("转移额度最小为%s！", logger.LogQuota(int(common.QuotaPerUnit)))
 	}
 
 	// 开始数据库事务
@@ -558,7 +458,7 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 	defer tx.Rollback() // 确保在函数退出时事务能回滚
 
 	// 加锁查询用户以确保数据一致性
-	err := lockForUpdate(tx).First(user, user.Id).Error
+	err := lockForUpdate(tx).First(&user, user.Id).Error
 	if err != nil {
 		return err
 	}
@@ -747,23 +647,10 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 }
 
 func (user *User) Update(updatePassword bool) error {
-	var previousAuthVersion int64
-	if err := DB.Model(&User{}).Where("id = ?", user.Id).Select("auth_version").Find(&previousAuthVersion).Error; err != nil {
+	if err := user.UpdateWithTx(DB, updatePassword); err != nil {
 		return err
 	}
-	if err := DB.Transaction(func(tx *gorm.DB) error {
-		return user.UpdateWithTx(tx, updatePassword)
-	}); err != nil {
-		return err
-	}
-	if err := updateUserCache(*user); err != nil {
-		return err
-	}
-	if user.AuthVersion > previousAuthVersion {
-		_, err := RevokeAllUserSessions(user.Id, "user_security_changed")
-		return err
-	}
-	return nil
+	return updateUserCache(*user)
 }
 
 func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
@@ -779,52 +666,17 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 	if err = tx.First(&current, user.Id).Error; err != nil {
 		return err
 	}
-	// Updates(struct) ignores zero values. Match that behavior when deciding
-	// whether this request actually changes authentication-sensitive state;
-	// partial self-profile updates intentionally leave role/status/group empty.
-	authChanged := (updatePassword && current.Password != newUser.Password) ||
-		(newUser.Role != 0 && current.Role != newUser.Role) ||
-		(newUser.Status != 0 && current.Status != newUser.Status) ||
-		(newUser.Group != "" && current.Group != newUser.Group)
-	if authChanged {
-		newUser.AuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
-		if err != nil {
-			return err
-		}
-	}
-	if err = tx.Model(&current).Omit(
-		"access_token",
-		"quota",
-		"used_quota",
-		"request_count",
-		"aff_count",
-		"aff_quota",
-		"aff_history",
-		"auth_version",
-	).Updates(newUser).Error; err != nil {
+	if err = tx.Model(&current).Omit("quota", "used_quota", "request_count").Updates(newUser).Error; err != nil {
 		return err
 	}
 	return tx.First(user, user.Id).Error
 }
 
 func (user *User) Edit(updatePassword bool) error {
-	var previousAuthVersion int64
-	if err := DB.Model(&User{}).Where("id = ?", user.Id).Select("auth_version").Find(&previousAuthVersion).Error; err != nil {
+	if err := user.EditWithTx(DB, updatePassword); err != nil {
 		return err
 	}
-	if err := DB.Transaction(func(tx *gorm.DB) error {
-		return user.EditWithTx(tx, updatePassword)
-	}); err != nil {
-		return err
-	}
-	if err := updateUserCache(*user); err != nil {
-		return err
-	}
-	if user.AuthVersion > previousAuthVersion {
-		_, err := RevokeAllUserSessions(user.Id, "user_security_changed")
-		return err
-	}
-	return nil
+	return updateUserCache(*user)
 }
 
 func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
@@ -850,13 +702,6 @@ func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
 	current := User{}
 	if err = tx.First(&current, user.Id).Error; err != nil {
 		return err
-	}
-	authChanged := (updatePassword && current.Password != newUser.Password) || current.Group != newUser.Group
-	if authChanged {
-		newUser.AuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
-		if err != nil {
-			return err
-		}
 	}
 	if err = tx.Model(&current).Updates(updates).Error; err != nil {
 		return err
@@ -884,15 +729,7 @@ func (user *User) ClearBinding(bindingType string) error {
 		return errors.New("invalid binding type")
 	}
 
-	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&User{}).Where("id = ?", user.Id).Update(column, "").Error; err != nil {
-			return err
-		}
-		if bindingType == ExternalIdentityProviderTelegram {
-			return ReleaseExternalIdentityWithTx(tx, ExternalIdentityProviderTelegram, user.Id)
-		}
-		return nil
-	}); err != nil {
+	if err := DB.Model(&User{}).Where("id = ?", user.Id).Update(column, "").Error; err != nil {
 		return err
 	}
 
@@ -907,23 +744,11 @@ func (user *User) Delete() error {
 	if user.Id == 0 {
 		return errors.New("id 为空！")
 	}
-	var nextAuthVersion int64
-	if err := DB.Transaction(func(tx *gorm.DB) error {
-		var err error
-		nextAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
-		if err != nil {
-			return err
-		}
-		return tx.Delete(user).Error
-	}); err != nil {
+	if err := DB.Delete(user).Error; err != nil {
 		return err
 	}
-	if err := publishCommittedUserAuthVersion(user.Id, nextAuthVersion); err != nil {
-		return err
-	}
-	if _, err := RevokeAllUserSessions(user.Id, "user_deleted"); err != nil {
-		return err
-	}
+
+	// 清除缓存
 	return invalidateUserCache(user.Id)
 }
 
@@ -931,56 +756,12 @@ func (user *User) HardDelete() error {
 	if user.Id == 0 {
 		return errors.New("id 为空！")
 	}
-	var tokens []Token
-	var deletedAuthVersion int64
-	err := DB.Transaction(func(tx *gorm.DB) error {
-		var err error
-		deletedAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
-		if err != nil {
-			return err
-		}
-		if common.RedisEnabled {
-			if err := tx.Unscoped().Select("id", commonKeyCol).Where("user_id = ?", user.Id).Find(&tokens).Error; err != nil {
-				return err
-			}
-		}
-		if err := deleteUserAuthenticationData(tx, user.Id); err != nil {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := deleteUserOAuthBindingsByUserId(tx, user.Id); err != nil {
 			return err
 		}
 		return tx.Unscoped().Delete(user).Error
 	})
-	if err != nil {
-		return err
-	}
-	if err := publishCommittedUserAuthVersion(user.Id, deletedAuthVersion); err != nil {
-		common.SysError(fmt.Sprintf("failed to publish auth tombstone after hard deleting user %d: %v", user.Id, err))
-	}
-	if err := invalidateTokensCache(tokens); err != nil {
-		common.SysError(fmt.Sprintf("failed to invalidate token cache after hard deleting user %d: %v", user.Id, err))
-	}
-	if err := invalidateUserCache(user.Id); err != nil {
-		common.SysError(fmt.Sprintf("failed to invalidate user cache after hard deleting user %d: %v", user.Id, err))
-	}
-	return nil
-}
-
-func deleteUserAuthenticationData(tx *gorm.DB, userId int) error {
-	if err := releaseAllExternalIdentitiesWithTx(tx, userId); err != nil {
-		return err
-	}
-	for _, authenticationData := range []any{
-		&TwoFABackupCode{},
-		&TwoFA{},
-		&UserSession{},
-		&AuthFlow{},
-		&PasskeyCredential{},
-		&Token{},
-	} {
-		if err := tx.Unscoped().Where("user_id = ?", userId).Delete(authenticationData).Error; err != nil {
-			return err
-		}
-	}
-	return deleteUserOAuthBindingsByUserId(tx, userId)
 }
 
 // ValidateAndFill check password & user status
@@ -1134,18 +915,7 @@ func ResetUserPasswordByEmail(email string, password string) error {
 	if err != nil {
 		return err
 	}
-	if err = DB.Transaction(func(tx *gorm.DB) error {
-		if _, err := IncrementUserAuthVersionWithTx(tx, user.Id); err != nil {
-			return err
-		}
-		return tx.Model(&User{}).Where("id = ?", user.Id).Update("password", hashedPassword).Error
-	}); err != nil {
-		return err
-	}
-	if err := PublishUserAuthCache(user.Id); err != nil {
-		return err
-	}
-	_, err = RevokeAllUserSessions(user.Id, "password_reset")
+	err = DB.Model(&User{}).Where("id = ?", user.Id).Update("password", hashedPassword).Error
 	return err
 }
 
@@ -1180,9 +950,24 @@ func ValidateAccessToken(token string) (*User, error) {
 
 // GetUserQuota gets quota from Redis first, falls back to DB if needed
 func GetUserQuota(id int, fromDB bool) (quota int, err error) {
+	defer func() {
+		// Update Redis cache asynchronously on successful DB read
+		if shouldUpdateRedis(fromDB, err) {
+			gopool.Go(func() {
+				if err := updateUserQuotaCache(id, quota); err != nil {
+					common.SysLog("failed to update user quota cache: " + err.Error())
+				}
+			})
+		}
+	}()
 	if !fromDB && common.RedisEnabled {
-		return getUserQuotaCache(id)
+		quota, err := getUserQuotaCache(id)
+		if err == nil {
+			return quota, nil
+		}
+		// Don't return error - fall through to DB
 	}
+	fromDB = true
 	err = DB.Model(&User{}).Where("id = ?", id).Select("quota").Find(&quota).Error
 	if err != nil {
 		return 0, err
@@ -1207,7 +992,7 @@ func GetUserGroup(id int, fromDB bool) (group string, err error) {
 		// Update Redis cache asynchronously on successful DB read
 		if shouldUpdateRedis(fromDB, err) {
 			gopool.Go(func() {
-				if err := RefreshUserGroupCache(id); err != nil {
+				if err := updateUserGroupCache(id, group); err != nil {
 					common.SysLog("failed to update user group cache: " + err.Error())
 				}
 			})
@@ -1271,47 +1056,25 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
-	if err := common.ValidateWalletQuota(quota); err != nil {
-		return err
-	}
-	if !db && common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeUserQuota, id, quota)
-		gopool.Go(func() {
-			if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
-				common.SysLog("failed to increase user quota: " + err.Error())
-			}
-		})
-		return nil
-	}
-	if err := increaseUserQuota(id, quota); err != nil {
-		return err
-	}
 	gopool.Go(func() {
-		if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
+		err := cacheIncrUserQuota(id, int64(quota))
+		if err != nil {
 			common.SysLog("failed to increase user quota: " + err.Error())
 		}
 	})
-	return nil
+	if !db && common.BatchUpdateEnabled {
+		addNewRecord(BatchUpdateTypeUserQuota, id, quota)
+		return nil
+	}
+	return increaseUserQuota(id, quota)
 }
 
 func increaseUserQuota(id int, quota int) (err error) {
-	result := DB.Model(&User{}).
-		Where("id = ? AND quota <= ?", id, common.MaxWalletQuota-quota).
-		Update("quota", gorm.Expr("quota + ?", quota))
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 1 {
-		return nil
-	}
-	var count int64
-	if err := DB.Model(&User{}).Where("id = ?", id).Count(&count).Error; err != nil {
+	err = DB.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota + ?", quota)).Error
+	if err != nil {
 		return err
 	}
-	if count == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return ErrWalletQuotaLimitExceeded
+	return err
 }
 
 func DecreaseUserQuota(id int, quota int, db bool) (err error) {
@@ -1375,17 +1138,6 @@ func UpdateUserUsedQuotaAndRequestCount(id int, quota int) {
 	updateUserUsedQuotaAndRequestCount(id, quota, 1)
 }
 
-// UpdateUserUsedQuota adjusts accumulated usage without changing request count.
-func UpdateUserUsedQuota(id int, quota int) {
-	if common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeUsedQuota, id, quota)
-		return
-	}
-	if err := DB.Model(&User{}).Where("id = ?", id).Update("used_quota", gorm.Expr("used_quota + ?", quota)).Error; err != nil {
-		common.SysLog("failed to update user used quota: " + err.Error())
-	}
-}
-
 func updateUserUsedQuotaAndRequestCount(id int, quota int, count int) {
 	err := DB.Model(&User{}).Where("id = ?", id).Updates(
 		map[string]interface{}{
@@ -1418,6 +1170,24 @@ func updateUserQuotaUsedQuotaAndRequestCount(id int, quota int, usedQuota int, r
 	).Error
 	if err != nil {
 		common.SysLog("failed to batch update user quota, used quota and request count: " + err.Error())
+	}
+}
+
+func updateUserUsedQuota(id int, quota int) {
+	err := DB.Model(&User{}).Where("id = ?", id).Updates(
+		map[string]interface{}{
+			"used_quota": gorm.Expr("used_quota + ?", quota),
+		},
+	).Error
+	if err != nil {
+		common.SysLog("failed to update user used quota: " + err.Error())
+	}
+}
+
+func updateUserRequestCount(id int, count int) {
+	err := DB.Model(&User{}).Where("id = ?", id).Update("request_count", gorm.Expr("request_count + ?", count)).Error
+	if err != nil {
+		common.SysLog("failed to update user request count: " + err.Error())
 	}
 }
 
@@ -1470,4 +1240,64 @@ func RootUserExists() bool {
 		return false
 	}
 	return true
+}
+
+// InvitedUserInfo contains info about an invited user and their top-up statistics
+type InvitedUserInfo struct {
+	Id          int    `json:"id" gorm:"column:id"`
+	Username    string `json:"username" gorm:"column:username"`
+	DisplayName string `json:"display_name" gorm:"column:display_name"`
+	Status      int    `json:"status" gorm:"column:status"`
+	CreatedAt   int64  `json:"created_at" gorm:"column:created_at"`
+	TotalTopUp  int64  `json:"total_topup" gorm:"column:total_topup"`
+	TopUpCount  int    `json:"topup_count" gorm:"column:topup_count"`
+	UsedQuota   int    `json:"used_quota" gorm:"column:used_quota"`
+}
+
+// GetInvitedUsers returns users invited by the given inviter, with their top-up stats
+func GetInvitedUsers(inviterId int, pageInfo *common.PageInfo) (users []InvitedUserInfo, total int64, err error) {
+	err = DB.Model(&User{}).Where("inviter_id = ?", inviterId).Count(&total).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if total == 0 {
+		return []InvitedUserInfo{}, 0, nil
+	}
+
+	userTable := "users"
+	topupTable := "top_ups"
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		userTable = `"users"`
+		topupTable = `"top_ups"`
+	}
+
+	query := fmt.Sprintf(`
+		SELECT u.id, u.username, u.display_name, u.status, u.created_at, u.used_quota,
+			COALESCE(t.total_topup, 0) as total_topup,
+			COALESCE(t.topup_count, 0) as topup_count
+		FROM %s u
+		LEFT JOIN (
+			SELECT user_id,
+				SUM(amount) as total_topup,
+				COUNT(*) as topup_count
+			FROM %s
+			WHERE status = ?
+			GROUP BY user_id
+		) t ON u.id = t.user_id
+		WHERE u.inviter_id = ? AND u.deleted_at IS NULL
+		ORDER BY u.id DESC
+		LIMIT ? OFFSET ?
+	`, userTable, topupTable)
+
+	err = DB.Raw(query, common.TopUpStatusSuccess, inviterId, pageInfo.GetPageSize(), pageInfo.GetStartIdx()).Scan(&users).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if users == nil {
+		users = []InvitedUserInfo{}
+	}
+
+	return users, total, nil
 }

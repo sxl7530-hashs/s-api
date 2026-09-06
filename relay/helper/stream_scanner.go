@@ -14,7 +14,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -31,9 +30,6 @@ const (
 	// but connected client (full TCP buffer, no server WriteTimeout) could hang
 	// the handler forever.
 	streamWriteTimeout = 30 * time.Second
-	// streamDebugPreviewBytes bounds diagnostic logging for individual SSE
-	// frames. The complete frame is still parsed and forwarded unchanged.
-	streamDebugPreviewBytes = 4096
 )
 
 func getScannerBufferSize() int {
@@ -47,24 +43,6 @@ func NewStreamScanner(reader io.Reader) *bufio.Scanner {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, InitialScannerBufferSize), getScannerBufferSize())
 	return scanner
-}
-
-func copyCodexSSEHeaders(c *gin.Context, resp *http.Response) {
-	if c == nil || c.Writer == nil || resp == nil {
-		return
-	}
-	// codex
-	for _, name := range []string{"X-Reasoning-Included", "X-Codex-Turn-State"} {
-		values := resp.Header.Values(name)
-		if !service.ShouldCopyUpstreamHeader(c, name, values) {
-			continue
-		}
-		for _, value := range values {
-			if value != "" {
-				c.Writer.Header().Add(name, value)
-			}
-		}
-	}
 }
 
 // ExtendWriteDeadline pushes the connection write deadline forward before each
@@ -89,12 +67,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	ctx, cancel := context.WithCancel(context.Background())
 
 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
-	// A zero/negative timeout would make time.NewTicker panic and take down
-	// the request handler. Keep the historical timeout semantics while making
-	// the stream lifecycle safe for older or partially initialized settings.
-	if streamingTimeout <= 0 {
-		streamingTimeout = 5 * time.Minute
-	}
 
 	var (
 		stopChan    = make(chan bool, 3) // 增加缓冲区避免阻塞
@@ -150,7 +122,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	defer cleanup()
 
 	scanner.Split(bufio.ScanLines)
-	copyCodexSSEHeaders(c, resp)
 	SetEventStreamHeaders(c)
 
 	ctx = context.WithValue(ctx, "stop_chan", stopChan)
@@ -258,11 +229,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 			ticker.Reset(streamingTimeout)
 			data := scanner.Text()
-			if len(data) > streamDebugPreviewBytes {
-				logger.LogDebug(c, "stream scanner data: %s...[truncated, bytes=%d]", data[:streamDebugPreviewBytes], len(data))
-			} else {
-				logger.LogDebug(c, "stream scanner data: %s", data)
-			}
+			logger.LogDebug(c, "stream scanner data: %s", data)
 
 			if len(data) < 6 {
 				continue

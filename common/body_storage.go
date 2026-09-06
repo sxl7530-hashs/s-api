@@ -20,29 +20,10 @@ type BodyStorage interface {
 	Size() int64
 	// IsDisk 是否是磁盘存储
 	IsDisk() bool
-	// NewReader returns an independent reader positioned at the start of the
-	// stored payload. Each call returns a reader with its own cursor, so
-	// callers (e.g. http.Request.GetBody) can replay the body concurrently
-	// with, or after, other readers without sharing seek state. Closing the
-	// returned reader releases only that reader, never the storage itself;
-	// after the storage has been closed, NewReader returns ErrStorageClosed.
-	NewReader() (io.ReadCloser, error)
-}
-
-// ReplayableBody is an outbound request body that can report its byte size and
-// create independent readers for transport-level retries.
-type ReplayableBody interface {
-	io.Reader
-	Size() int64
-	NewReader() (io.ReadCloser, error)
 }
 
 // ErrStorageClosed 存储已关闭错误
 var ErrStorageClosed = fmt.Errorf("body storage is closed")
-
-// ErrDiskCacheUnavailable indicates that a large payload cannot be admitted
-// without falling back to unbounded memory buffering.
-var ErrDiskCacheUnavailable = fmt.Errorf("disk cache capacity unavailable")
 
 // memoryStorage 内存存储实现
 type memoryStorage struct {
@@ -86,8 +67,6 @@ func (m *memoryStorage) Close() error {
 	defer m.mu.Unlock()
 	if atomic.CompareAndSwapInt32(&m.closed, 0, 1) {
 		DecrementMemoryBuffers(m.size)
-		m.data = nil
-		m.reader = nil
 	}
 	return nil
 }
@@ -99,18 +78,6 @@ func (m *memoryStorage) Bytes() ([]byte, error) {
 		return nil, ErrStorageClosed
 	}
 	return m.data, nil
-}
-
-func (m *memoryStorage) NewReader() (io.ReadCloser, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if atomic.LoadInt32(&m.closed) == 1 {
-		return nil, ErrStorageClosed
-	}
-	// A fresh bytes.Reader over the shared immutable backing array: an
-	// independent cursor at zero copy cost. NopCloser keeps Close a no-op, so
-	// the storage lifecycle stays owned by whoever holds the storage itself.
-	return io.NopCloser(bytes.NewReader(m.data)), nil
 }
 
 func (m *memoryStorage) Size() int64 {
@@ -262,24 +229,6 @@ func (d *diskStorage) Bytes() ([]byte, error) {
 	return data, nil
 }
 
-func (d *diskStorage) NewReader() (io.ReadCloser, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if atomic.LoadInt32(&d.closed) == 1 {
-		return nil, ErrStorageClosed
-	}
-	// A separate file descriptor over the same cache file: an independent
-	// cursor at zero copy cost. Closing the returned reader closes only that
-	// descriptor; the storage keeps owning the primary descriptor and the
-	// file's lifetime. Readers opened before Close stay usable even after the
-	// file is unlinked, as the descriptor keeps the inode alive.
-	file, err := os.Open(d.filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open body cache file for replay: %w", err)
-	}
-	return file, nil
-}
-
 func (d *diskStorage) Size() int64 {
 	return d.size
 }
@@ -294,16 +243,14 @@ func CreateBodyStorage(data []byte) (BodyStorage, error) {
 	threshold := GetDiskCacheThresholdBytes()
 
 	// 检查是否应该使用磁盘缓存
-	if IsDiskCacheEnabled() && size >= threshold {
-		if !TryReserveDiskCache(size) {
-			return nil, ErrDiskCacheUnavailable
-		}
+	if IsDiskCacheEnabled() &&
+		size >= threshold &&
+		IsDiskCacheAvailable(size) {
 		storage, err := newDiskStorage(data, GetDiskCachePath())
-		ReleaseDiskCacheReservation(size)
 		if err != nil {
-			// 大请求禁止回退到内存，避免磁盘异常时并发请求触发 OOM。
-			SysError(fmt.Sprintf("failed to create disk storage: %v", err))
-			return nil, fmt.Errorf("%w: %v", ErrDiskCacheUnavailable, err)
+			// 如果磁盘存储失败，回退到内存存储
+			SysError(fmt.Sprintf("failed to create disk storage, falling back to memory: %v", err))
+			return newMemoryStorage(data), nil
 		}
 		return storage, nil
 	}
@@ -314,32 +261,13 @@ func CreateBodyStorage(data []byte) (BodyStorage, error) {
 // CreateBodyStorageFromReader 从 Reader 创建存储（用于大请求的流式处理）
 func CreateBodyStorageFromReader(reader io.Reader, contentLength int64, maxBytes int64) (BodyStorage, error) {
 	threshold := GetDiskCacheThresholdBytes()
-	if configuredMax := GetDiskCacheMaxRequestBytes(); configuredMax > 0 && (maxBytes <= 0 || configuredMax < maxBytes) {
-		maxBytes = configuredMax
-	}
-	if contentLength > 0 && maxBytes > 0 && contentLength > maxBytes {
-		return nil, ErrRequestBodyTooLarge
-	}
-	diskFirstUnknownLength := GetDiskCacheConfig().UnknownLengthDiskFirst && contentLength <= 0
 
 	// 如果启用了磁盘缓存且内容长度超过阈值，直接使用磁盘存储
 	if IsDiskCacheEnabled() &&
-		((contentLength > 0 && contentLength >= threshold) || diskFirstUnknownLength) {
-		var reserved int64
-		reserveSize := contentLength
-		if reserveSize <= 0 {
-			reserveSize = maxBytes
-		}
-		if reserveSize > 0 && TryReserveDiskCache(reserveSize) {
-			reserved = reserveSize
-		}
-		if reserved == 0 {
-			return nil, ErrDiskCacheUnavailable
-		}
+		contentLength > 0 &&
+		contentLength >= threshold &&
+		IsDiskCacheAvailable(contentLength) {
 		storage, err := newDiskStorageFromReader(reader, maxBytes, GetDiskCachePath())
-		if reserved > 0 {
-			ReleaseDiskCacheReservation(reserved)
-		}
 		if err != nil {
 			if IsRequestBodyTooLargeError(err) {
 				return nil, err
@@ -374,27 +302,10 @@ func CreateBodyStorageFromReader(reader io.Reader, contentLength int64, maxBytes
 	return storage, nil
 }
 
-type replayableBodyReader struct {
-	storage BodyStorage
-}
-
-func (r replayableBodyReader) Read(p []byte) (int, error) {
-	return r.storage.Read(p)
-}
-
-func (r replayableBodyReader) Size() int64 {
-	return r.storage.Size()
-}
-
-func (r replayableBodyReader) NewReader() (io.ReadCloser, error) {
-	return r.storage.NewReader()
-}
-
-// NewReplayableBodyReader exposes the replay capabilities of storage without
-// exposing io.Closer. This keeps ownership of the storage lifecycle with the
-// caller instead of allowing net/http to close it as the request body.
-func NewReplayableBodyReader(storage BodyStorage) ReplayableBody {
-	return replayableBodyReader{storage: storage}
+// ReaderOnly wraps an io.Reader to hide io.Closer, preventing http.NewRequest
+// from type-asserting io.ReadCloser and closing the underlying BodyStorage.
+func ReaderOnly(r io.Reader) io.Reader {
+	return struct{ io.Reader }{r}
 }
 
 // CleanupOldCacheFiles 清理旧的缓存文件（用于启动时清理残留）

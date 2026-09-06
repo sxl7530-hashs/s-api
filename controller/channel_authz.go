@@ -118,7 +118,6 @@ func clearChannelReadOnlyFields(channel *PatchChannel, requestData map[string]an
 // to the fail-closed branch and is treated as sensitive. The
 // TestChannelFieldsAreClassified guard test enforces this.
 var channelNonSensitiveFields = map[string]struct{}{
-	"cost_ratio":          {},
 	"id":                  {},
 	"test_model":          {},
 	"name":                {},

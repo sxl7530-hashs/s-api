@@ -1,0 +1,41 @@
+# New-API 测试环境 Docker Compose Configuration
+# 
+# 用途：测试 dev 分支的新功能，独立于生产环境
+# 端口：3002
+# 镜像：new-api-test (从 dev 分支构建)
+# 数据库：复用 new-api-test 的 postgres-2 / redis-2
+#
+# ⚠️  此环境用于功能测试，不要用于生产流量
+
+services:
+  new-api-test:
+    image: new-api-test
+    container_name: new-api-2
+    restart: always
+    command: --log-dir /app/logs
+    ports:
+      - "3002:3000"
+    volumes:
+      - ./data-test:/data
+      - ./logs-test:/app/logs
+    environment:
+      - SQL_DSN=postgresql://root:admin123..@postgres-2:5432/new-api-test
+      - REDIS_CONN_STRING=redis://redis-2
+      - TZ=Asia/Shanghai
+      - DEBUG=true
+      - ERROR_LOG_ENABLED=true
+      - BATCH_UPDATE_ENABLED=true
+      - SESSION_SECRET=test-env-secret-key-2026
+      - OSS_UPLOAD_SERVICE_URL=http://172.93.102.161:3001
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - test-net
+
+networks:
+  test-net:
+    external: true
+    name: test_default

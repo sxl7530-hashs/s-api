@@ -1,7 +1,6 @@
 package constant
 
 var StreamingTimeout int
-var MaxUpstreamResponseMB int
 var DifyDebug bool
 var MaxFileDownloadMB int
 var StreamScannerMaxBufferMB int
@@ -19,11 +18,6 @@ var GenerateDefaultToken bool
 var ErrorLogEnabled bool
 var TaskQueryLimit int
 var TaskTimeoutMinutes int
-var TaskPollMaxFailures = 20
-var TaskPluginProtocolTimeoutSeconds int
-var TaskPluginProtocolTickMilliseconds int
-var TaskPluginProtocolTickJitterMilliseconds int
-var TaskPluginProtocolHeartbeatSeconds int
 
 // temporary variable for sora patch, will be removed in future
 var TaskPricePatches []string

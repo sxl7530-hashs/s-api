@@ -1,10 +1,12 @@
 package middleware
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -15,6 +17,12 @@ type turnstileCheckResponse struct {
 func TurnstileCheck() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if common.TurnstileCheckEnabled {
+			session := sessions.Default(c)
+			turnstileChecked := session.Get("turnstile")
+			if turnstileChecked != nil {
+				c.Next()
+				return
+			}
 			response := c.Query("turnstile")
 			if response == "" {
 				c.JSON(http.StatusOK, gin.H{
@@ -40,7 +48,7 @@ func TurnstileCheck() gin.HandlerFunc {
 			}
 			defer rawRes.Body.Close()
 			var res turnstileCheckResponse
-			err = common.DecodeJson(rawRes.Body, &res)
+			err = json.NewDecoder(rawRes.Body).Decode(&res)
 			if err != nil {
 				common.SysLog(err.Error())
 				c.JSON(http.StatusOK, gin.H{
@@ -56,6 +64,15 @@ func TurnstileCheck() gin.HandlerFunc {
 					"message": "Turnstile 校验失败，请刷新重试！",
 				})
 				c.Abort()
+				return
+			}
+			session.Set("turnstile", true)
+			err = session.Save()
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{
+					"message": "无法保存会话信息，请重试",
+					"success": false,
+				})
 				return
 			}
 		}

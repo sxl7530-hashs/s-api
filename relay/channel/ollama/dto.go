@@ -5,13 +5,12 @@ import (
 )
 
 type OllamaChatMessage struct {
-	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
-	Images     []string         `json:"images,omitempty"`
-	ToolCalls  []OllamaToolCall `json:"tool_calls,omitempty"`
-	ToolName   string           `json:"tool_name,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
-	Thinking   json.RawMessage  `json:"thinking,omitempty"`
+	Role      string           `json:"role"`
+	Content   string           `json:"content,omitempty"`
+	Images    []string         `json:"images,omitempty"`
+	ToolCalls []OllamaToolCall `json:"tool_calls,omitempty"`
+	ToolName  string           `json:"tool_name,omitempty"`
+	Thinking  json.RawMessage  `json:"thinking,omitempty"`
 }
 
 type OllamaToolFunction struct {
@@ -26,7 +25,6 @@ type OllamaTool struct {
 }
 
 type OllamaToolCall struct {
-	ID       string `json:"id,omitempty"`
 	Function struct {
 		Name      string      `json:"name"`
 		Arguments interface{} `json:"arguments"`
@@ -38,7 +36,7 @@ type OllamaChatRequest struct {
 	Messages  []OllamaChatMessage `json:"messages"`
 	Tools     interface{}         `json:"tools,omitempty"`
 	Format    interface{}         `json:"format,omitempty"`
-	Stream    bool                `json:"stream"`
+	Stream    bool                `json:"stream,omitempty"`
 	Options   map[string]any      `json:"options,omitempty"`
 	KeepAlive interface{}         `json:"keep_alive,omitempty"`
 	Think     json.RawMessage     `json:"think,omitempty"`
@@ -50,7 +48,7 @@ type OllamaGenerateRequest struct {
 	Suffix    string          `json:"suffix,omitempty"`
 	Images    []string        `json:"images,omitempty"`
 	Format    interface{}     `json:"format,omitempty"`
-	Stream    bool            `json:"stream"`
+	Stream    bool            `json:"stream,omitempty"`
 	Options   map[string]any  `json:"options,omitempty"`
 	KeepAlive interface{}     `json:"keep_alive,omitempty"`
 	Think     json.RawMessage `json:"think,omitempty"`

@@ -12,49 +12,23 @@ import (
 )
 
 type Token struct {
-	Id                  int            `json:"id"`
-	UserId              int            `json:"user_id" gorm:"index"`
-	Key                 string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`
-	Status              int            `json:"status" gorm:"default:1"`
-	Name                string         `json:"name" gorm:"index" `
-	CreatedTime         int64          `json:"created_time" gorm:"bigint"`
-	AccessedTime        int64          `json:"accessed_time" gorm:"bigint"`
-	ExpiredTime         int64          `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
-	RemainQuota         int            `json:"remain_quota" gorm:"default:0"`
-	UnlimitedQuota      bool           `json:"unlimited_quota"`
-	ModelLimitsEnabled  bool           `json:"model_limits_enabled"`
-	ModelLimits         string         `json:"model_limits" gorm:"type:text"`
-	AllowIps            *string        `json:"allow_ips" gorm:"default:''"`
-	UsedQuota           int            `json:"used_quota" gorm:"default:0"` // used quota
-	Group               string         `json:"group" gorm:"default:''"`
-	TokenGroupProfileID int            `json:"token_group_profile_id,omitempty" gorm:"index"`
-	CrossGroupRetry     bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
-	AutoGroups          string         `json:"-" gorm:"type:text"`
-	DeletedAt           gorm.DeletedAt `gorm:"index"`
-}
-
-func (token *Token) GetAutoGroups() ([]string, error) {
-	if token.AutoGroups == "" {
-		return nil, nil
-	}
-	var groups []string
-	if err := common.UnmarshalJsonStr(token.AutoGroups, &groups); err != nil {
-		return nil, err
-	}
-	return groups, nil
-}
-
-func (token *Token) SetAutoGroups(groups []string) error {
-	if len(groups) == 0 {
-		token.AutoGroups = ""
-		return nil
-	}
-	data, err := common.Marshal(groups)
-	if err != nil {
-		return err
-	}
-	token.AutoGroups = string(data)
-	return nil
+	Id                 int            `json:"id"`
+	UserId             int            `json:"user_id" gorm:"index"`
+	Key                string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`
+	Status             int            `json:"status" gorm:"default:1"`
+	Name               string         `json:"name" gorm:"index" `
+	CreatedTime        int64          `json:"created_time" gorm:"bigint"`
+	AccessedTime       int64          `json:"accessed_time" gorm:"bigint"`
+	ExpiredTime        int64          `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
+	RemainQuota        int            `json:"remain_quota" gorm:"default:0"`
+	UnlimitedQuota     bool           `json:"unlimited_quota"`
+	ModelLimitsEnabled bool           `json:"model_limits_enabled"`
+	ModelLimits        string         `json:"model_limits" gorm:"type:text"`
+	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
+	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
+	Group              string         `json:"group" gorm:"default:''"`
+	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
+	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
 
 func (token *Token) Clean() {
@@ -275,10 +249,27 @@ func GetTokenById(id int) (*Token, error) {
 	token := Token{Id: id}
 	var err error = nil
 	err = DB.First(&token, "id = ?", id).Error
+	if shouldUpdateRedis(true, err) {
+		gopool.Go(func() {
+			if err := cacheSetToken(token); err != nil {
+				common.SysLog("failed to update user status cache: " + err.Error())
+			}
+		})
+	}
 	return &token, err
 }
 
 func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
+	defer func() {
+		// Update Redis cache asynchronously on successful DB read
+		if shouldUpdateRedis(fromDB, err) && token != nil {
+			gopool.Go(func() {
+				if err := cacheSetToken(*token); err != nil {
+					common.SysLog("failed to update user status cache: " + err.Error())
+				}
+			})
+		}
+	}()
 	if !fromDB && common.RedisEnabled {
 		// Try Redis first
 		token, err := cacheGetTokenByKey(key)
@@ -287,18 +278,9 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 		}
 		// Don't return error - fall through to DB
 	}
-	token = &Token{}
-	if err = DB.Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
-		return nil, err
-	}
-	if common.RedisEnabled {
-		// 冷缓存时用数据库快照初始化；已存在的哈希只刷新 TTL，
-		// 避免快照覆盖 Redis 中已被原子预扣的余额。初始化失败不影响本次读取。
-		if _, cacheErr := cacheInitToken(*token); cacheErr != nil {
-			common.SysLog("failed to init token cache: " + cacheErr.Error())
-		}
-	}
-	return token, nil
+	fromDB = true
+	err = DB.Where(commonKeyCol+" = ?", key).First(&token).Error
+	return token, err
 }
 
 func (token *Token) Insert() error {
@@ -309,27 +291,49 @@ func (token *Token) Insert() error {
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (token *Token) Update() (err error) {
-	// 写库前失效缓存并设置 fence，防止并发读者把过期快照重新写回缓存。
-	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
-		common.SysLog("failed to invalidate token cache before update: " + cacheErr.Error())
-	}
-	return DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "token_group_profile_id", "cross_group_retry", "auto_groups").Updates(token).Error
+	defer func() {
+		if shouldUpdateRedis(true, err) {
+			gopool.Go(func() {
+				err := cacheSetToken(*token)
+				if err != nil {
+					common.SysLog("failed to update token cache: " + err.Error())
+				}
+			})
+		}
+	}()
+	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
+		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
+	return err
 }
 
 func (token *Token) SelectUpdate() (err error) {
-	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
-		common.SysLog("failed to invalidate token cache before status update: " + cacheErr.Error())
-	}
+	defer func() {
+		if shouldUpdateRedis(true, err) {
+			gopool.Go(func() {
+				err := cacheSetToken(*token)
+				if err != nil {
+					common.SysLog("failed to update token cache: " + err.Error())
+				}
+			})
+		}
+	}()
 	// This can update zero values
 	return DB.Model(token).Select("accessed_time", "status").Updates(token).Error
 }
 
 func (token *Token) Delete() (err error) {
-	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
-		common.SysLog("failed to invalidate token cache before delete: " + cacheErr.Error())
-	}
-	return DB.Delete(token).Error
+	defer func() {
+		if shouldUpdateRedis(true, err) {
+			gopool.Go(func() {
+				err := cacheDeleteToken(token.Key)
+				if err != nil {
+					common.SysLog("failed to delete token cache: " + err.Error())
+				}
+			})
+		}
+	}()
+	err = DB.Delete(token).Error
+	return err
 }
 
 func (token *Token) IsModelLimitsEnabled() bool {
@@ -381,9 +385,8 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 	}
 	if common.RedisEnabled {
 		gopool.Go(func() {
-			// 守卫式增量：哈希不存在时跳过，由下次读取从数据库水合，
-			// 绝不创建只有配额字段的残缺哈希。
-			if _, err := cacheApplyTokenQuotaDelta(tokenId, key, int64(quota)); err != nil {
+			err := cacheIncrTokenQuota(key, int64(quota))
+			if err != nil {
 				common.SysLog("failed to increase token quota: " + err.Error())
 			}
 		})
@@ -412,7 +415,8 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	}
 	if common.RedisEnabled {
 		gopool.Go(func() {
-			if _, err := cacheApplyTokenQuotaDelta(id, key, int64(-quota)); err != nil {
+			err := cacheDecrTokenQuota(key, int64(quota))
+			if err != nil {
 				common.SysLog("failed to decrease token quota: " + err.Error())
 			}
 		})
@@ -455,9 +459,6 @@ func BatchDeleteTokens(ids []int, userId int) (int, error) {
 		tx.Rollback()
 		return 0, err
 	}
-	if err := invalidateTokensCache(tokens); err != nil {
-		common.SysLog("failed to invalidate token cache before batch delete: " + err.Error())
-	}
 
 	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Delete(&Token{}).Error; err != nil {
 		tx.Rollback()
@@ -466,6 +467,14 @@ func BatchDeleteTokens(ids []int, userId int) (int, error) {
 
 	if err := tx.Commit().Error; err != nil {
 		return 0, err
+	}
+
+	if common.RedisEnabled {
+		gopool.Go(func() {
+			for _, t := range tokens {
+				_ = cacheDeleteToken(t.Key)
+			}
+		})
 	}
 
 	return len(tokens), nil
@@ -496,19 +505,12 @@ func InvalidateUserTokensCache(userId int) error {
 		Find(&tokens).Error; err != nil {
 		return err
 	}
-	return invalidateTokensCache(tokens)
-}
-
-func invalidateTokensCache(tokens []Token) error {
-	if !common.RedisEnabled {
-		return nil
-	}
 	var firstErr error
 	for _, t := range tokens {
 		if t.Key == "" {
 			continue
 		}
-		if err := invalidateTokenCacheForMutation(t.Key); err != nil && firstErr == nil {
+		if err := cacheDeleteToken(t.Key); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

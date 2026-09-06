@@ -11,9 +11,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -50,7 +50,6 @@ type Channel struct {
 	ParamOverride     *string `json:"param_override" gorm:"type:text"`
 	HeaderOverride    *string `json:"header_override" gorm:"type:text"`
 	Remark            *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`
-	CostRatio         float64 `json:"cost_ratio" gorm:"default:1"`
 	// add after v0.8.5
 	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"`
 
@@ -163,19 +162,14 @@ func ApplyChannelGroupFilter(query *gorm.DB, group string) *gorm.DB {
 }
 
 // Value implements driver.Valuer interface
-// 必须返回 string 而非 []byte:PG simple protocol 下 []byte 参数按 bytea
-// 编码,写 json 列会触发 SQLSTATE 22P02。
 func (c ChannelInfo) Value() (driver.Value, error) {
-	b, err := common.Marshal(&c)
-	if err != nil {
-		return nil, err
-	}
-	return string(b), nil
+	return common.Marshal(&c)
 }
 
 // Scan implements sql.Scanner interface
 func (c *ChannelInfo) Scan(value interface{}) error {
-	return common.Unmarshal(jsonScanBytes(value), c)
+	bytesValue, _ := value.([]byte)
+	return common.Unmarshal(bytesValue, c)
 }
 
 func (channel *Channel) GetKeys() []string {
@@ -352,21 +346,11 @@ func (channel *Channel) Save() error {
 	return DB.Save(channel).Error
 }
 
-// saveStatusState persists only the fields owned by the channel status flow.
-// Keeping this allowlist here prevents a stale channel snapshot from
-// overwriting credentials, accounting counters, or channel configuration.
-func (channel *Channel) saveStatusState() error {
+func (channel *Channel) SaveWithoutKey() error {
 	if channel.Id == 0 {
 		return errors.New("channel ID is 0")
 	}
-	updates := map[string]any{
-		"status":     channel.Status,
-		"other_info": channel.OtherInfo,
-	}
-	if channel.ChannelInfo.IsMultiKey {
-		updates["channel_info"] = channel.ChannelInfo
-	}
-	return DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error
+	return DB.Omit("key").Save(channel).Error
 }
 
 func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
@@ -413,9 +397,13 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 	baseQuery := DB.Model(&Channel{}).Omit("key")
 
 	// 构造WHERE子句
-	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
-	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
-	baseQuery = ApplyChannelGroupFilter(baseQuery.Where(whereClause, args...), group)
+	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ? OR " + commonGroupCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
+	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + keyword + "%", "%" + model + "%"}
+	baseQuery = baseQuery.Where(whereClause, args...)
+	// Feature 11: 分组参数模糊匹配（上游 ApplyChannelGroupFilter 是精确段匹配）
+	if g := NormalizeChannelGroupFilter(group); g != "" {
+		baseQuery = baseQuery.Where(commonGroupCol+" LIKE ?", "%"+g+"%")
+	}
 
 	// 执行查询
 	err := order.Apply(baseQuery).Find(&channels).Error
@@ -425,15 +413,6 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 	return channels, nil
 }
 
-// GetChannelById loads a channel directly from the database, bypassing the
-// in-memory channel cache.
-//
-// WARNING: do NOT call this on request hot paths (middleware, distribution,
-// relay submit/retry, polling). Every call is a synchronous DB query and will
-// not see cache-only state. Use CacheGetChannel instead: it serves from the
-// in-memory cache and falls back to this function automatically when
-// MemoryCacheEnabled is false. Direct use is appropriate only where fresh DB
-// state is required, e.g. admin CRUD, channel testing, or cache (re)building.
 func GetChannelById(id int, selectAll bool) (*Channel, error) {
 	channel := &Channel{Id: id}
 	var err error = nil
@@ -463,18 +442,11 @@ func BatchInsertChannels(channels []Channel) error {
 	}()
 
 	for _, chunk := range lo.Chunk(channels, 50) {
-		for i := range chunk {
-			chunk[i].CostRatio = NormalizeChannelCostRatio(chunk[i].CostRatio)
-		}
 		if err := tx.Create(&chunk).Error; err != nil {
 			tx.Rollback()
 			return err
 		}
 		for _, channel_ := range chunk {
-			if err := EnsureChannelCostRatioHistory(tx, channel_.Id, channel_.CostRatio, common.GetTimestamp()); err != nil {
-				tx.Rollback()
-				return err
-			}
 			if err := channel_.AddAbilities(tx); err != nil {
 				tx.Rollback()
 				return err
@@ -484,32 +456,26 @@ func BatchInsertChannels(channels []Channel) error {
 	return tx.Commit().Error
 }
 
-func BatchDeleteChannels(ids []int) (int64, error) {
+func BatchDeleteChannels(ids []int) error {
 	if len(ids) == 0 {
-		return 0, nil
+		return nil
 	}
 	// 使用事务 分批删除channel表和abilities表
 	tx := DB.Begin()
 	if tx.Error != nil {
-		return 0, tx.Error
+		return tx.Error
 	}
-	var deletedCount int64
 	for _, chunk := range lo.Chunk(ids, 200) {
-		result := tx.Where("id in (?)", chunk).Delete(&Channel{})
-		if result.Error != nil {
+		if err := tx.Where("id in (?)", chunk).Delete(&Channel{}).Error; err != nil {
 			tx.Rollback()
-			return 0, result.Error
+			return err
 		}
-		deletedCount += result.RowsAffected
 		if err := tx.Where("channel_id in (?)", chunk).Delete(&Ability{}).Error; err != nil {
 			tx.Rollback()
-			return 0, err
+			return err
 		}
 	}
-	if err := tx.Commit().Error; err != nil {
-		return 0, err
-	}
-	return deletedCount, nil
+	return tx.Commit().Error
 }
 
 func (channel *Channel) GetPriority() int64 {
@@ -532,7 +498,7 @@ func (channel *Channel) GetBaseURL() string {
 	}
 	url := *channel.BaseURL
 	if url == "" {
-		url = constant.GetChannelBaseURL(channel.Type)
+		url = constant.ChannelBaseURLs[channel.Type]
 	}
 	return url
 }
@@ -553,13 +519,7 @@ func (channel *Channel) GetStatusCodeMapping() string {
 
 func (channel *Channel) Insert() error {
 	var err error
-	channel.CostRatio = NormalizeChannelCostRatio(channel.CostRatio)
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(channel).Error; err != nil {
-			return err
-		}
-		return EnsureChannelCostRatioHistory(tx, channel.Id, channel.CostRatio, common.GetTimestamp())
-	})
+	err = DB.Create(channel).Error
 	if err != nil {
 		return err
 	}
@@ -606,14 +566,8 @@ func (channel *Channel) Update() error {
 			}
 		}
 	}
-	channel.CostRatio = NormalizeChannelCostRatio(channel.CostRatio)
 	var err error
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(channel).Updates(channel).Error; err != nil {
-			return err
-		}
-		return EnsureChannelCostRatioHistory(tx, channel.Id, channel.CostRatio, common.GetTimestamp())
-	})
+	err = DB.Model(channel).Updates(channel).Error
 	if err != nil {
 		return err
 	}
@@ -757,24 +711,19 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 	if common.MemoryCacheEnabled {
 		channelStatusLock.Lock()
 		defer channelStatusLock.Unlock()
-	}
 
-	// ChannelInfo stores both multi-key status and the polling cursor. Hold the
-	// same per-channel lock from the first read through persistence so neither
-	// writer can save a stale JSON snapshot over the other.
-	pollingLock := GetChannelPollingLock(channelId)
-	pollingLock.Lock()
-	defer pollingLock.Unlock()
-
-	if common.MemoryCacheEnabled {
 		channelCache, _ := CacheGetChannel(channelId)
 		if channelCache == nil {
 			return false
 		}
 		if channelCache.ChannelInfo.IsMultiKey {
+			// Use per-channel lock to prevent concurrent map read/write with GetNextEnabledKey
 			beforeStatus := channelCache.Status
+			pollingLock := GetChannelPollingLock(channelId)
+			pollingLock.Lock()
 			// 如果是多Key模式，更新缓存中的状态
 			handlerMultiKeyUpdate(channelCache, usingKey, status, reason)
+			pollingLock.Unlock()
 			if beforeStatus != channelCache.Status {
 				CacheUpdateChannelStatus(channelId, channelCache.Status)
 			}
@@ -808,7 +757,11 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 
 		if channel.ChannelInfo.IsMultiKey {
 			beforeStatus := channel.Status
+			// Protect map writes with the same per-channel lock used by readers
+			pollingLock := GetChannelPollingLock(channelId)
+			pollingLock.Lock()
 			handlerMultiKeyUpdate(channel, usingKey, status, reason)
+			pollingLock.Unlock()
 			if beforeStatus != channel.Status {
 				shouldUpdateAbilities = true
 			}
@@ -820,7 +773,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 			channel.Status = status
 			shouldUpdateAbilities = true
 		}
-		err = channel.saveStatusState()
+		err = channel.SaveWithoutKey()
 		if err != nil {
 			common.SysLog(fmt.Sprintf("failed to update channel status: channel_id=%d, status=%d, error=%v", channel.Id, status, err))
 			return false
@@ -968,9 +921,13 @@ func SearchTags(keyword string, group string, model string, idSort bool) ([]*str
 	baseQuery := DB.Model(&Channel{}).Omit("key")
 
 	// 构造WHERE子句
-	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
-	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
-	baseQuery = ApplyChannelGroupFilter(baseQuery.Where(whereClause, args...), group)
+	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ? OR " + commonGroupCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
+	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + keyword + "%", "%" + model + "%"}
+	baseQuery = baseQuery.Where(whereClause, args...)
+	// Feature 11: 分组参数模糊匹配（上游 ApplyChannelGroupFilter 是精确段匹配）
+	if g := NormalizeChannelGroupFilter(group); g != "" {
+		baseQuery = baseQuery.Where(commonGroupCol+" LIKE ?", "%"+g+"%")
+	}
 
 	subQuery := baseQuery.
 		Select("tag").
@@ -996,21 +953,12 @@ func (channel *Channel) ValidateSettings() error {
 			return err
 		}
 	}
-	if _, err := common.ParseProxyURLStrict(channelParams.Proxy); err != nil {
-		return fmt.Errorf("invalid channel proxy: %w", err)
-	}
-	if err := channelParams.ValidateHTTPTransport(); err != nil {
-		return err
-	}
 	channelOtherSettings := &dto.ChannelOtherSettings{}
 	if channel.OtherSettings != "" {
 		err := common.UnmarshalJsonStr(channel.OtherSettings, channelOtherSettings)
 		if err != nil {
 			return err
 		}
-	}
-	if err := channelOtherSettings.ValidateToolLossPolicy(); err != nil {
-		return err
 	}
 	if channel.Type == constant.ChannelTypeAdvancedCustom {
 		if channelOtherSettings.AdvancedCustom == nil {
@@ -1020,11 +968,6 @@ func (channel *Channel) ValidateSettings() error {
 	if channelOtherSettings.AdvancedCustom != nil {
 		if err := channelOtherSettings.AdvancedCustom.Validate(); err != nil {
 			return err
-		}
-	}
-	if channel.Type == constant.ChannelTypeAdvancedCustom && channelOtherSettings.UpstreamModelUpdateCheckEnabled {
-		if _, ok := channelOtherSettings.AdvancedCustom.ModelListRoute(); !ok {
-			return fmt.Errorf("advanced custom channels require a %s route when upstream model update checks are enabled", dto.AdvancedCustomModelListPath)
 		}
 	}
 	return nil
