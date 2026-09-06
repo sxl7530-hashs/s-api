@@ -105,6 +105,7 @@ func (r *GeminiChatRequest) GetTokenCountMeta() *types.TokenCountMeta {
 
 	// CUSTOM(Feature 3): 从 generationConfig.imageConfig.imageSize 解析 image-size 倍率（原生 Gemini 路径）
 	var imagePriceRatio float64
+	var imageSizeLabel string
 	if len(r.GenerationConfig.ImageConfig) > 0 {
 		var imgCfg struct {
 			ImageSize     string `json:"imageSize"`
@@ -116,6 +117,7 @@ func (r *GeminiChatRequest) GetTokenCountMeta() *types.TokenCountMeta {
 				size = imgCfg.ImageSizeSnake
 			}
 			if size != "" {
+				imageSizeLabel = strings.ToUpper(size)
 				if sizeRatio, found := ratio_setting.GetGeminiImageSizeRatio(size); found {
 					imagePriceRatio = sizeRatio
 				}
@@ -128,6 +130,7 @@ func (r *GeminiChatRequest) GetTokenCountMeta() *types.TokenCountMeta {
 		Files:           files,
 		MaxTokens:       maxTokens,
 		ImagePriceRatio: imagePriceRatio,
+		ImageSizeLabel:  imageSizeLabel,
 	}
 }
 
