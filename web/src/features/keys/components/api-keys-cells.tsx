@@ -28,16 +28,84 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import { Progress } from '@/components/ui/progress'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
-import { formatQuota } from '@/lib/format'
+import { formatCompactQuota, formatQuota } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
+
+function getQuotaProgressColor(percentage: number): string {
+  if (percentage <= 10) return '[&_[data-slot=progress-indicator]]:bg-rose-500'
+  if (percentage <= 30) return '[&_[data-slot=progress-indicator]]:bg-amber-500'
+  return '[&_[data-slot=progress-indicator]]:bg-emerald-500'
+}
+
+type ApiKeyQuotaCellProps = {
+  used: number
+  remaining: number
+  total: number
+}
+
+export function ApiKeyQuotaCell(props: ApiKeyQuotaCellProps) {
+  const { t } = useTranslation()
+  const percentage = props.total > 0 ? (props.remaining / props.total) * 100 : 0
+  const exactUsed = formatQuota(props.used)
+  const exactRemaining = formatQuota(props.remaining)
+  const exactTotal = formatQuota(props.total)
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div
+            data-testid='api-key-quota-cell'
+            className='flex w-full min-w-0 flex-col gap-1 overflow-hidden'
+            aria-label={`${t('Remaining:')} ${exactRemaining}; ${t('Total:')} ${exactTotal}; ${t('Used:')} ${exactUsed}`}
+          />
+        }
+      >
+        <div className='flex min-w-0 items-center justify-between gap-2 text-xs'>
+          <span
+            data-quota-compact-label
+            className='min-w-0 truncate font-medium tabular-nums'
+          >
+            {formatCompactQuota(props.remaining)}
+          </span>
+          <span
+            data-quota-compact-label
+            className='text-muted-foreground min-w-0 truncate text-right tabular-nums'
+          >
+            {formatCompactQuota(props.total)}
+          </span>
+        </div>
+        <Progress
+          value={percentage}
+          className={cn('h-1.5 w-full', getQuotaProgressColor(percentage))}
+        />
+      </TooltipTrigger>
+      <TooltipContent>
+        <div className='flex flex-col gap-1 text-xs'>
+          <div>
+            {t('Used:')} {exactUsed}
+          </div>
+          <div>
+            {t('Remaining:')} {exactRemaining} ({percentage.toFixed(1)}%)
+          </div>
+          <div>
+            {t('Total:')} {exactTotal}
+          </div>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
 
 export function ApiKeyCell({ apiKey }: { apiKey: ApiKey }) {
   const { t } = useTranslation()
