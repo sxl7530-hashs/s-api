@@ -5587,6 +5587,7 @@
     "Change the order by removing groups and selecting them again.": "下の行をドラッグして順序を変更します。",
     "Choose ordinary groups": "通常グループを選択",
     "Choose portable group": "ポータブルグループを選択",
-    "Select at least one group or restore the configured order.": "少なくとも1つのグループを選択するか、設定済みの順序に戻してください。"
+    "Select at least one group or restore the configured order.": "少なくとも1つのグループを選択するか、設定済みの順序に戻してください。",
+    "Sync timeout": "同期タイムアウト"
   }
 }

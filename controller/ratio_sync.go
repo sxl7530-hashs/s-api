@@ -29,7 +29,10 @@ import (
 )
 
 const (
-	defaultTimeoutSeconds       = 10
+	defaultSyncTimeoutSeconds   = 30
+	minSyncTimeoutSeconds       = 15
+	maxSyncTimeoutSeconds       = 45
+	maxSyncAttempts             = 3
 	defaultEndpoint             = "/api/pricing"
 	maxConcurrentFetches        = 8
 	maxRatioConfigBytes         = 10 << 20 // 10MB
@@ -91,6 +94,45 @@ type upstreamResult struct {
 	Err  string         `json:"err,omitempty"`
 }
 
+func fetchRatioSyncResponse(ctx context.Context, client *http.Client, requestURL, authorization string, attemptTimeout time.Duration) (*http.Response, context.CancelFunc, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxSyncAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		currentTimeout := attemptTimeout
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < currentTimeout {
+			currentTimeout = time.Until(deadline)
+		}
+		attemptCtx, attemptCancel := context.WithTimeout(ctx, currentTimeout)
+		httpReq, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, requestURL, nil)
+		if err != nil {
+			attemptCancel()
+			return nil, nil, err
+		}
+		if authorization != "" {
+			httpReq.Header.Set("Authorization", authorization)
+		}
+		resp, err := client.Do(httpReq)
+		if err == nil {
+			return resp, attemptCancel, nil
+		}
+		attemptCancel()
+		lastErr = err
+		if attempt+1 >= maxSyncAttempts {
+			break
+		}
+		backoff := time.NewTimer(time.Duration(200*(1<<attempt)) * time.Millisecond)
+		select {
+		case <-backoff.C:
+		case <-ctx.Done():
+			backoff.Stop()
+			return nil, nil, ctx.Err()
+		}
+	}
+	return nil, nil, lastErr
+}
+
 func valueMap(value any) map[string]any {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -148,7 +190,11 @@ func FetchUpstreamRatios(c *gin.Context) {
 	}
 
 	if req.Timeout <= 0 {
-		req.Timeout = defaultTimeoutSeconds
+		req.Timeout = defaultSyncTimeoutSeconds
+	} else if req.Timeout < minSyncTimeoutSeconds {
+		req.Timeout = minSyncTimeoutSeconds
+	} else if req.Timeout > maxSyncTimeoutSeconds {
+		req.Timeout = maxSyncTimeoutSeconds
 	}
 
 	var upstreams []dto.UpstreamDTO
@@ -197,7 +243,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 	sem := make(chan struct{}, maxConcurrentFetches)
 
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	transport := &http.Transport{MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: 1 * time.Second, ResponseHeaderTimeout: 10 * time.Second}
+	transport := &http.Transport{MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: 1 * time.Second}
 	if common.TLSInsecureSkipVerify {
 		transport.TLSClientConfig = common.InsecureTLSConfig
 	}
@@ -216,13 +262,21 @@ func FetchUpstreamRatios(c *gin.Context) {
 		return dialer.DialContext(ctx, network, addr)
 	}
 	client := &http.Client{Transport: transport}
+	defer transport.CloseIdleConnections()
+	syncCtx, syncCancel := context.WithTimeout(c.Request.Context(), time.Duration(req.Timeout)*time.Second)
+	defer syncCancel()
 
 	for _, chn := range upstreams {
 		wg.Add(1)
 		go func(chItem dto.UpstreamDTO) {
 			defer wg.Done()
 
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-syncCtx.Done():
+				ch <- upstreamResult{Name: chItem.Name, Err: syncCtx.Err().Error()}
+				return
+			}
 			defer func() { <-sem }()
 
 			isOpenRouter := chItem.Endpoint == "openrouter"
@@ -248,16 +302,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 				uniqueName = fmt.Sprintf("%s(%d)", chItem.Name, chItem.ID)
 			}
 
-			ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(req.Timeout)*time.Second)
-			defer cancel()
-
-			httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
-			if err != nil {
-				logger.LogWarn(c.Request.Context(), "build request failed: "+err.Error())
-				ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
-				return
-			}
-
+			var authorization string
 			// OpenRouter requires Bearer token auth
 			if isOpenRouter && chItem.ID != 0 {
 				dbCh, err := model.GetChannelById(chItem.ID, true)
@@ -274,27 +319,27 @@ func FetchUpstreamRatios(c *gin.Context) {
 					ch <- upstreamResult{Name: uniqueName, Err: "no API key configured for this channel"}
 					return
 				}
-				httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(key))
+				authorization = "Bearer " + strings.TrimSpace(key)
 			} else if isOpenRouter {
 				ch <- upstreamResult{Name: uniqueName, Err: "OpenRouter requires a valid channel with API key"}
 				return
 			}
 
-			// 简单重试：最多 3 次，指数退避
-			var resp *http.Response
-			var lastErr error
-			for attempt := 0; attempt < 3; attempt++ {
-				resp, lastErr = client.Do(httpReq)
-				if lastErr == nil {
-					break
-				}
-				time.Sleep(time.Duration(200*(1<<attempt)) * time.Millisecond)
-			}
+			// Give every retry a fresh context, while keeping the complete request
+			// below common reverse-proxy timeout thresholds.
+			resp, responseCancel, lastErr := fetchRatioSyncResponse(
+				syncCtx,
+				client,
+				fullURL,
+				authorization,
+				time.Duration(req.Timeout/maxSyncAttempts)*time.Second,
+			)
 			if lastErr != nil {
 				logger.LogWarn(c.Request.Context(), "http error on "+chItem.Name+": "+lastErr.Error())
 				ch <- upstreamResult{Name: uniqueName, Err: lastErr.Error()}
 				return
 			}
+			defer responseCancel()
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
 				logger.LogWarn(c.Request.Context(), "non-200 from "+chItem.Name+": "+resp.Status)
@@ -492,8 +537,30 @@ func FetchUpstreamRatios(c *gin.Context) {
 		}(chn)
 	}
 
-	wg.Wait()
-	close(ch)
+	fetchDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(ch)
+		close(fetchDone)
+	}()
+	heartbeat := time.NewTicker(5 * time.Second)
+	defer heartbeat.Stop()
+	fetchCompleted := false
+	for !fetchCompleted {
+		select {
+		case <-fetchDone:
+			fetchCompleted = true
+		case <-heartbeat.C:
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.Header("Cache-Control", "no-store")
+			if _, err := c.Writer.Write([]byte(" ")); err != nil {
+				syncCancel()
+				<-fetchDone
+				return
+			}
+			c.Writer.Flush()
+		}
+	}
 
 	localData := getLocalPricingSyncData()
 

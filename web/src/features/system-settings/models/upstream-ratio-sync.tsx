@@ -129,6 +129,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
   const [channelEndpoints, setChannelEndpoints] = useState<
     Record<number, string>
   >({})
+  const [syncTimeout, setSyncTimeout] = useState(30)
   const [differences, setDifferences] = useState<DifferencesMap>({})
   const [resolutions, setResolutions] = useState<ResolutionsMap>({})
   const [conflictItems, setConflictItems] = useState<ConflictItem[]>([])
@@ -245,7 +246,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
       endpoint: channelEndpoints[ch.id] || DEFAULT_ENDPOINT,
     }))
 
-    fetchMutation.mutate({ upstreams, timeout: 10 })
+    fetchMutation.mutate({ upstreams, timeout: syncTimeout })
   }
 
   const handleSelectValue = useCallback(
@@ -517,6 +518,8 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         onSelectedChannelIdsChange={setSelectedChannelIds}
         channelEndpoints={channelEndpoints}
         onChannelEndpointsChange={setChannelEndpoints}
+        syncTimeout={syncTimeout}
+        onSyncTimeoutChange={setSyncTimeout}
         onConfirm={handleConfirmChannelSelection}
       />
 

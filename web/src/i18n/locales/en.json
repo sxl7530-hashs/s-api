@@ -5587,6 +5587,7 @@
     "Change the order by removing groups and selecting them again.": "Change the order by dragging the rows below.",
     "Choose ordinary groups": "Choose ordinary groups",
     "Choose portable group": "Choose portable group",
-    "Select at least one group or restore the configured order.": "Select at least one group or restore the configured order."
+    "Select at least one group or restore the configured order.": "Select at least one group or restore the configured order.",
+    "Sync timeout": "Sync timeout"
   }
 }

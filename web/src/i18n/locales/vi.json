@@ -5587,6 +5587,7 @@
     "Change the order by removing groups and selecting them again.": "Kéo các hàng bên dưới để thay đổi thứ tự.",
     "Choose ordinary groups": "Chọn nhóm thông thường",
     "Choose portable group": "Chọn nhóm di động",
-    "Select at least one group or restore the configured order.": "Chọn ít nhất một nhóm hoặc khôi phục thứ tự đã cấu hình."
+    "Select at least one group or restore the configured order.": "Chọn ít nhất một nhóm hoặc khôi phục thứ tự đã cấu hình.",
+    "Sync timeout": "Thời gian chờ đồng bộ"
   }
 }

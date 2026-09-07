@@ -58,6 +58,8 @@ type ChannelSelectorDialogProps = {
   onSelectedChannelIdsChange: (ids: number[]) => void
   channelEndpoints: Record<number, string>
   onChannelEndpointsChange: (endpoints: Record<number, string>) => void
+  syncTimeout: number
+  onSyncTimeoutChange: (timeout: number) => void
   onConfirm: (selectedIds: number[]) => void
 }
 
@@ -77,6 +79,8 @@ export function ChannelSelectorDialog({
   onSelectedChannelIdsChange,
   channelEndpoints,
   onChannelEndpointsChange,
+  syncTimeout,
+  onSyncTimeoutChange,
   onConfirm,
 }: ChannelSelectorDialogProps) {
   const { t } = useTranslation()
@@ -336,7 +340,7 @@ export function ChannelSelectorDialog({
       }
     >
       <div className='flex h-full min-h-0 flex-col gap-4 overflow-hidden'>
-        <div className='flex shrink-0 items-center gap-2'>
+        <div className='flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center'>
           <div className='relative flex-1'>
             <Search className='text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2' />
             <Input
@@ -346,6 +350,32 @@ export function ChannelSelectorDialog({
               className='ps-9'
             />
           </div>
+          <Select
+            items={[15, 30, 45].map((seconds) => ({
+              value: seconds.toString(),
+              label: `${seconds}s`,
+            }))}
+            value={syncTimeout.toString()}
+            onValueChange={(value) => {
+              if (value !== null) onSyncTimeoutChange(Number(value))
+            }}
+          >
+            <SelectTrigger
+              className='w-full sm:w-44'
+              aria-label={t('Sync timeout')}
+            >
+              <SelectValue placeholder={t('Sync timeout')} />
+            </SelectTrigger>
+            <SelectContent alignItemWithTrigger={false}>
+              <SelectGroup>
+                {[15, 30, 45].map((seconds) => (
+                  <SelectItem key={seconds} value={seconds.toString()}>
+                    {t('Sync timeout')}: {seconds}s
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
 
         <DataTableView

@@ -5587,6 +5587,7 @@
     "Change the order by removing groups and selecting them again.": "Перетаскивайте строки ниже, чтобы изменить порядок.",
     "Choose ordinary groups": "Выбрать обычные группы",
     "Choose portable group": "Выбрать переносную группу",
-    "Select at least one group or restore the configured order.": "Выберите хотя бы одну группу или восстановите настроенный порядок."
+    "Select at least one group or restore the configured order.": "Выберите хотя бы одну группу или восстановите настроенный порядок.",
+    "Sync timeout": "Тайм-аут синхронизации"
   }
 }

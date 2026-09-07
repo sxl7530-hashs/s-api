@@ -5587,6 +5587,7 @@
     "Change the order by removing groups and selecting them again.": "Faites glisser les lignes ci-dessous pour modifier l’ordre.",
     "Choose ordinary groups": "Choisir des groupes ordinaires",
     "Choose portable group": "Choisir un groupe portable",
-    "Select at least one group or restore the configured order.": "Sélectionnez au moins un groupe ou restaurez l’ordre configuré."
+    "Select at least one group or restore the configured order.": "Sélectionnez au moins un groupe ou restaurez l’ordre configuré.",
+    "Sync timeout": "Délai de synchronisation"
   }
 }
