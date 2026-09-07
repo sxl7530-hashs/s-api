@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,7 @@ func TestFetchRatioSyncResponseRetriesWithFreshAttemptContext(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	response, responseCancel, err := fetchRatioSyncResponse(ctx, server.Client(), server.URL, "", 20*time.Millisecond)
+	response, responseCancel, err := fetchRatioSyncResponse(ctx, server.Client(), server.URL, nil, 20*time.Millisecond)
 	require.NoError(t, err)
 	require.NotNil(t, response)
 	require.NotNil(t, responseCancel)
@@ -40,6 +41,65 @@ func TestFetchRatioSyncResponseRetriesWithFreshAttemptContext(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `{"success":true}`, string(body))
 	assert.Equal(t, int32(2), requests.Load())
+}
+
+func TestFetchRatioSyncResponseAppliesAuthenticationHeadersOnEveryAttempt(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, "Bearer channel-key", request.Header.Get("Authorization"))
+		assert.Equal(t, "override", request.Header.Get("X-Channel-Auth"))
+		if requests.Add(1) == 1 {
+			<-request.Context().Done()
+			return
+		}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	response, responseCancel, err := fetchRatioSyncResponse(ctx, server.Client(), server.URL, http.Header{
+		"Authorization":  {"Bearer channel-key"},
+		"X-Channel-Auth": {"override"},
+	}, 20*time.Millisecond)
+	require.NoError(t, err)
+	require.NotNil(t, responseCancel)
+	defer responseCancel()
+	defer response.Body.Close()
+	assert.Equal(t, int32(2), requests.Load())
+}
+
+func TestRatioSyncURLUsesChannelOrigin(t *testing.T) {
+	baseURL := "https://api.example.com"
+	channel := &model.Channel{BaseURL: &baseURL}
+
+	assert.True(t, ratioSyncURLUsesChannelOrigin(channel, "https://api.example.com/api/pricing"))
+	assert.False(t, ratioSyncURLUsesChannelOrigin(channel, "http://api.example.com/api/pricing"))
+	assert.False(t, ratioSyncURLUsesChannelOrigin(channel, "https://attacker.example/api/pricing"))
+}
+
+func TestRatioSyncAuthenticatedClientRejectsCrossOriginRedirect(t *testing.T) {
+	destinationCalled := false
+	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		destinationCalled = true
+	}))
+	t.Cleanup(destination.Close)
+	source := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		http.Redirect(writer, &http.Request{}, destination.URL, http.StatusFound)
+	}))
+	t.Cleanup(source.Close)
+
+	client := ratioSyncAuthenticatedClient(source.Client(), source.URL+"/api/pricing")
+	request, err := http.NewRequest(http.MethodGet, source.URL+"/api/pricing", nil)
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer secret")
+	response, err := client.Do(request)
+
+	require.Error(t, err)
+	require.NotNil(t, response)
+	defer response.Body.Close()
+	assert.Equal(t, http.StatusFound, response.StatusCode)
+	assert.False(t, destinationCalled)
 }
 
 func TestFetchUpstreamRatiosKeepsLongRequestAliveAndReturnsJSON(t *testing.T) {

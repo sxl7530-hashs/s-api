@@ -21,6 +21,7 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/samber/lo"
@@ -94,7 +95,7 @@ type upstreamResult struct {
 	Err  string         `json:"err,omitempty"`
 }
 
-func fetchRatioSyncResponse(ctx context.Context, client *http.Client, requestURL, authorization string, attemptTimeout time.Duration) (*http.Response, context.CancelFunc, error) {
+func fetchRatioSyncResponse(ctx context.Context, client *http.Client, requestURL string, headers http.Header, attemptTimeout time.Duration) (*http.Response, context.CancelFunc, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxSyncAttempts; attempt++ {
 		if ctx.Err() != nil {
@@ -110,8 +111,13 @@ func fetchRatioSyncResponse(ctx context.Context, client *http.Client, requestURL
 			attemptCancel()
 			return nil, nil, err
 		}
-		if authorization != "" {
-			httpReq.Header.Set("Authorization", authorization)
+		for name, values := range headers {
+			for _, value := range values {
+				httpReq.Header.Add(name, value)
+			}
+			if strings.EqualFold(name, "Host") {
+				httpReq.Host = headers.Get(name)
+			}
 		}
 		resp, err := client.Do(httpReq)
 		if err == nil {
@@ -131,6 +137,34 @@ func fetchRatioSyncResponse(ctx context.Context, client *http.Client, requestURL
 		}
 	}
 	return nil, nil, lastErr
+}
+
+func ratioSyncURLUsesChannelOrigin(channel *model.Channel, requestURL string) bool {
+	channelURL, channelErr := url.Parse(channel.GetBaseURL())
+	requestURLParsed, requestErr := url.Parse(requestURL)
+	if channelErr != nil || requestErr != nil {
+		return false
+	}
+	return strings.EqualFold(channelURL.Scheme, requestURLParsed.Scheme) &&
+		strings.EqualFold(channelURL.Host, requestURLParsed.Host)
+}
+
+func ratioSyncAuthenticatedClient(client *http.Client, requestURL string) *http.Client {
+	boundClient := *client
+	originalCheckRedirect := client.CheckRedirect
+	boundClient.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if originalCheckRedirect != nil {
+			if err := originalCheckRedirect(request, via); err != nil {
+				return err
+			}
+		}
+		originalURL, err := url.Parse(requestURL)
+		if err != nil || !strings.EqualFold(originalURL.Scheme, request.URL.Scheme) || !strings.EqualFold(originalURL.Host, request.URL.Host) {
+			return fmt.Errorf("authenticated ratio sync redirect to another origin is not allowed")
+		}
+		return nil
+	}
+	return &boundClient
 }
 
 func valueMap(value any) map[string]any {
@@ -236,6 +270,24 @@ func FetchUpstreamRatios(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无有效上游渠道"})
 		return
 	}
+	databaseChannels := make(map[int]*model.Channel)
+	databaseChannelIDs := make([]int, 0, len(upstreams))
+	for _, upstream := range upstreams {
+		if upstream.ID > 0 {
+			databaseChannelIDs = append(databaseChannelIDs, upstream.ID)
+		}
+	}
+	if len(databaseChannelIDs) > 0 {
+		channels, err := model.GetChannelsByIds(databaseChannelIDs)
+		if err != nil {
+			logger.LogError(c.Request.Context(), "failed to query ratio sync channels: "+err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "查询渠道失败"})
+			return
+		}
+		for _, channel := range channels {
+			databaseChannels[channel.Id] = channel
+		}
+	}
 
 	var wg sync.WaitGroup
 	ch := make(chan upstreamResult, len(upstreams))
@@ -302,15 +354,10 @@ func FetchUpstreamRatios(c *gin.Context) {
 				uniqueName = fmt.Sprintf("%s(%d)", chItem.Name, chItem.ID)
 			}
 
-			var authorization string
-			// OpenRouter requires Bearer token auth
-			if isOpenRouter && chItem.ID != 0 {
-				dbCh, err := model.GetChannelById(chItem.ID, true)
-				if err != nil {
-					ch <- upstreamResult{Name: uniqueName, Err: "failed to get channel key: " + err.Error()}
-					return
-				}
-				key, _, apiErr := dbCh.GetNextEnabledKey()
+			requestClient := client
+			requestHeaders := make(http.Header)
+			if dbChannel := databaseChannels[chItem.ID]; dbChannel != nil && ratioSyncURLUsesChannelOrigin(dbChannel, fullURL) {
+				key, _, apiErr := dbChannel.GetNextEnabledKey()
 				if apiErr != nil {
 					ch <- upstreamResult{Name: uniqueName, Err: "failed to get enabled channel key: " + apiErr.Error()}
 					return
@@ -319,7 +366,19 @@ func FetchUpstreamRatios(c *gin.Context) {
 					ch <- upstreamResult{Name: uniqueName, Err: "no API key configured for this channel"}
 					return
 				}
-				authorization = "Bearer " + strings.TrimSpace(key)
+				channelHeaders, err := buildFetchModelsHeaders(dbChannel, strings.TrimSpace(key))
+				if err != nil {
+					ch <- upstreamResult{Name: uniqueName, Err: "failed to build channel authentication headers: " + err.Error()}
+					return
+				}
+				requestHeaders = channelHeaders
+				channelSettings := dbChannel.GetSetting()
+				requestClient, err = service.GetHttpClientWithProxySettings(channelSettings.Proxy, channelSettings)
+				if err != nil {
+					ch <- upstreamResult{Name: uniqueName, Err: "failed to configure channel proxy: " + err.Error()}
+					return
+				}
+				requestClient = ratioSyncAuthenticatedClient(requestClient, fullURL)
 			} else if isOpenRouter {
 				ch <- upstreamResult{Name: uniqueName, Err: "OpenRouter requires a valid channel with API key"}
 				return
@@ -329,9 +388,9 @@ func FetchUpstreamRatios(c *gin.Context) {
 			// below common reverse-proxy timeout thresholds.
 			resp, responseCancel, lastErr := fetchRatioSyncResponse(
 				syncCtx,
-				client,
+				requestClient,
 				fullURL,
-				authorization,
+				requestHeaders,
 				time.Duration(req.Timeout/maxSyncAttempts)*time.Second,
 			)
 			if lastErr != nil {
