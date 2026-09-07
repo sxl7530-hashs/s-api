@@ -25,6 +25,7 @@ import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
 
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
+import { AffiliateHistoryDialog } from './components/dialogs/affiliate-history-dialog'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
@@ -74,6 +75,7 @@ export function Wallet(props: WalletProps) {
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
   const [transferDialogOpen, setTransferDialogOpen] = useState(false)
   const [billingDialogOpen, setBillingDialogOpen] = useState(false)
+  const [affiliateHistoryOpen, setAffiliateHistoryOpen] = useState(false)
   const [redemptionCode, setRedemptionCode] = useState('')
   const [creemDialogOpen, setCreemDialogOpen] = useState(false)
   const [selectedCreemProduct, setSelectedCreemProduct] =
@@ -343,6 +345,7 @@ export function Wallet(props: WalletProps) {
               user={user}
               affiliateLink={affiliateLink}
               onTransfer={() => setTransferDialogOpen(true)}
+              onHistory={() => setAffiliateHistoryOpen(true)}
               complianceConfirmed={
                 topupInfo?.payment_compliance_confirmed !== false
               }
@@ -377,6 +380,8 @@ export function Wallet(props: WalletProps) {
         open={billingDialogOpen}
         onOpenChange={setBillingDialogOpen}
       />
+
+      <AffiliateHistoryDialog open={affiliateHistoryOpen} onOpenChange={setAffiliateHistoryOpen} />
 
       <CreemConfirmDialog
         open={creemDialogOpen}

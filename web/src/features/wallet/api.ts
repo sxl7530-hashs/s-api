@@ -39,6 +39,7 @@ import type {
   WaffoPaymentResponse,
   WaffoPancakePaymentRequest,
   WaffoPancakePaymentResponse,
+  AffiliateTransferLogsResponse,
 } from './types'
 
 // ============================================================================
@@ -196,6 +197,16 @@ export async function transferAffiliateQuota(
   request: AffiliateTransferRequest
 ): Promise<AffiliateTransferResponse> {
   const res = await api.post('/api/user/aff_transfer', request)
+  return res.data
+}
+
+export async function getAffiliateTransferLogs(
+  page = 1,
+  pageSize = 20
+): Promise<ApiResponse<AffiliateTransferLogsResponse>> {
+  const res = await api.get(
+    `/api/user/self/aff_transfer_logs?p=${page}&page_size=${pageSize}`
+  )
   return res.data
 }
 

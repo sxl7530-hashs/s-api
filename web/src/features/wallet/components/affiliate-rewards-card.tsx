@@ -33,6 +33,7 @@ interface AffiliateRewardsCardProps {
   user: UserWalletData | null
   affiliateLink: string
   onTransfer: () => void
+  onHistory: () => void
   complianceConfirmed?: boolean
   loading?: boolean
 }
@@ -41,6 +42,7 @@ export function AffiliateRewardsCard({
   user,
   affiliateLink,
   onTransfer,
+  onHistory,
   complianceConfirmed = true,
   loading,
 }: AffiliateRewardsCardProps) {
@@ -122,6 +124,9 @@ export function AffiliateRewardsCard({
               {t('Transfer to Balance')}
             </Button>
           )}
+          <Button onClick={onHistory} variant='outline' size='sm' className='h-9 shrink-0 px-3'>
+            {t('History')}
+          </Button>
         </div>
         {!complianceConfirmed ? (
           <p className='text-muted-foreground text-xs lg:col-span-3'>

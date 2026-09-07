@@ -41,6 +41,18 @@ export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
 export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
 export type AffiliateCodeResponse = ApiResponse<string>
 export type AffiliateTransferResponse = ApiResponse
+
+export interface AffiliateTransferLog {
+  id: number
+  user_id: number
+  quota: number
+  created_at: number
+}
+
+export interface AffiliateTransferLogsResponse {
+  items: AffiliateTransferLog[]
+  total: number
+}
 export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>
 export type WaffoPaymentResponse = ApiResponse<
   { payment_url?: string } | string
