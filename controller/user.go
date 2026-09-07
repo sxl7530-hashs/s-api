@@ -1578,3 +1578,17 @@ func UpdateUserSetting(c *gin.Context) {
 
 	common.ApiSuccessI18n(c, i18n.MsgSettingSaved, nil)
 }
+
+func GetAffTransferLogs(c *gin.Context) {
+	userID := c.GetInt("id")
+	page, _ := strconv.Atoi(c.DefaultQuery("p", "1"))
+	if page < 1 {
+		page = 1
+	}
+	result, err := model.GetAffTransferLogs(userID, page, 20)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}

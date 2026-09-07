@@ -117,6 +117,28 @@ func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[st
 	return ErrTopUpQuotaLimitExceeded
 }
 
+// ProcessInviterRebate credits the inviter after a successful top-up.
+func ProcessInviterRebate(userId int, topUpQuota int) {
+	if topUpQuota <= 0 || common.InviterRebatePercent <= 0 {
+		return
+	}
+	user, err := GetUserById(userId, false)
+	if err != nil || user.InviterId == 0 {
+		return
+	}
+	rebate := int(float64(topUpQuota) * common.InviterRebatePercent / 100)
+	if rebate <= 0 {
+		return
+	}
+	if err = DB.Model(&User{}).Where("id = ?", user.InviterId).Updates(map[string]interface{}{
+		"aff_quota": gorm.Expr("aff_quota + ?", rebate), "aff_history": gorm.Expr("aff_history + ?", rebate),
+	}).Error; err != nil {
+		common.SysError(fmt.Sprintf("inviter rebate failed: %v", err))
+		return
+	}
+	_ = CreateAffTransferLog(user.InviterId, rebate)
+}
+
 func (topUp *TopUp) Update() error {
 	var err error
 	err = DB.Save(topUp).Error

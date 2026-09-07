@@ -355,6 +355,7 @@ func migrateDB() error {
 		&Checkin{},
 		&SubscriptionOrder{},
 		&UserSubscription{},
+		&AffTransferLog{},
 		&SubscriptionPreConsumeRecord{},
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
