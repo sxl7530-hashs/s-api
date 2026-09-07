@@ -79,13 +79,13 @@ import {
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   getApiKeyFormSchema,
-  type ApiKeyFormValues,
   getApiKeyFormDefaultValues,
   transformFormDataToPayload,
   transformApiKeyToFormDefaults,
 } from '../lib'
+import type { ApiKeyFormValues } from '../lib/api-key-form'
 import type { ApiKey } from '../types'
-import { type ApiKeyGroupOption } from './api-key-group-combobox'
+import type { ApiKeyGroupOption } from './api-key-group-combobox'
 import { useApiKeys } from './api-keys-provider'
 import { AutoGroupOrderEditor } from './auto-group-order-editor'
 
@@ -295,8 +295,14 @@ export function ApiKeysMutateDrawer({
     isUpdate && currentRow ? `update:${currentRow.id}` : 'create'
   const isFormInitialized = initializedTarget === formTarget
   const selectedGroup = form.watch('group')
+  const autoGroupsMode = form.watch('auto_groups_mode')
   const selectedAutoGroups = form.watch('auto_groups') || []
-  const selectedGroups = selectedGroup === 'auto' ? selectedAutoGroups : selectedGroup ? [selectedGroup] : []
+  let selectedGroups: string[] = []
+  if (selectedGroup === 'auto') {
+    selectedGroups = selectedAutoGroups
+  } else if (selectedGroup) {
+    selectedGroups = [selectedGroup]
+  }
   const selectableGroups = groups.filter((group) => group.value !== 'auto')
   const setSelectedGroups = (values: string[]) => {
     const next = values.slice(0, maxAutoGroups)
@@ -412,11 +418,12 @@ export function ApiKeysMutateDrawer({
     ? t('Enter quota in tokens')
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
   const unlimitedQuota = form.watch('unlimited_quota')
-  const modelHelpProfiles = modelHelpData?.data?.profiles?.length
-    ? modelHelpData.data.profiles
-    : modelHelpQuery.trim().length >= 2
-      ? quickProfiles
-      : []
+  let modelHelpProfiles = quickProfiles
+  if (modelHelpData?.data?.profiles?.length) {
+    modelHelpProfiles = modelHelpData.data.profiles
+  } else if (modelHelpQuery.trim().length < 2) {
+    modelHelpProfiles = []
+  }
   const visibleModelHelpProfiles = modelHelpProfiles.filter(
     (profile) => profile.id !== selectedProfileId
   )
@@ -509,7 +516,7 @@ export function ApiKeysMutateDrawer({
 						  {profile.description && <p className='mt-1 text-xs text-muted-foreground'>{profile.description}</p>}
 						  <div className='mt-2 space-y-1.5'>
 							{profile.route_groups.map((group, index) => (
-								<span key={`${group}-${index}`} className='flex items-start gap-2 rounded-md bg-background px-2 py-1 text-xs font-medium shadow-sm'>
+								<span key={group} className='flex items-start gap-2 rounded-md bg-background px-2 py-1 text-xs font-medium shadow-sm'>
 								<span className='shrink-0 text-muted-foreground'>{index + 1}.</span>
 								<span className='min-w-0'>
 									<span className='block'>{group} ×{String(groups.find((item) => item.value === group)?.ratio ?? '—')}</span>
@@ -714,12 +721,14 @@ export function ApiKeysMutateDrawer({
                       <FormControl>
                         <AutoGroupOrderEditor
                           value={field.value}
-                          mode='custom'
+                          mode={autoGroupsMode}
                           options={groups}
                           globalOptions={globalAutoGroupOptions}
                           maxCount={maxAutoGroups}
                           onChange={(value) => {
-                            form.setValue('auto_groups_mode', 'custom', { shouldDirty: true })
+                            form.setValue('auto_groups_mode', value.mode, {
+                              shouldDirty: true,
+                            })
                             form.setValue('auto_groups', value.groups.slice(0, maxAutoGroups), { shouldDirty: true, shouldValidate: true })
                           }}
                         />

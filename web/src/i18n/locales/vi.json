@@ -5586,6 +5586,7 @@
     "Requests try groups from left to right; if one fails, the next group is tried.": "Yêu cầu chạy từ trái sang phải; nếu một nhóm lỗi, hệ thống thử nhóm tiếp theo.",
     "Change the order by removing groups and selecting them again.": "Kéo các hàng bên dưới để thay đổi thứ tự.",
     "Choose ordinary groups": "Chọn nhóm thông thường",
-    "Choose portable group": "Chọn nhóm di động"
+    "Choose portable group": "Chọn nhóm di động",
+    "Select at least one group or restore the configured order.": "Chọn ít nhất một nhóm hoặc khôi phục thứ tự đã cấu hình."
   }
 }

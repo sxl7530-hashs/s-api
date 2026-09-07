@@ -32,27 +32,27 @@ await i18n.use(initReactI18next).init({
       translation: {
         '{{count}} / {{max}} groups selected':
           '{{count}} / {{max}} groups selected',
-        'Add Auto group': 'Add Auto group',
-        'Auto group order': 'Auto group order',
+        'Add group': 'Add group',
+        'Group order': 'Group order',
         'Drag {{group}} to reorder': 'Drag {{group}} to reorder',
         'Inherit global Auto order': 'Inherit global Auto order',
         'Maximum {{max}} groups selected': 'Maximum {{max}} groups selected',
         'Move {{group}} down': 'Move {{group}} down',
         'Move {{group}} up': 'Move {{group}} up',
-        'No available groups in the global Auto order.':
-          'No available groups in the global Auto order.',
-        'No valid custom Auto groups remain. Add a group or restore global Auto.':
-          'No valid custom Auto groups remain. Add a group or restore global Auto.',
+        'No available groups in the configured order.':
+          'No available groups in the configured order.',
+        'No groups selected. Add a group or restore the configured order.':
+          'No groups selected. Add a group or restore the configured order.',
         'No custom groups. Saving will inherit the complete global Auto order.':
           'No custom groups. Saving will inherit the complete global Auto order.',
         'Remove {{group}}': 'Remove {{group}}',
-        'Restore global Auto': 'Restore global Auto',
+        'Restore configured order': 'Restore configured order',
         Ratio: 'Ratio',
         'Search...': 'Search...',
         'No group found.': 'No group found.',
         'Select a group': 'Select a group',
-        'Using the complete global Auto order ({{count}} groups)':
-          'Using the complete global Auto order ({{count}} groups)',
+        'Using the configured group order ({{count}} groups)':
+          'Using the configured group order ({{count}} groups)',
       },
     },
   },
@@ -161,7 +161,7 @@ describe('Auto group order editor', () => {
     expect(addButton).toBeDisabled()
     expect(container).toHaveTextContent('2 / 2 groups selected')
     expect(
-      within(container).getByRole('group', { name: 'Auto group order' })
+      within(container).getByRole('group', { name: 'Group order' })
     ).toBeInTheDocument()
     expect(findButton(container, 'Drag default to reorder').type).toBe('button')
 
@@ -194,13 +194,13 @@ describe('Auto group order editor', () => {
     expect(addButton).toBeDisabled()
 
     fireEvent.click(
-      within(container).getByRole('button', { name: 'Restore global Auto' })
+      within(container).getByRole('button', { name: 'Restore configured order' })
     )
 
     expect(within(container).getByTestId('order')).toBeEmptyDOMElement()
     expect(within(container).getByTestId('mode')).toHaveTextContent('inherit')
     expect(container).toHaveTextContent(
-      'Using the complete global Auto order (3 groups)'
+      'Using the configured group order (3 groups)'
     )
 
     const inheritedItems = container.querySelectorAll(
@@ -219,7 +219,7 @@ describe('Auto group order editor', () => {
     const { container } = render(<InheritanceHarness />)
 
     expect(container).toHaveTextContent(
-      'Using the complete global Auto order (3 groups)'
+      'Using the configured group order (3 groups)'
     )
     expect(container).not.toHaveTextContent('0 / 2 groups selected')
 
@@ -298,7 +298,7 @@ describe('Auto group order editor', () => {
     expect(container.querySelector('[aria-label^="Remove "]')).toBe(null)
 
     expect(
-      within(container).getByRole('button', { name: 'Restore global Auto' })
+      within(container).getByRole('button', { name: 'Restore configured order' })
     ).toBeDisabled()
   })
 
@@ -306,10 +306,10 @@ describe('Auto group order editor', () => {
     const { container } = render(<InheritanceHarness globalOptions={[]} />)
 
     expect(container).toHaveTextContent(
-      'Using the complete global Auto order (0 groups)'
+      'Using the configured group order (0 groups)'
     )
     expect(container).toHaveTextContent(
-      'No available groups in the global Auto order.'
+      'No available groups in the configured order.'
     )
     expect(container.querySelector('[data-slot="global-auto-order"]')).toBe(
       null
@@ -321,14 +321,14 @@ describe('Auto group order editor', () => {
 
     expect(within(container).getByTestId('mode')).toHaveTextContent('custom')
     expect(container).toHaveTextContent(
-      'No valid custom Auto groups remain. Add a group or restore global Auto.'
+      'No groups selected. Add a group or restore the configured order.'
     )
     expect(container.querySelector('[data-slot="global-auto-order"]')).toBe(
       null
     )
 
     const restoreButton = within(container).getByRole('button', {
-      name: 'Restore global Auto',
+      name: 'Restore configured order',
     })
     expect(restoreButton).toBeEnabled()
     fireEvent.click(restoreButton)
@@ -359,7 +359,7 @@ describe('Auto group order editor', () => {
     expect(within(container).getByTestId('order')).toBeEmptyDOMElement()
     expect(within(container).getByTestId('mode')).toHaveTextContent('custom')
     expect(container).toHaveTextContent(
-      'No valid custom Auto groups remain. Add a group or restore global Auto.'
+      'No groups selected. Add a group or restore the configured order.'
     )
   })
 })

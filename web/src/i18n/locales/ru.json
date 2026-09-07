@@ -5586,6 +5586,7 @@
     "Requests try groups from left to right; if one fails, the next group is tried.": "Запросы выполняются слева направо; при сбое используется следующая группа.",
     "Change the order by removing groups and selecting them again.": "Перетаскивайте строки ниже, чтобы изменить порядок.",
     "Choose ordinary groups": "Выбрать обычные группы",
-    "Choose portable group": "Выбрать переносную группу"
+    "Choose portable group": "Выбрать переносную группу",
+    "Select at least one group or restore the configured order.": "Выберите хотя бы одну группу или восстановите настроенный порядок."
   }
 }

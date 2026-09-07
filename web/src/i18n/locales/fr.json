@@ -5586,6 +5586,7 @@
     "Requests try groups from left to right; if one fails, the next group is tried.": "Les requêtes essaient les groupes de gauche à droite ; en cas d'échec, le groupe suivant est utilisé.",
     "Change the order by removing groups and selecting them again.": "Faites glisser les lignes ci-dessous pour modifier l’ordre.",
     "Choose ordinary groups": "Choisir des groupes ordinaires",
-    "Choose portable group": "Choisir un groupe portable"
+    "Choose portable group": "Choisir un groupe portable",
+    "Select at least one group or restore the configured order.": "Sélectionnez au moins un groupe ou restaurez l’ordre configuré."
   }
 }

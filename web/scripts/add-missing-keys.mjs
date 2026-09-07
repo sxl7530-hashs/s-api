@@ -4,6 +4,7 @@ import path from 'node:path'
 const dir = path.resolve('src/i18n/locales')
 const newKeys = {
   en: {
+	'Select at least one group or restore the configured order.': 'Select at least one group or restore the configured order.',
 	'Choose portable group': 'Choose portable group',
 	'Choose ordinary groups': 'Choose ordinary groups',
 	'Change the order by removing groups and selecting them again.': 'Change the order by dragging the rows below.',
@@ -39,6 +40,7 @@ const newKeys = {
     'Always keep this space free': 'Always keep this space free',
   },
   zh: {
+	'Select at least one group or restore the configured order.': '请至少选择一个分组，或恢复配置顺序。',
 	'Choose portable group': '选择便携分组',
 	'Choose ordinary groups': '选择普通分组',
 	'Change the order by removing groups and selecting them again.': '拖动下方整行即可调整顺序。',
@@ -74,6 +76,7 @@ const newKeys = {
     'Always keep this space free': '始终保留这部分空间',
   },
   'zh-TW': {
+	'Select at least one group or restore the configured order.': '請至少選擇一個分組，或恢復設定順序。',
 	'Choose portable group': '選擇便攜分組',
 	'Choose ordinary groups': '選擇一般分組',
 	'Change the order by removing groups and selecting them again.': '拖曳下方整列即可調整順序。',
@@ -99,6 +102,7 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': '未知長度請求優先使用磁碟',
   },
   fr: {
+	'Select at least one group or restore the configured order.': 'Sélectionnez au moins un groupe ou restaurez l’ordre configuré.',
 	'Choose portable group': 'Choisir un groupe portable',
 	'Choose ordinary groups': 'Choisir des groupes ordinaires',
 	'Change the order by removing groups and selecting them again.': 'Faites glisser les lignes ci-dessous pour modifier l’ordre.',
@@ -124,6 +128,7 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': 'Utiliser le disque en priorité pour les requêtes de longueur inconnue',
   },
   ja: {
+	'Select at least one group or restore the configured order.': '少なくとも1つのグループを選択するか、設定済みの順序に戻してください。',
 	'Choose portable group': 'ポータブルグループを選択',
 	'Choose ordinary groups': '通常グループを選択',
 	'Change the order by removing groups and selecting them again.': '下の行をドラッグして順序を変更します。',
@@ -149,6 +154,7 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': '長さ不明のリクエストはディスクを優先',
   },
   ru: {
+	'Select at least one group or restore the configured order.': 'Выберите хотя бы одну группу или восстановите настроенный порядок.',
 	'Choose portable group': 'Выбрать переносную группу',
 	'Choose ordinary groups': 'Выбрать обычные группы',
 	'Change the order by removing groups and selecting them again.': 'Перетаскивайте строки ниже, чтобы изменить порядок.',
@@ -174,6 +180,7 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': 'Для запросов неизвестной длины сначала использовать диск',
   },
   vi: {
+	'Select at least one group or restore the configured order.': 'Chọn ít nhất một nhóm hoặc khôi phục thứ tự đã cấu hình.',
 	'Choose portable group': 'Chọn nhóm di động',
 	'Choose ordinary groups': 'Chọn nhóm thông thường',
 	'Change the order by removing groups and selecting them again.': 'Kéo các hàng bên dưới để thay đổi thứ tự.',

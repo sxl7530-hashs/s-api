@@ -141,7 +141,7 @@ describe('API key Auto group form mapping', () => {
     if (result.success) return
     expect(result.error.issues[0]?.path).toEqual(['auto_groups'])
     expect(result.error.issues[0]?.message).toBe(
-      'Select at least one Auto group or restore global Auto.'
+      'Select at least one group or restore the configured order.'
     )
   })
 
@@ -183,7 +183,7 @@ describe('API key Auto group form mapping', () => {
     expect(result.success).toBe(false)
     if (result.success) return
     expect(result.error.issues[0]?.path[0]).toBe('auto_groups')
-    expect(result.error.issues[0]?.message).toBe('Select at most 1 Auto groups')
+    expect(result.error.issues[0]?.message).toBe('Select at most 1 groups')
   })
 
   test('rejects duplicate custom groups', () => {
@@ -197,7 +197,7 @@ describe('API key Auto group form mapping', () => {
     expect(result.success).toBe(false)
     if (result.success) return
     expect(result.error.issues[0]?.message).toBe(
-      'Auto groups must not contain duplicates'
+      'Groups must not contain duplicates'
     )
   })
 })

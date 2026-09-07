@@ -5586,6 +5586,7 @@
     "Requests try groups from left to right; if one fails, the next group is tried.": "請求會由左至右執行；目前分組失敗後自動嘗試下一個分組。",
     "Change the order by removing groups and selecting them again.": "拖曳下方整列即可調整順序。",
     "Choose ordinary groups": "選擇一般分組",
-    "Choose portable group": "選擇便攜分組"
+    "Choose portable group": "選擇便攜分組",
+    "Select at least one group or restore the configured order.": "請至少選擇一個分組，或恢復設定順序。"
   }
 }

@@ -48,7 +48,17 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
-      if (data.group === 'auto') {
+      if (data.group === 'auto' && data.auto_groups_mode === 'custom') {
+        if (data.auto_groups.length === 0) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['auto_groups'],
+            message: t(
+              'Select at least one group or restore the configured order.'
+            ),
+          })
+        }
+
         if (data.auto_groups.length > autoGroupLimit) {
           ctx.addIssue({
             code: 'custom',
@@ -107,15 +117,15 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
 }
 
 export function getApiKeyFormDefaultValues(
-  _defaultUseAutoGroup: boolean
+  defaultUseAutoGroup: boolean
 ): ApiKeyFormValues {
   return {
     ...API_KEY_FORM_DEFAULT_VALUES,
-    group: DEFAULT_GROUP,
-	token_group_profile_id: 0,
+    group: defaultUseAutoGroup ? 'auto' : DEFAULT_GROUP,
+    token_group_profile_id: 0,
     auto_groups_mode: 'inherit',
     auto_groups: [],
-    cross_group_retry: false,
+    cross_group_retry: defaultUseAutoGroup,
   }
 }
 
@@ -185,7 +195,7 @@ export function transformApiKeyToFormDefaults(
       : [],
     allow_ips: apiKey.allow_ips || '',
     group: apiKey.group || DEFAULT_GROUP,
-	token_group_profile_id: apiKey.token_group_profile_id || 0,
+    token_group_profile_id: apiKey.token_group_profile_id || 0,
     auto_groups_mode: autoGroupsMode,
     auto_groups: autoGroups,
     cross_group_retry: !!apiKey.cross_group_retry,

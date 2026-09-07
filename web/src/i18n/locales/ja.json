@@ -5586,6 +5586,7 @@
     "Requests try groups from left to right; if one fails, the next group is tried.": "リクエストは左から右の順に実行し、失敗した場合は次のグループを試します。",
     "Change the order by removing groups and selecting them again.": "下の行をドラッグして順序を変更します。",
     "Choose ordinary groups": "通常グループを選択",
-    "Choose portable group": "ポータブルグループを選択"
+    "Choose portable group": "ポータブルグループを選択",
+    "Select at least one group or restore the configured order.": "少なくとも1つのグループを選択するか、設定済みの順序に戻してください。"
   }
 }
