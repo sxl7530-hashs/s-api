@@ -42,16 +42,32 @@ func filterCandidateIDs(ids []int, modelName string, filters []dto.ChannelFilter
 	}
 	kept = ids
 	for _, kind := range filterEvalOrder {
-		kindFilters := filtersByKind(filters, kind)
-		if len(kindFilters) == 0 {
+		hasKind := false
+		for _, filter := range filters {
+			if filter.Kind == kind {
+				hasKind = true
+				break
+			}
+		}
+		if !hasKind {
 			continue
 		}
-		next := make([]int, 0, len(kept))
-		for _, id := range kept {
+		var next []int
+		for i, id := range kept {
 			channel, exists := channelsIDM[id]
-			if candidatePassesKindFilters(channel, exists, modelName, kind, kindFilters) {
-				next = append(next, id)
+			if candidatePassesKindFilters(channel, exists, modelName, kind, filters) {
+				if next != nil {
+					next = append(next, id)
+				}
+				continue
 			}
+			if next == nil {
+				next = make([]int, i, len(kept)-1)
+				copy(next, kept[:i])
+			}
+		}
+		if next == nil {
+			continue
 		}
 		if len(kept) > 0 && len(next) == 0 {
 			return next, kind
@@ -59,16 +75,6 @@ func filterCandidateIDs(ids []int, modelName string, filters []dto.ChannelFilter
 		kept = next
 	}
 	return kept, ""
-}
-
-func filtersByKind(filters []dto.ChannelFilter, kind dto.ChannelFilterKind) []dto.ChannelFilter {
-	var matched []dto.ChannelFilter
-	for _, filter := range filters {
-		if filter.Kind == kind {
-			matched = append(matched, filter)
-		}
-	}
-	return matched
 }
 
 func candidatePassesKindFilters(ch *Channel, exists bool, modelName string, kind dto.ChannelFilterKind, filters []dto.ChannelFilter) bool {
@@ -79,6 +85,19 @@ func candidatePassesKindFilters(ch *Channel, exists bool, modelName string, kind
 		return false
 	}
 	for _, filter := range filters {
+		if filter.Kind != kind {
+			continue
+		}
+		if kind == dto.FilterRequestPath && filter.RequestPath != "" && ch.Type == constant.ChannelTypeAdvancedCustom {
+			config := channel2advancedCustomConfig[ch.Id]
+			if config == nil {
+				config = ch.GetOtherSettings().AdvancedCustom
+			}
+			if config == nil || !config.SupportsPathForModel(filter.RequestPath, modelName) {
+				return false
+			}
+			continue
+		}
 		if !channelMatchesFilter(ch, modelName, filter) {
 			return false
 		}

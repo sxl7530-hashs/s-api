@@ -4,97 +4,95 @@ import (
 	"io"
 	"math"
 	"strings"
-	"sync"
 	"unicode"
 	"unicode/utf8"
 )
 
-type streamingTokenEstimator struct {
+type TokenEstimator struct {
 	m               multipliers
 	count           float64
 	currentWordType int
 }
 
-func (e *streamingTokenEstimator) consume(text string) {
+func (e *TokenEstimator) WriteString(text string) (int, error) {
 	for _, r := range text {
-		if unicode.IsSpace(r) {
-			e.currentWordType = 0
-			if r == '\n' || r == '\t' {
-				e.count += e.m.Newline
-			} else {
-				e.count += e.m.Space
-			}
-			continue
-		}
-		if isCJK(r) {
-			e.currentWordType = 0
-			e.count += e.m.CJK
-			continue
-		}
-		if isEmoji(r) {
-			e.currentWordType = 0
-			e.count += e.m.Emoji
-			continue
-		}
-		if isLatinOrNumber(r) {
-			newType := 1
-			if unicode.IsNumber(r) {
-				newType = 2
-			}
-			if e.currentWordType == 0 || e.currentWordType != newType {
-				if newType == 2 {
-					e.count += e.m.Number
-				} else {
-					e.count += e.m.Word
-				}
-				e.currentWordType = newType
-			}
-			continue
-		}
+		e.consumeRune(r)
+	}
+	return len(text), nil
+}
+
+func (e *TokenEstimator) consumeRune(r rune) {
+	if unicode.IsSpace(r) {
 		e.currentWordType = 0
-		if isMathSymbol(r) {
-			e.count += e.m.MathSymbol
-		} else if r == '@' {
-			e.count += e.m.AtSign
-		} else if isURLDelim(r) {
-			e.count += e.m.URLDelim
+		if r == '\n' || r == '\t' {
+			e.count += e.m.Newline
 		} else {
-			e.count += e.m.Symbol
+			e.count += e.m.Space
 		}
+		return
+	}
+	if isCJK(r) {
+		e.currentWordType = 0
+		e.count += e.m.CJK
+		return
+	}
+	if isEmoji(r) {
+		e.currentWordType = 0
+		e.count += e.m.Emoji
+		return
+	}
+	if isLatinOrNumber(r) {
+		newType := 1
+		if unicode.IsNumber(r) {
+			newType = 2
+		}
+		if e.currentWordType == 0 || e.currentWordType != newType {
+			if newType == 2 {
+				e.count += e.m.Number
+			} else {
+				e.count += e.m.Word
+			}
+			e.currentWordType = newType
+		}
+		return
+	}
+	e.currentWordType = 0
+	if isMathSymbol(r) {
+		e.count += e.m.MathSymbol
+	} else if r == '@' {
+		e.count += e.m.AtSign
+	} else if isURLDelim(r) {
+		e.count += e.m.URLDelim
+	} else {
+		e.count += e.m.Symbol
 	}
 }
 
-func (e *streamingTokenEstimator) result() int { return int(math.Ceil(e.count)) + e.m.BasePad }
+func (e *TokenEstimator) Tokens() int { return int(math.Ceil(e.count)) + e.m.BasePad }
 
-// EstimateTokenReader counts a complete stream without materializing it. A
-// trailing word is carried between chunks so chunk boundaries do not change
-// the estimator's word-transition semantics.
+// EstimateTokenReader counts a complete stream without materializing it. Word
+// state lives in the estimator; only an incomplete UTF-8 rune crosses chunks.
 func EstimateTokenReader(provider Provider, reader io.Reader) (int, error) {
-	e := &streamingTokenEstimator{m: getMultipliers(provider)}
+	e := &TokenEstimator{m: getMultipliers(provider)}
 	buf := make([]byte, 64<<10)
-	carry := ""
+	pending := make([]byte, 0, utf8.UTFMax-1)
 	for {
 		n, err := reader.Read(buf)
 		if n > 0 {
-			part := carry + string(buf[:n])
-			carry = ""
-			for len(part) > 0 {
-				_, size := utf8.DecodeLastRuneInString(part)
-				last := []rune(part)[len([]rune(part))-1]
-				if isLatinOrNumber(last) {
-					start := len(part) - size
-					for start > 0 {
-						r, s := utf8.DecodeLastRuneInString(part[:start])
-						if !isLatinOrNumber(r) {
-							break
-						}
-						start -= s
-					}
-					carry, part = part[start:], part[:start]
-				} else {
-					e.consume(part)
-					part = ""
-				}
+			part := buf[:n]
+			if len(pending) > 0 {
+				combined := make([]byte, 0, len(pending)+n)
+				combined = append(combined, pending...)
+				part = append(combined, part...)
+				pending = pending[:0]
+			}
+			for len(part) > 0 && utf8.FullRune(part) {
+				r, size := utf8.DecodeRune(part)
+				e.consumeRune(r)
+				part = part[size:]
+			}
+			if len(part) > 0 {
+				pending = append(pending, part...)
 			}
 		}
 		if err == io.EOF {
@@ -104,10 +102,12 @@ func EstimateTokenReader(provider Provider, reader io.Reader) (int, error) {
 			return 0, err
 		}
 	}
-	if carry != "" {
-		e.consume(carry)
+	for len(pending) > 0 {
+		r, size := utf8.DecodeRune(pending)
+		e.consumeRune(r)
+		pending = pending[size:]
 	}
-	return e.result(), nil
+	return e.Tokens(), nil
 }
 
 // Provider 定义模型厂商大类
@@ -135,119 +135,47 @@ type multipliers struct {
 	BasePad    int     // 基础起步消耗 (Start/End tokens)
 }
 
-var (
-	multipliersMap = map[Provider]multipliers{
-		Gemini: {
-			Word: 1.15, Number: 2.8, CJK: 0.68, Symbol: 0.38, MathSymbol: 1.05, URLDelim: 1.2, AtSign: 2.5, Emoji: 1.08, Newline: 1.15, Space: 0.2, BasePad: 0,
-		},
-		Claude: {
-			Word: 1.13, Number: 1.63, CJK: 1.21, Symbol: 0.4, MathSymbol: 4.52, URLDelim: 1.26, AtSign: 2.82, Emoji: 2.6, Newline: 0.89, Space: 0.39, BasePad: 0,
-		},
-		OpenAI: {
-			Word: 1.02, Number: 1.55, CJK: 0.85, Symbol: 0.4, MathSymbol: 2.68, URLDelim: 1.0, AtSign: 2.0, Emoji: 2.12, Newline: 0.5, Space: 0.42, BasePad: 0,
-		},
+var multipliersMap = map[Provider]multipliers{
+	Gemini: {
+		Word: 1.15, Number: 2.8, CJK: 0.68, Symbol: 0.38, MathSymbol: 1.05, URLDelim: 1.2, AtSign: 2.5, Emoji: 1.08, Newline: 1.15, Space: 0.2, BasePad: 0,
+	},
+	Claude: {
+		Word: 1.13, Number: 1.63, CJK: 1.21, Symbol: 0.4, MathSymbol: 4.52, URLDelim: 1.26, AtSign: 2.82, Emoji: 2.6, Newline: 0.89, Space: 0.39, BasePad: 0,
+	},
+	OpenAI: {
+		Word: 1.02, Number: 1.55, CJK: 0.85, Symbol: 0.4, MathSymbol: 2.68, URLDelim: 1.0, AtSign: 2.0, Emoji: 2.12, Newline: 0.5, Space: 0.42, BasePad: 0,
+	},
+}
+
+var mathSymbolSet = func() map[rune]struct{} {
+	set := make(map[rune]struct{})
+	for _, symbol := range "∑∫∂√∞≤≥≠≈±×÷∈∉∋∌⊂⊃⊆⊇∪∩∧∨¬∀∃∄∅∆∇∝∟∠∡∢°′″‴⁺⁻⁼⁽⁾ⁿ₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎²³¹⁴⁵⁶⁷⁸⁹⁰" {
+		set[symbol] = struct{}{}
 	}
-	multipliersLock sync.RWMutex
-)
+	return set
+}()
+
+var urlDelimiterSet = func() map[rune]struct{} {
+	set := make(map[rune]struct{})
+	for _, delimiter := range "/:?&=;#%" {
+		set[delimiter] = struct{}{}
+	}
+	return set
+}()
 
 // getMultipliers 根据厂商获取权重配置
 func getMultipliers(p Provider) multipliers {
-	multipliersLock.RLock()
-	defer multipliersLock.RUnlock()
-
-	switch p {
-	case Gemini:
-		return multipliersMap[Gemini]
-	case Claude:
-		return multipliersMap[Claude]
-	case OpenAI:
-		return multipliersMap[OpenAI]
-	default:
-		// 默认兜底 (按 OpenAI 的算)
-		return multipliersMap[OpenAI]
+	if multiplier, ok := multipliersMap[p]; ok {
+		return multiplier
 	}
+	return multipliersMap[OpenAI]
 }
 
 // EstimateToken 计算 Token 数量
 func EstimateToken(provider Provider, text string) int {
-	m := getMultipliers(provider)
-	var count float64
-
-	// 状态机变量
-	type WordType int
-	const (
-		None WordType = iota
-		Latin
-		Number
-	)
-	currentWordType := None
-
-	for _, r := range text {
-		// 1. 处理空格和换行符
-		if unicode.IsSpace(r) {
-			currentWordType = None
-			// 换行符和制表符使用Newline权重
-			if r == '\n' || r == '\t' {
-				count += m.Newline
-			} else {
-				// 普通空格使用Space权重
-				count += m.Space
-			}
-			continue
-		}
-
-		// 2. 处理 CJK (中日韩) - 按字符计费
-		if isCJK(r) {
-			currentWordType = None
-			count += m.CJK
-			continue
-		}
-
-		// 3. 处理Emoji - 使用专门的Emoji权重
-		if isEmoji(r) {
-			currentWordType = None
-			count += m.Emoji
-			continue
-		}
-
-		// 4. 处理拉丁字母/数字 (英文单词)
-		if isLatinOrNumber(r) {
-			isNum := unicode.IsNumber(r)
-			newType := Latin
-			if isNum {
-				newType = Number
-			}
-
-			// 如果之前不在单词中，或者类型发生变化（字母<->数字），则视为新token
-			// 注意：对于OpenAI，通常"version 3.5"会切分，"abc123xyz"有时也会切分
-			// 这里简单起见，字母和数字切换时增加权重
-			if currentWordType == None || currentWordType != newType {
-				if newType == Number {
-					count += m.Number
-				} else {
-					count += m.Word
-				}
-				currentWordType = newType
-			}
-			// 单词中间的字符不额外计费
-			continue
-		}
-
-		// 5. 处理标点符号/特殊字符 - 按类型使用不同权重
-		currentWordType = None
-		if isMathSymbol(r) {
-			count += m.MathSymbol
-		} else if r == '@' {
-			count += m.AtSign
-		} else if isURLDelim(r) {
-			count += m.URLDelim
-		} else {
-			count += m.Symbol
-		}
-	}
-
-	// 向上取整并加上基础 padding
-	return int(math.Ceil(count)) + m.BasePad
+	e := &TokenEstimator{m: getMultipliers(provider)}
+	_, _ = e.WriteString(text)
+	return e.Tokens()
 }
 
 // 辅助：判断是否为 CJK 字符
@@ -279,15 +207,8 @@ func isEmoji(r rune) bool {
 
 // 辅助：判断是否为数学符号
 func isMathSymbol(r rune) bool {
-	// 数学运算符和符号
-	// 基本数学符号：∑ ∫ ∂ √ ∞ ≤ ≥ ≠ ≈ ± × ÷
-	// 上下标数字：² ³ ¹ ⁴ ⁵ ⁶ ⁷ ⁸ ⁹ ⁰
-	// 希腊字母等也常用于数学
-	mathSymbols := "∑∫∂√∞≤≥≠≈±×÷∈∉∋∌⊂⊃⊆⊇∪∩∧∨¬∀∃∄∅∆∇∝∟∠∡∢°′″‴⁺⁻⁼⁽⁾ⁿ₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎²³¹⁴⁵⁶⁷⁸⁹⁰"
-	for _, m := range mathSymbols {
-		if r == m {
-			return true
-		}
+	if _, ok := mathSymbolSet[r]; ok {
+		return true
 	}
 	// Mathematical Operators (U+2200–U+22FF)
 	if r >= 0x2200 && r <= 0x22FF {
@@ -306,28 +227,26 @@ func isMathSymbol(r rune) bool {
 
 // 辅助：判断是否为URL分隔符（tokenizer对这些优化较好）
 func isURLDelim(r rune) bool {
-	// URL中常见的分隔符，tokenizer通常优化处理
-	urlDelims := "/:?&=;#%"
-	for _, d := range urlDelims {
-		if r == d {
-			return true
-		}
-	}
-	return false
+	_, ok := urlDelimiterSet[r]
+	return ok
 }
 
 func EstimateTokenByModel(model, text string) int {
-	// strings.Contains(model, "gpt-4o")
 	if text == "" {
 		return 0
 	}
+	estimator := NewTokenEstimator(model)
+	_, _ = estimator.WriteString(text)
+	return estimator.Tokens()
+}
 
+func NewTokenEstimator(model string) *TokenEstimator {
 	model = strings.ToLower(model)
 	if strings.Contains(model, "gemini") {
-		return EstimateToken(Gemini, text)
-	} else if strings.Contains(model, "claude") {
-		return EstimateToken(Claude, text)
-	} else {
-		return EstimateToken(OpenAI, text)
+		return &TokenEstimator{m: getMultipliers(Gemini)}
 	}
+	if strings.Contains(model, "claude") {
+		return &TokenEstimator{m: getMultipliers(Claude)}
+	}
+	return &TokenEstimator{m: getMultipliers(OpenAI)}
 }

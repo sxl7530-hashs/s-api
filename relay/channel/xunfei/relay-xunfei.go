@@ -165,7 +165,7 @@ func xunfeiHandler(c *gin.Context, textRequest dto.GeneralOpenAIRequest, appId s
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed)
 	}
 	var usage dto.Usage
-	var content string
+	var content strings.Builder
 	var xunfeiResponse XunfeiChatResponse
 	stop := false
 	for !stop {
@@ -174,7 +174,7 @@ func xunfeiHandler(c *gin.Context, textRequest dto.GeneralOpenAIRequest, appId s
 			if len(xunfeiResponse.Payload.Choices.Text) == 0 {
 				continue
 			}
-			content += xunfeiResponse.Payload.Choices.Text[0].Content
+			content.WriteString(xunfeiResponse.Payload.Choices.Text[0].Content)
 			usage.PromptTokens += xunfeiResponse.Payload.Usage.Text.PromptTokens
 			usage.CompletionTokens += xunfeiResponse.Payload.Usage.Text.CompletionTokens
 			usage.TotalTokens += xunfeiResponse.Payload.Usage.Text.TotalTokens
@@ -188,7 +188,7 @@ func xunfeiHandler(c *gin.Context, textRequest dto.GeneralOpenAIRequest, appId s
 			},
 		}
 	}
-	xunfeiResponse.Payload.Choices.Text[0].Content = content
+	xunfeiResponse.Payload.Choices.Text[0].Content = content.String()
 
 	response := responseXunfei2OpenAI(&xunfeiResponse)
 	jsonResponse, err := json.Marshal(response)

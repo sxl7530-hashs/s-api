@@ -259,12 +259,11 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 		}
 		defer func() {
 			if common.DebugEnabled {
-				logger.LogDebug(nil, "channel %d polling index: %d", channel.Id, channel.ChannelInfo.MultiKeyPollingIndex)
+				logger.LogDebug(nil, "channel %d polling index: %d", channel.Id, channelInfo.MultiKeyPollingIndex)
 			}
 			if !common.MemoryCacheEnabled {
+				channel.ChannelInfo.MultiKeyPollingIndex = channelInfo.MultiKeyPollingIndex
 				_ = channel.SaveChannelInfo()
-			} else {
-				// CacheUpdateChannel(channel)
 			}
 		}()
 		// Start from the saved polling index and look for the next enabled key
@@ -276,7 +275,8 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 			idx := (start + i) % len(keys)
 			if getStatus(idx) == common.ChannelStatusEnabled {
 				// update polling index for next call (point to the next position)
-				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
+				channelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
+				CacheSetChannelPollingIndex(channel.Id, channelInfo.MultiKeyPollingIndex)
 				return keys[idx], idx, nil
 			}
 		}
@@ -771,21 +771,11 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 		if channelCache == nil {
 			return false
 		}
-		if channelCache.ChannelInfo.IsMultiKey {
-			beforeStatus := channelCache.Status
-			// 如果是多Key模式，更新缓存中的状态
-			handlerMultiKeyUpdate(channelCache, usingKey, status, reason)
-			if beforeStatus != channelCache.Status {
-				CacheUpdateChannelStatus(channelId, channelCache.Status)
-			}
-			//CacheUpdateChannel(channelCache)
-			//return true
-		} else {
+		if !channelCache.ChannelInfo.IsMultiKey {
 			// 如果缓存渠道存在，且状态已是目标状态，直接返回
 			if channelCache.Status == status {
 				return false
 			}
-			CacheUpdateChannelStatus(channelId, status)
 		}
 	}
 
@@ -825,6 +815,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 			common.SysLog(fmt.Sprintf("failed to update channel status: channel_id=%d, status=%d, error=%v", channel.Id, status, err))
 			return false
 		}
+		CacheUpdateChannel(channel)
 	}
 	return true
 }

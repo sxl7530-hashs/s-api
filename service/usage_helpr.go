@@ -20,10 +20,14 @@ import (
 //}
 
 func ResponseText2Usage(c *gin.Context, responseText string, modeName string, promptTokens int) *dto.Usage {
+	return ResponseTokens2Usage(c, EstimateTokenByModel(modeName, responseText), promptTokens)
+}
+
+func ResponseTokens2Usage(c *gin.Context, completionTokens int, promptTokens int) *dto.Usage {
 	common.SetContextKey(c, constant.ContextKeyLocalCountTokens, true)
 	usage := &dto.Usage{}
 	usage.PromptTokens = promptTokens
-	usage.CompletionTokens = EstimateTokenByModel(modeName, responseText)
+	usage.CompletionTokens = completionTokens
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	return usage
 }

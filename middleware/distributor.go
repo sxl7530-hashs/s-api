@@ -210,6 +210,9 @@ func Distribute() func(c *gin.Context) {
 // any other plugin or channel to take the model. Non-plugin requests keep the
 // generic message.
 func noAvailableChannelMessage(c *gin.Context, group, modelName string) string {
+	if hasAvailableKey, err := model.GroupHasAvailableKey(group); err == nil && !hasAvailableKey {
+		return i18n.T(c, i18n.MsgDistributorNoAvailableGroupKey)
+	}
 	value, exists := c.Get(jsplugin.ContextKeyPinnedPlugin)
 	pinned, ok := value.(jsplugin.PinnedPlugin)
 	if exists && ok && pinned.Plugin != nil {

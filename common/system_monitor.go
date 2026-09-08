@@ -1,11 +1,17 @@
 package common
 
 import (
+	"math"
+	"os"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/mem"
+	"github.com/shirou/gopsutil/process"
 )
 
 // DiskSpaceInfo 磁盘空间信息
@@ -22,9 +28,10 @@ type DiskSpaceInfo struct {
 
 // SystemStatus 系统状态信息
 type SystemStatus struct {
-	CPUUsage    float64
-	MemoryUsage float64
-	DiskUsage   float64
+	CPUUsage        float64
+	ProcessCPUUsage float64
+	MemoryUsage     float64
+	DiskUsage       float64
 }
 
 var latestSystemStatus atomic.Value
@@ -35,22 +42,29 @@ func init() {
 
 // StartSystemMonitor 启动系统监控
 func StartSystemMonitor() {
+	currentProcess, err := process.NewProcess(int32(os.Getpid()))
+	if err != nil {
+		SysError("failed to initialize process cpu monitor: " + err.Error())
+	}
 	go func() {
 		for {
 			config := GetPerformanceMonitorConfig()
+			updateSystemStatus(currentProcess)
 			if !config.Enabled {
 				time.Sleep(30 * time.Second)
 				continue
 			}
-
-			updateSystemStatus()
 			time.Sleep(5 * time.Second)
 		}
 	}()
 }
 
-func updateSystemStatus() {
+func updateSystemStatus(currentProcess *process.Process) {
 	var status SystemStatus
+	cpuCapacity := float64(runtime.GOMAXPROCS(0))
+	if cgroupCapacity, ok := getCgroupCPUCapacity(); ok && cgroupCapacity < cpuCapacity {
+		cpuCapacity = cgroupCapacity
+	}
 
 	// CPU
 	// 注意：cpu.Percent(0, false) 返回自上次调用以来的 CPU 使用率
@@ -59,11 +73,20 @@ func updateSystemStatus() {
 	if err == nil && len(percents) > 0 {
 		status.CPUUsage = percents[0]
 	}
+	if currentProcess != nil {
+		processPercent, processErr := currentProcess.Percent(0)
+		if processErr == nil {
+			status.ProcessCPUUsage = normalizeProcessCPUUsage(processPercent, cpuCapacity)
+		}
+	}
 
 	// Memory
 	memInfo, err := mem.VirtualMemory()
 	if err == nil {
 		status.MemoryUsage = memInfo.UsedPercent
+		if cgroupPercent, ok := getCgroupMemoryUsage(memInfo.Total); ok {
+			status.MemoryUsage = cgroupPercent
+		}
 	}
 
 	// Disk
@@ -73,6 +96,78 @@ func updateSystemStatus() {
 	}
 
 	latestSystemStatus.Store(status)
+}
+
+func normalizeProcessCPUUsage(usage float64, cpuCapacity float64) float64 {
+	if cpuCapacity <= 0 || math.IsNaN(usage) || usage <= 0 {
+		return 0
+	}
+	usage /= cpuCapacity
+	if usage > 100 {
+		return 100
+	}
+	return usage
+}
+
+func getCgroupCPUCapacity() (float64, bool) {
+	if data, err := os.ReadFile("/sys/fs/cgroup/cpu.max"); err == nil {
+		return parseCgroupCPUCapacity(string(data))
+	}
+	quota, quotaErr := os.ReadFile("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
+	period, periodErr := os.ReadFile("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
+	if quotaErr != nil || periodErr != nil {
+		return 0, false
+	}
+	return parseCgroupCPUCapacity(string(quota) + " " + string(period))
+}
+
+func parseCgroupCPUCapacity(value string) (float64, bool) {
+	fields := strings.Fields(value)
+	if len(fields) != 2 || fields[0] == "max" {
+		return 0, false
+	}
+	quota, quotaErr := strconv.ParseFloat(fields[0], 64)
+	period, periodErr := strconv.ParseFloat(fields[1], 64)
+	if quotaErr != nil || periodErr != nil || quota <= 0 || period <= 0 {
+		return 0, false
+	}
+	return quota / period, true
+}
+
+func getCgroupMemoryUsage(hostTotal uint64) (float64, bool) {
+	candidates := [][2]string{
+		{"/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.max"},
+		{"/sys/fs/cgroup/memory/memory.usage_in_bytes", "/sys/fs/cgroup/memory/memory.limit_in_bytes"},
+	}
+	for _, candidate := range candidates {
+		currentData, currentErr := os.ReadFile(candidate[0])
+		limitData, limitErr := os.ReadFile(candidate[1])
+		if currentErr != nil || limitErr != nil {
+			continue
+		}
+		percent, ok := calculateCgroupMemoryUsage(string(currentData), string(limitData), hostTotal)
+		if ok {
+			return percent, true
+		}
+	}
+	return 0, false
+}
+
+func calculateCgroupMemoryUsage(currentValue, limitValue string, hostTotal uint64) (float64, bool) {
+	limitValue = strings.TrimSpace(limitValue)
+	if limitValue == "max" {
+		return 0, false
+	}
+	current, currentErr := strconv.ParseUint(strings.TrimSpace(currentValue), 10, 64)
+	limit, limitErr := strconv.ParseUint(limitValue, 10, 64)
+	if currentErr != nil || limitErr != nil || limit == 0 || (hostTotal > 0 && limit > hostTotal) {
+		return 0, false
+	}
+	usage := float64(current) / float64(limit) * 100
+	if usage > 100 {
+		usage = 100
+	}
+	return usage, true
 }
 
 // GetSystemStatus 获取当前系统状态

@@ -40,16 +40,18 @@ func SystemPerformanceCheck() gin.HandlerFunc {
 // checkSystemPerformance 检查系统性能是否超过阈值
 func checkSystemPerformance() *types.NewAPIError {
 	config := common.GetPerformanceMonitorConfig()
+	return checkSystemPerformanceStatus(config, common.GetSystemStatus())
+}
+
+func checkSystemPerformanceStatus(config common.PerformanceMonitorConfig, status common.SystemStatus) *types.NewAPIError {
 	if !config.Enabled {
 		return nil
 	}
 
-	status := common.GetSystemStatus()
-
 	// 检查 CPU
-	if config.CPUThreshold > 0 && int(status.CPUUsage) > config.CPUThreshold {
+	if config.CPUThreshold > 0 && int(status.ProcessCPUUsage) > config.CPUThreshold {
 		return types.NewErrorWithStatusCode(
-			fmt.Errorf("system cpu overloaded (current: %.1f%%, threshold: %d%%)", status.CPUUsage, config.CPUThreshold),
+			fmt.Errorf("system cpu overloaded (current: %.1f%%, threshold: %d%%)", status.ProcessCPUUsage, config.CPUThreshold),
 			"system_cpu_overloaded", http.StatusServiceUnavailable)
 	}
 

@@ -35,7 +35,7 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 
 	helper.SetEventStreamHeaders(c)
 	id := helper.GetResponseID(c)
-	var responseText string
+	responseTokens := service.NewTokenEstimator(info.UpstreamModelName)
 	isFirst := true
 
 	for scanner.Scan() {
@@ -58,7 +58,7 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 		}
 		for _, choice := range response.Choices {
 			choice.Delta.Role = "assistant"
-			responseText += choice.Delta.GetContentString()
+			responseTokens.WriteString(choice.Delta.GetContentString())
 		}
 		response.Id = id
 		response.Model = info.UpstreamModelName
@@ -75,7 +75,7 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 	if err := scanner.Err(); err != nil {
 		logger.LogError(c, "error_scanning_stream_response: "+err.Error())
 	}
-	usage := service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens())
+	usage := service.ResponseTokens2Usage(c, responseTokens.Tokens(), info.GetEstimatePromptTokens())
 	if info.ShouldIncludeUsage {
 		response := helper.GenerateFinalUsageResponse(id, info.StartTime.Unix(), info.UpstreamModelName, *usage)
 		err := helper.ObjectData(c, response)
@@ -102,11 +102,11 @@ func cfHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response)
 		return types.NewError(err, types.ErrorCodeBadResponseBody), nil
 	}
 	response.Model = info.UpstreamModelName
-	var responseText string
+	responseTokens := service.NewTokenEstimator(info.UpstreamModelName)
 	for _, choice := range response.Choices {
-		responseText += choice.Message.StringContent()
+		responseTokens.WriteString(choice.Message.StringContent())
 	}
-	usage := service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens())
+	usage := service.ResponseTokens2Usage(c, responseTokens.Tokens(), info.GetEstimatePromptTokens())
 	response.Usage = *usage
 	response.Id = helper.GetResponseID(c)
 	jsonResponse, err := json.Marshal(response)

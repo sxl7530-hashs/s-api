@@ -73,6 +73,10 @@ func rebuildTaskAliasView() {
 	taskAliasViewPtr.Store(buildTaskAliasView(jsplugin.DefaultRegistry.Generation()))
 }
 
+func invalidateTaskAliasView() {
+	taskAliasViewPtr.Store(nil)
+}
+
 type taskAliasDraft struct {
 	spellings []string
 	byPlugin  map[string]map[string]struct{}

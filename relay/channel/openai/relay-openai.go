@@ -2,6 +2,7 @@ package openai
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -108,6 +109,12 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	defer service.CloseResponseBodyGracefully(resp)
 	var responseTextBuilder service.ResponseAccumulator
 	defer responseTextBuilder.Close()
+	responseTokens := service.NewTokenEstimator(info.UpstreamModelName)
+	var responseTextWriter io.StringWriter = &responseTextBuilder
+	useIncrementalEstimate := !common.IsOpenAITextModel(info.UpstreamModelName)
+	if useIncrementalEstimate {
+		responseTextWriter = responseTokens
+	}
 
 	model := info.UpstreamModelName
 	var responseId string
@@ -135,7 +142,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 			lastStreamData = data
 			collectStreamFunctionCallNames(data, seenStreamToolCalls, &streamFunctionCallNames)
-			if err := processTokenData(info.RelayMode, data, &responseTextBuilder, &toolCount); err != nil {
+			if err := processTokenData(info.RelayMode, data, responseTextWriter, &toolCount); err != nil {
 				logger.LogError(c, "error processing stream token data: "+err.Error())
 				sr.Error(err)
 			}
@@ -179,14 +186,18 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	if !containStreamUsage {
-		if accErr := responseTextBuilder.Err(); accErr != nil {
-			return nil, types.NewError(accErr, types.ErrorCodeCountTokenFailed)
+		if useIncrementalEstimate {
+			usage = service.ResponseTokens2Usage(c, responseTokens.Tokens(), info.GetEstimatePromptTokens())
+		} else {
+			if accErr := responseTextBuilder.Err(); accErr != nil {
+				return nil, types.NewError(accErr, types.ErrorCodeCountTokenFailed)
+			}
+			text, textErr := responseTextBuilder.String()
+			if textErr != nil {
+				return nil, types.NewError(textErr, types.ErrorCodeCountTokenFailed)
+			}
+			usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		}
-		text, textErr := responseTextBuilder.String()
-		if textErr != nil {
-			return nil, types.NewError(textErr, types.ErrorCodeCountTokenFailed)
-		}
-		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		usage.CompletionTokens += toolCount * 7
 	}
 

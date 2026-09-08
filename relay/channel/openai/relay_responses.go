@@ -81,6 +81,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var usage = &dto.Usage{}
 	var responseTextBuilder service.ResponseAccumulator
 	defer responseTextBuilder.Close()
+	responseTokens := service.NewTokenEstimator(info.UpstreamModelName)
+	useIncrementalEstimate := !common.IsOpenAITextModel(info.UpstreamModelName)
 	imageCounter := &relaycommon.ImageGenerationCallCounter{}
 	imageCommitted := false
 
@@ -143,7 +145,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		case "response.output_text.delta":
 			// 处理输出文本
-			responseTextBuilder.WriteString(streamResponse.Delta)
+			if useIncrementalEstimate {
+				responseTokens.WriteString(streamResponse.Delta)
+			} else {
+				responseTextBuilder.WriteString(streamResponse.Delta)
+			}
 		case dto.ResponsesOutputTypeItemDone:
 			if streamResponse.Item != nil {
 				switch streamResponse.Item.Type {
@@ -163,18 +169,22 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	})
 
 	if usage.CompletionTokens == 0 {
-		if accErr := responseTextBuilder.Err(); accErr != nil {
-			return nil, types.NewError(accErr, types.ErrorCodeCountTokenFailed)
-		}
-		// 计算输出文本的 token 数量
-		tempStr, readErr := responseTextBuilder.String()
-		if readErr != nil {
-			return nil, types.NewError(readErr, types.ErrorCodeCountTokenFailed)
-		}
-		if len(tempStr) > 0 {
-			// 非正常结束，使用输出文本的 token 数量
-			completionTokens := service.CountTextToken(tempStr, info.UpstreamModelName)
-			usage.CompletionTokens = completionTokens
+		if useIncrementalEstimate {
+			usage.CompletionTokens = responseTokens.Tokens()
+		} else {
+			if accErr := responseTextBuilder.Err(); accErr != nil {
+				return nil, types.NewError(accErr, types.ErrorCodeCountTokenFailed)
+			}
+			// 计算输出文本的 token 数量
+			tempStr, readErr := responseTextBuilder.String()
+			if readErr != nil {
+				return nil, types.NewError(readErr, types.ErrorCodeCountTokenFailed)
+			}
+			if len(tempStr) > 0 {
+				// 非正常结束，使用输出文本的 token 数量
+				completionTokens := service.CountTextToken(tempStr, info.UpstreamModelName)
+				usage.CompletionTokens = completionTokens
+			}
 		}
 	}
 
