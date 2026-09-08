@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,7 +14,8 @@ func insertUserForPaymentGuardTest(t *testing.T, id int, quota int) *User {
 	t.Helper()
 	user := &User{
 		Id:       id,
-		Username: "payment_guard_user",
+		Username: fmt.Sprintf("payment_guard_user_%d", id),
+		AffCode:  fmt.Sprintf("payment-guard-%d", id),
 		Status:   common.UserStatusEnabled,
 		Quota:    quota,
 	}
@@ -86,6 +88,129 @@ func getUserQuotaForPaymentGuardTest(t *testing.T, userID int) int {
 	var user User
 	require.NoError(t, DB.Select("quota").Where("id = ?", userID).First(&user).Error)
 	return user.Quota
+}
+
+func TestRechargeEpayCreditsInviterRebateExactlyOnce(t *testing.T) {
+	truncateTables(t)
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	oldPercent := common.InviterRebatePercent
+	common.QuotaPerUnit = 100
+	common.InviterRebatePercent = 12.5
+	t.Cleanup(func() {
+		common.QuotaPerUnit = oldQuotaPerUnit
+		common.InviterRebatePercent = oldPercent
+	})
+
+	inviter := insertUserForPaymentGuardTest(t, 601, 0)
+	invitee := insertUserForPaymentGuardTest(t, 602, 0)
+	require.NoError(t, DB.Model(invitee).Update("inviter_id", inviter.Id).Error)
+	order := createEpayTestOrder(t, invitee.Id, "EPAYREBATEONCE", PaymentProviderEpay, common.TopUpStatusPending)
+
+	alreadyDone, err := RechargeEpay(order.TradeNo, "alipay", "127.0.0.1")
+	require.NoError(t, err)
+	assert.False(t, alreadyDone)
+
+	var creditedInviter User
+	require.NoError(t, DB.First(&creditedInviter, inviter.Id).Error)
+	assert.Equal(t, 25, creditedInviter.AffQuota)
+	assert.Equal(t, 25, creditedInviter.AffHistoryQuota)
+
+	var logs []AffTransferLog
+	require.NoError(t, DB.Where("trade_no = ?", order.TradeNo).Find(&logs).Error)
+	require.Len(t, logs, 1)
+	assert.Equal(t, 25, logs[0].Quota)
+
+	alreadyDone, err = RechargeEpay(order.TradeNo, "alipay", "127.0.0.1")
+	require.NoError(t, err)
+	assert.True(t, alreadyDone)
+	require.NoError(t, DB.First(&creditedInviter, inviter.Id).Error)
+	assert.Equal(t, 25, creditedInviter.AffQuota)
+	require.NoError(t, DB.Where("trade_no = ?", order.TradeNo).Find(&logs).Error)
+	assert.Len(t, logs, 1)
+}
+
+func TestRechargeEpayRollsBackWhenInviterRebateWouldOverflow(t *testing.T) {
+	truncateTables(t)
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	oldPercent := common.InviterRebatePercent
+	common.QuotaPerUnit = 100
+	common.InviterRebatePercent = 100
+	t.Cleanup(func() {
+		common.QuotaPerUnit = oldQuotaPerUnit
+		common.InviterRebatePercent = oldPercent
+	})
+
+	inviter := insertUserForPaymentGuardTest(t, 603, 0)
+	require.NoError(t, DB.Model(inviter).Updates(map[string]interface{}{
+		"aff_quota":   common.MaxWalletQuota,
+		"aff_history": common.MaxWalletQuota,
+	}).Error)
+	invitee := insertUserForPaymentGuardTest(t, 604, 0)
+	require.NoError(t, DB.Model(invitee).Update("inviter_id", inviter.Id).Error)
+	order := createEpayTestOrder(t, invitee.Id, "EPAYREBATEOVERFLOW", PaymentProviderEpay, common.TopUpStatusPending)
+
+	_, err := RechargeEpay(order.TradeNo, "alipay", "127.0.0.1")
+	require.ErrorIs(t, err, ErrWalletQuotaLimitExceeded)
+	assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, invitee.Id))
+	assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, order.TradeNo))
+}
+
+func TestInviterRebatePercentValidation(t *testing.T) {
+	testCases := []struct {
+		value   string
+		wantErr bool
+	}{
+		{value: "0"},
+		{value: "12.5"},
+		{value: "100"},
+		{value: "-1", wantErr: true},
+		{value: "100.01", wantErr: true},
+		{value: "NaN", wantErr: true},
+		{value: "+Inf", wantErr: true},
+		{value: "invalid", wantErr: true},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.value, func(t *testing.T) {
+			err := validateOptionValue("InviterRebatePercent", testCase.value)
+			if testCase.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestGetAffTransferLogsPaginatesNewestFirst(t *testing.T) {
+	truncateTables(t)
+
+	for index := 1; index <= 3; index++ {
+		require.NoError(t, DB.Create(&AffTransferLog{
+			UserId:  701,
+			Quota:   index * 10,
+			TradeNo: fmt.Sprintf("PAGINATION-%d", index),
+		}).Error)
+	}
+	require.NoError(t, DB.Create(&AffTransferLog{
+		UserId:  702,
+		Quota:   999,
+		TradeNo: "OTHER-USER",
+	}).Error)
+
+	firstPage, err := GetAffTransferLogs(701, 1, 2)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, firstPage.Total)
+	require.Len(t, firstPage.Items, 2)
+	assert.Equal(t, 30, firstPage.Items[0].Quota)
+	assert.Equal(t, 20, firstPage.Items[1].Quota)
+
+	secondPage, err := GetAffTransferLogs(701, 2, 2)
+	require.NoError(t, err)
+	require.Len(t, secondPage.Items, 1)
+	assert.Equal(t, 10, secondPage.Items[0].Quota)
 }
 
 func TestRechargeWaffoPancake_RejectsMismatchedPaymentMethod(t *testing.T) {

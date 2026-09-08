@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -117,26 +118,53 @@ func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[st
 	return ErrTopUpQuotaLimitExceeded
 }
 
-// ProcessInviterRebate credits the inviter after a successful top-up.
-func ProcessInviterRebate(userId int, topUpQuota int) {
-	if topUpQuota <= 0 || common.InviterRebatePercent <= 0 {
-		return
+func applyInviterRebate(tx *gorm.DB, userId int, topUpQuota int, tradeNo string) error {
+	percent := common.InviterRebatePercent
+	if topUpQuota <= 0 || percent <= 0 {
+		return nil
 	}
-	user, err := GetUserById(userId, false)
-	if err != nil || user.InviterId == 0 {
-		return
+	if math.IsNaN(percent) || math.IsInf(percent, 0) || percent > 100 {
+		return fmt.Errorf("invalid inviter rebate percent: %g", percent)
 	}
-	rebate := int(float64(topUpQuota) * common.InviterRebatePercent / 100)
+
+	var user User
+	if err := tx.Select("inviter_id").Where("id = ?", userId).First(&user).Error; err != nil {
+		return err
+	}
+	if user.InviterId == 0 {
+		return nil
+	}
+
+	rebate, err := common.WalletQuotaFromDecimalStrict(
+		decimal.NewFromInt(int64(topUpQuota)).Mul(decimal.NewFromFloat(percent)).Div(decimal.NewFromInt(100)).Truncate(0),
+	)
+	if err != nil {
+		return err
+	}
 	if rebate <= 0 {
-		return
+		return nil
 	}
-	if err = DB.Model(&User{}).Where("id = ?", user.InviterId).Updates(map[string]interface{}{
-		"aff_quota": gorm.Expr("aff_quota + ?", rebate), "aff_history": gorm.Expr("aff_history + ?", rebate),
-	}).Error; err != nil {
-		common.SysError(fmt.Sprintf("inviter rebate failed: %v", err))
-		return
+	maxCurrent := common.MaxWalletQuota - rebate
+	result := tx.Model(&User{}).
+		Where("id = ? AND aff_quota <= ? AND aff_history <= ?", user.InviterId, maxCurrent, maxCurrent).
+		Updates(map[string]interface{}{
+			"aff_quota":   gorm.Expr("aff_quota + ?", rebate),
+			"aff_history": gorm.Expr("aff_history + ?", rebate),
+		})
+	if result.Error != nil {
+		return result.Error
 	}
-	_ = CreateAffTransferLog(user.InviterId, rebate)
+	if result.RowsAffected != 1 {
+		var inviterCount int64
+		if err := tx.Model(&User{}).Where("id = ?", user.InviterId).Count(&inviterCount).Error; err != nil {
+			return err
+		}
+		if inviterCount == 0 {
+			return nil
+		}
+		return ErrWalletQuotaLimitExceeded
+	}
+	return CreateAffTransferLog(tx, user.InviterId, rebate, tradeNo)
 }
 
 func (topUp *TopUp) Update() error {
@@ -237,7 +265,10 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 		if err := tx.Save(topUp).Error; err != nil {
 			return err
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+			return err
+		}
+		return applyInviterRebate(tx, topUp.UserId, quotaToAdd, topUp.TradeNo)
 	})
 	if err != nil {
 		if !errors.Is(err, ErrTopUpNotFound) && !errors.Is(err, ErrPaymentMethodMismatch) && !errors.Is(err, ErrTopUpStatusInvalid) {
@@ -295,9 +326,12 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		if err != nil || quota <= 0 {
 			return ErrInvalidTopUpQuota
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quota, map[string]interface{}{
+		if err := creditTopUpQuota(tx, topUp.UserId, quota, map[string]interface{}{
 			"stripe_customer": customerId,
-		})
+		}); err != nil {
+			return err
+		}
+		return applyInviterRebate(tx, topUp.UserId, quota, topUp.TradeNo)
 	})
 
 	if err != nil {
@@ -528,6 +562,9 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
 			return err
 		}
+		if err := applyInviterRebate(tx, topUp.UserId, quotaToAdd, topUp.TradeNo); err != nil {
+			return err
+		}
 
 		userId = topUp.UserId
 		payMoney = topUp.Money
@@ -602,7 +639,10 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			}
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quota, updateFields)
+		if err := creditTopUpQuota(tx, topUp.UserId, quota, updateFields); err != nil {
+			return err
+		}
+		return applyInviterRebate(tx, topUp.UserId, quota, topUp.TradeNo)
 	})
 
 	if err != nil {
@@ -660,7 +700,10 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+			return err
+		}
+		return applyInviterRebate(tx, topUp.UserId, quotaToAdd, topUp.TradeNo)
 	})
 
 	if err != nil {
@@ -720,7 +763,10 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+			return err
+		}
+		return applyInviterRebate(tx, topUp.UserId, quotaToAdd, topUp.TradeNo)
 	})
 
 	if err != nil {

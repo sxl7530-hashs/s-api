@@ -2,22 +2,25 @@ package model
 
 import (
 	"github.com/QuantumNous/new-api/common"
+	"gorm.io/gorm"
 )
 
 type AffTransferLog struct {
-	Id        int   `json:"id" gorm:"primaryKey;autoIncrement"`
-	UserId    int   `json:"user_id" gorm:"index;not null"`
-	Quota     int   `json:"quota" gorm:"not null"`
-	CreatedAt int64 `json:"created_at" gorm:"autoCreateTime"`
+	Id        int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	UserId    int    `json:"user_id" gorm:"index;not null"`
+	Quota     int    `json:"quota" gorm:"not null"`
+	TradeNo   string `json:"-" gorm:"type:varchar(255);uniqueIndex"`
+	CreatedAt int64  `json:"created_at" gorm:"autoCreateTime"`
 }
 
-func CreateAffTransferLog(userId int, quota int) error {
+func CreateAffTransferLog(tx *gorm.DB, userId int, quota int, tradeNo string) error {
 	log := &AffTransferLog{
 		UserId:    userId,
 		Quota:     quota,
+		TradeNo:   tradeNo,
 		CreatedAt: common.GetTimestamp(),
 	}
-	return DB.Create(log).Error
+	return tx.Create(log).Error
 }
 
 type AffTransferLogResponse struct {

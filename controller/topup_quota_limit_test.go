@@ -123,6 +123,47 @@ func TestRequestAmountRejectsTopUpThatCannotBeSettled(t *testing.T) {
 	assert.JSONEq(t, fmt.Sprintf(`{"message":"error","data":"单笔充值数量不能大于 %d"}`, maxAmount), recorder.Body.String())
 }
 
+func TestWaffoAmountEndpointsRejectTopUpThatCannotBeSettled(t *testing.T) {
+	oldQuotaPerUnit := common.QuotaPerUnit
+	oldDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
+	common.QuotaPerUnit = 500000
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
+	t.Cleanup(func() {
+		common.QuotaPerUnit = oldQuotaPerUnit
+		operation_setting.GetGeneralSetting().QuotaDisplayType = oldDisplayType
+	})
+
+	maxAmount := decimal.NewFromInt(common.MaxWalletQuota).
+		Div(decimal.NewFromFloat(common.QuotaPerUnit)).
+		Floor().IntPart()
+	testCases := []struct {
+		name    string
+		handler gin.HandlerFunc
+	}{
+		{name: "waffo", handler: RequestWaffoAmount},
+		{name: "waffo pancake", handler: RequestWaffoPancakeAmount},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Set("id", 1)
+			ctx.Request = httptest.NewRequest(
+				http.MethodPost,
+				"/api/user/amount",
+				strings.NewReader(fmt.Sprintf(`{"amount":%d}`, maxAmount+1)),
+			)
+			ctx.Request.Header.Set("Content-Type", "application/json")
+
+			testCase.handler(ctx)
+
+			assert.Equal(t, http.StatusOK, recorder.Code)
+			assert.JSONEq(t, fmt.Sprintf(`{"message":"error","data":"单笔充值数量不能大于 %d"}`, maxAmount), recorder.Body.String())
+		})
+	}
+}
+
 func TestRequestAmountRejectsTopUpThatWouldOverflowWallet(t *testing.T) {
 	oldQuotaPerUnit := common.QuotaPerUnit
 	oldDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType

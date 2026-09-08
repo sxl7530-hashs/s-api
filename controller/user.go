@@ -1582,10 +1582,18 @@ func UpdateUserSetting(c *gin.Context) {
 func GetAffTransferLogs(c *gin.Context) {
 	userID := c.GetInt("id")
 	page, _ := strconv.Atoi(c.DefaultQuery("p", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	if page < 1 {
 		page = 1
+	} else if page > 1_000_000 {
+		page = 1_000_000
 	}
-	result, err := model.GetAffTransferLogs(userID, page, 20)
+	if pageSize < 1 {
+		pageSize = 20
+	} else if pageSize > 100 {
+		pageSize = 100
+	}
+	result, err := model.GetAffTransferLogs(userID, page, pageSize)
 	if err != nil {
 		common.ApiError(c, err)
 		return

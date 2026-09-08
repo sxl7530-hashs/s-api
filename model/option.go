@@ -1,6 +1,8 @@
 package model
 
 import (
+	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -217,6 +219,12 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == "InviterRebatePercent" {
+		percent, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(percent) || math.IsInf(percent, 0) || percent < 0 || percent > 100 {
+			return errors.New("inviter rebate percent must be between 0 and 100")
+		}
+	}
 	if key == operation_setting.ToolPriceOptionKey {
 		return operation_setting.ValidateToolPricesJSON(value)
 	}
