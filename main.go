@@ -6,8 +6,8 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
@@ -33,11 +33,8 @@ import (
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
-	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-
-	_ "net/http/pprof"
 )
 
 //go:embed web/dist
@@ -162,12 +159,31 @@ func main() {
 		model.InitBatchUpdater()
 	}
 
-	if os.Getenv("ENABLE_PPROF") == "true" {
-		gopool.Go(func() {
-			log.Println(http.ListenAndServe("0.0.0.0:8005", nil))
-		})
+	var pprofServer *http.Server
+	if common.GetEnvOrDefaultBool("ENABLE_PPROF", false) {
+		pprofMux := http.NewServeMux()
+		pprofMux.HandleFunc("/debug/pprof/", pprof.Index)
+		pprofMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		pprofMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		pprofMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		pprofMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		for _, profile := range []string{"allocs", "block", "goroutine", "heap", "mutex", "threadcreate"} {
+			pprofMux.Handle("/debug/pprof/"+profile, pprof.Handler(profile))
+		}
+
+		pprofServer = &http.Server{
+			Addr:              common.GetEnvOrDefaultString("PPROF_ADDR", "127.0.0.1:8005"),
+			Handler:           pprofMux,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+		go func() {
+			if err := pprofServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				common.SysError("failed to start pprof server: " + err.Error())
+			}
+		}()
 		go common.Monitor()
-		common.SysLog("pprof enabled")
+		common.SysLog("pprof enabled on " + pprofServer.Addr)
 	}
 
 	err = common.StartPyroScope()
@@ -235,6 +251,11 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
+	}
+	if pprofServer != nil {
+		if err := pprofServer.Shutdown(ctx); err != nil {
+			common.SysError(fmt.Sprintf("pprof server forced to shutdown: %v", err))
+		}
 	}
 	// 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
 	if common.DataExportEnabled {
@@ -337,6 +358,7 @@ func InitResources() error {
 
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()
+	common.StartDiskCacheCleanup()
 
 	// Initialize SQL Database
 	err = model.InitLogDB()

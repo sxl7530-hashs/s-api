@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -18,6 +19,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+const exactTokenizerTextLimit = 64 << 10
 
 func getImageToken(c *gin.Context, fileMeta *types.FileMeta, model string, stream bool) (int, error) {
 	if fileMeta == nil || fileMeta.Source == nil {
@@ -231,7 +234,11 @@ func CountRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *relayco
 	if meta.TokenType == types.TokenTypeTextNumber {
 		tkm += utf8.RuneCountInString(meta.CombineText)
 	} else {
-		tkm += CountTextToken(meta.CombineText, model)
+		count, err := CountTextTokenContext(c.Request.Context(), meta.CombineText, model)
+		if err != nil {
+			return 0, err
+		}
+		tkm += count
 	}
 
 	if info.RelayFormat == types.RelayFormatOpenAI {
@@ -406,14 +413,40 @@ func CountAudioTokenOutput(audioBase64 string, audioFormat string) (int, error) 
 
 // CountTextToken 统计文本的token数量，仅OpenAI模型使用tokenizer，其余模型使用估算
 func CountTextToken(text string, model string) int {
+	tokens, _ := CountTextTokenContext(context.Background(), text, model)
+	return tokens
+}
+
+// CountTextTokenContext keeps exact tokenization for ordinary OpenAI prompts.
+// Large prompts use the same linear estimator already used for non-OpenAI
+// providers. The tokenizer's BPE implementation can allocate tens of times the
+// input size and cannot be cancelled, so invoking it for unbounded user input
+// lets a handful of concurrent requests exhaust both memory and CPU.
+func CountTextTokenContext(ctx context.Context, text string, model string) (int, error) {
 	if text == "" {
-		return 0
+		return 0, nil
 	}
 	if common.IsOpenAITextModel(model) {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		default:
+		}
+		if len(text) > exactTokenizerTextLimit {
+			estimated := EstimateTokenByModel(model, text)
+			// The word-based estimator intentionally treats a continuous Latin
+			// sequence as one word. For adversarial/random input that can severely
+			// under-reserve quota, so keep a conservative byte-based floor.
+			byteFloor := (len(text) + 7) / 8
+			if byteFloor > estimated {
+				estimated = byteFloor
+			}
+			return estimated, nil
+		}
 		tokenEncoder := getTokenEncoder(model)
-		return getTokenNum(tokenEncoder, text)
+		return getTokenNum(tokenEncoder, text), nil
 	} else {
 		// 非openai模型，使用tiktoken-go计算没有意义，使用估算节省资源
-		return EstimateTokenByModel(model, text)
+		return EstimateTokenByModel(model, text), nil
 	}
 }

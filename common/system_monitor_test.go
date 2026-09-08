@@ -3,6 +3,7 @@ package common
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -23,6 +24,49 @@ func TestParseCgroupCPUCapacity(t *testing.T) {
 		got, ok := parseCgroupCPUCapacity(test.value)
 		assert.Equal(t, test.ok, ok, test.value)
 		assert.Equal(t, test.want, got, test.value)
+	}
+}
+
+func TestCalculateCgroupCPUPercent(t *testing.T) {
+	start := time.Unix(100, 0)
+	tests := []struct {
+		name     string
+		previous cgroupCPUSample
+		current  cgroupCPUSample
+		capacity float64
+		want     float64
+		ok       bool
+	}{
+		{
+			name:     "half of two cpu quota",
+			previous: cgroupCPUSample{usageSeconds: 10, at: start},
+			current:  cgroupCPUSample{usageSeconds: 15, at: start.Add(5 * time.Second)},
+			capacity: 2,
+			want:     50,
+			ok:       true,
+		},
+		{
+			name:     "quota saturation is capped",
+			previous: cgroupCPUSample{usageSeconds: 10, at: start},
+			current:  cgroupCPUSample{usageSeconds: 12, at: start.Add(time.Second)},
+			capacity: 0.5,
+			want:     100,
+			ok:       true,
+		},
+		{
+			name:     "counter reset",
+			previous: cgroupCPUSample{usageSeconds: 10, at: start},
+			current:  cgroupCPUSample{usageSeconds: 1, at: start.Add(time.Second)},
+			capacity: 1,
+			ok:       false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := calculateCgroupCPUPercent(test.previous, test.current, test.capacity)
+			assert.Equal(t, test.ok, ok)
+			assert.Equal(t, test.want, got)
+		})
 	}
 }
 

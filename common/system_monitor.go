@@ -34,6 +34,16 @@ type SystemStatus struct {
 	DiskUsage       float64
 }
 
+type cgroupCPUSample struct {
+	usageSeconds float64
+	at           time.Time
+}
+
+type cgroupCPUMonitor struct {
+	previous cgroupCPUSample
+	ready    bool
+}
+
 var latestSystemStatus atomic.Value
 
 func init() {
@@ -46,10 +56,11 @@ func StartSystemMonitor() {
 	if err != nil {
 		SysError("failed to initialize process cpu monitor: " + err.Error())
 	}
+	cgroupCPU := &cgroupCPUMonitor{}
 	go func() {
 		for {
 			config := GetPerformanceMonitorConfig()
-			updateSystemStatus(currentProcess)
+			updateSystemStatus(currentProcess, cgroupCPU)
 			if !config.Enabled {
 				time.Sleep(30 * time.Second)
 				continue
@@ -59,18 +70,23 @@ func StartSystemMonitor() {
 	}()
 }
 
-func updateSystemStatus(currentProcess *process.Process) {
+func updateSystemStatus(currentProcess *process.Process, cgroupCPU *cgroupCPUMonitor) {
 	var status SystemStatus
 	cpuCapacity := float64(runtime.GOMAXPROCS(0))
 	if cgroupCapacity, ok := getCgroupCPUCapacity(); ok && cgroupCapacity < cpuCapacity {
 		cpuCapacity = cgroupCapacity
 	}
 
-	// CPU
-	// 注意：cpu.Percent(0, false) 返回自上次调用以来的 CPU 使用率
-	// 如果是第一次调用，可能会返回错误或不准确的值，但在循环中会逐渐正常
-	percents, err := cpu.Percent(0, false)
-	if err == nil && len(percents) > 0 {
+	// Containers report CPU from their own cgroup rather than from the host.
+	// The first cgroup sample has no interval, so retain the host reading only
+	// as a startup/non-container fallback.
+	if cgroupCPU != nil {
+		if cgroupPercent, ok := cgroupCPU.sample(cpuCapacity, time.Now()); ok {
+			status.CPUUsage = cgroupPercent
+		} else if percents, err := cpu.Percent(0, false); err == nil && len(percents) > 0 {
+			status.CPUUsage = percents[0]
+		}
+	} else if percents, err := cpu.Percent(0, false); err == nil && len(percents) > 0 {
 		status.CPUUsage = percents[0]
 	}
 	if currentProcess != nil {
@@ -96,6 +112,59 @@ func updateSystemStatus(currentProcess *process.Process) {
 	}
 
 	latestSystemStatus.Store(status)
+}
+
+func (m *cgroupCPUMonitor) sample(capacity float64, now time.Time) (float64, bool) {
+	usage, ok := getCgroupCPUUsageSeconds()
+	if !ok {
+		m.ready = false
+		return 0, false
+	}
+	current := cgroupCPUSample{usageSeconds: usage, at: now}
+	if !m.ready {
+		m.previous = current
+		m.ready = true
+		return 0, false
+	}
+	previous := m.previous
+	m.previous = current
+	return calculateCgroupCPUPercent(previous, current, capacity)
+}
+
+func calculateCgroupCPUPercent(previous, current cgroupCPUSample, capacity float64) (float64, bool) {
+	elapsed := current.at.Sub(previous.at).Seconds()
+	used := current.usageSeconds - previous.usageSeconds
+	if capacity <= 0 || elapsed <= 0 || used < 0 || math.IsNaN(used) {
+		return 0, false
+	}
+	percent := used / elapsed / capacity * 100
+	if percent > 100 {
+		percent = 100
+	}
+	return percent, true
+}
+
+func getCgroupCPUUsageSeconds() (float64, bool) {
+	if data, err := os.ReadFile("/sys/fs/cgroup/cpu.stat"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) != 2 || fields[0] != "usage_usec" {
+				continue
+			}
+			usage, err := strconv.ParseFloat(fields[1], 64)
+			if err == nil && usage >= 0 {
+				return usage / 1_000_000, true
+			}
+			return 0, false
+		}
+	}
+	if data, err := os.ReadFile("/sys/fs/cgroup/cpuacct/cpuacct.usage"); err == nil {
+		usage, parseErr := strconv.ParseFloat(strings.TrimSpace(string(data)), 64)
+		if parseErr == nil && usage >= 0 {
+			return usage / 1_000_000_000, true
+		}
+	}
+	return 0, false
 }
 
 func normalizeProcessCPUUsage(usage float64, cpuCapacity float64) float64 {

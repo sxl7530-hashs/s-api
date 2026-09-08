@@ -18,6 +18,8 @@ const (
 	DiskCacheTypeResponse DiskCacheType = "response" // 长响应暂存
 )
 
+const diskCacheOrphanMaxAge = 30 * time.Minute
+
 // 统一的缓存目录名
 const diskCacheDir = "new-api-body-cache"
 
@@ -136,6 +138,23 @@ func CleanupOldDiskCacheFiles(maxAge time.Duration) error {
 		}
 	}
 	return nil
+}
+
+// StartDiskCacheCleanup periodically removes files left behind by interrupted
+// or crashed requests. Normal request-owned files are still removed promptly
+// by Close; the age window is deliberately longer than supported long tasks.
+func StartDiskCacheCleanup() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := CleanupOldDiskCacheFiles(diskCacheOrphanMaxAge); err != nil {
+				SysError("failed to clean orphaned disk cache files: " + err.Error())
+				continue
+			}
+			SyncDiskCacheStats()
+		}
+	}()
 }
 
 // GetDiskCacheInfo 获取磁盘缓存目录信息
