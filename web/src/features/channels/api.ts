@@ -239,6 +239,21 @@ export async function testChannel(
   return res.data
 }
 
+export async function testSelectedChannelModels(
+  channelIds: number[]
+): Promise<{
+  success: boolean
+  message?: string
+  data?: { task_id: string; status: string }
+}> {
+  const res = await api.post(
+    '/api/channel/test/models/batch',
+    { channel_ids: channelIds },
+    channelActionConfig()
+  )
+  return res.data
+}
+
 /**
  * Update channel balance
  */

@@ -49,10 +49,12 @@ func (channelTestHandler) NewPayload() any { return nil }
 // scheduled run, which uses the configured monitor ChannelTestMode and does not
 // notify. A manual "test all channels" trigger sets Mode=scheduled_all and
 // Notify=true to reproduce the legacy manual behavior (test every channel and
-// notify root on completion).
+// notify root on completion). ChannelIDs switches this exclusive task type to
+// selected-channel all-model testing.
 type channelTestTaskPayload struct {
-	Mode   string `json:"mode,omitempty"`
-	Notify bool   `json:"notify,omitempty"`
+	Mode       string `json:"mode,omitempty"`
+	Notify     bool   `json:"notify,omitempty"`
+	ChannelIDs []int  `json:"channel_ids,omitempty"`
 }
 
 func (channelTestHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
@@ -61,7 +63,17 @@ func (channelTestHandler) Run(ctx context.Context, task *model.SystemTask, runne
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
 		return
 	}
-	summary, err := runChannelTestTask(ctx, payload.Mode, payload.Notify, service.NewSystemTaskProgressReporter(task, runnerID))
+	reporter := service.NewSystemTaskProgressReporter(task, runnerID)
+	if len(payload.ChannelIDs) > 0 {
+		summary, err := runSelectedChannelModelTests(ctx, payload.ChannelIDs, reporter)
+		if err != nil {
+			finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
+			return
+		}
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+		return
+	}
+	summary, err := runChannelTestTask(ctx, payload.Mode, payload.Notify, reporter)
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
 		return

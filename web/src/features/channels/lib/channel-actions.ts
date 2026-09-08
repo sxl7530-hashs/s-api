@@ -35,6 +35,7 @@ import {
   fixChannelAbilities,
   editTagChannels,
   testAllChannels,
+  testSelectedChannelModels,
   updateAllChannelsBalance,
 } from '../api'
 import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
@@ -645,6 +646,36 @@ export async function handleTestAllChannels(
     }
   } catch {
     toast.error(i18next.t('Failed to test all channels'))
+  }
+}
+
+export async function handleTestSelectedChannelModels(
+  ids: number[],
+  onSuccess?: () => void
+): Promise<void> {
+  if (ids.length === 0) {
+    toast.error(i18next.t('No channels selected'))
+    return
+  }
+
+  try {
+    const response = await testSelectedChannelModels(ids)
+    if (response.success) {
+      toast.success(
+        i18next.t(
+          'Testing every model in {{count}} selected channel(s) started.',
+          { count: ids.length }
+        )
+      )
+      onSuccess?.()
+      return
+    }
+    toast.error(
+      response.message ||
+        i18next.t('Failed to start selected channel model testing')
+    )
+  } catch {
+    toast.error(i18next.t('Failed to start selected channel model testing'))
   }
 }
 

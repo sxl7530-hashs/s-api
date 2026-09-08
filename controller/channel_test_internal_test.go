@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -398,6 +399,155 @@ func TestRunChannelTestWorkersHonorsConfiguredConcurrency(t *testing.T) {
 	assert.Equal(t, int32(2), maxActive.Load())
 	assert.Equal(t, channelTestSummary{Tested: 4, Succeeded: 4}, summary)
 	assert.Equal(t, []int{0, 1, 2, 3, 4}, progress)
+}
+
+func TestRunChannelTestWorkersTestsEachChannelOnce(t *testing.T) {
+	originalInterval := common.RequestInterval
+	common.RequestInterval = 0
+	t.Cleanup(func() { common.RequestInterval = originalInterval })
+
+	channels := []*model.Channel{
+		{Id: 1, Status: common.ChannelStatusEnabled},
+		{Id: 2, Status: common.ChannelStatusEnabled},
+	}
+	var calls atomic.Int32
+
+	summary := runChannelTestWorkers(
+		context.Background(),
+		channels,
+		2,
+		func(_ context.Context, _ *model.Channel) channelTestSummary {
+			calls.Add(1)
+			return channelTestSummary{Tested: 1, Succeeded: 1}
+		},
+		nil,
+	)
+
+	assert.Equal(t, int32(2), calls.Load())
+	assert.Equal(t, channelTestSummary{Tested: 2, Succeeded: 2}, summary)
+}
+
+func TestApplyChannelModelTestResultsRemovesOnlyAutoBanMatches(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.ChannelCostRatioHistory{}))
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-test",
+		Status: common.ChannelStatusEnabled,
+		Name:   "partial-model-failure",
+		Models: "model-ok,model-remove,model-ordinary-failure",
+		Group:  "default",
+	}
+	require.NoError(t, channel.Insert())
+
+	removed, disabled, err := applyChannelModelTestResults(&channel, []channelModelTestResult{
+		{Model: "model-ok", Succeeded: true},
+		{Model: "model-remove", MatchesAutoBan: true},
+		{Model: "model-ordinary-failure"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed)
+	assert.False(t, disabled)
+	var updated model.Channel
+	require.NoError(t, db.First(&updated, channel.Id).Error)
+	assert.Equal(t, "model-ok,model-ordinary-failure", updated.Models)
+	assert.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	var abilities []model.Ability
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).Order("model").Find(&abilities).Error)
+	require.Len(t, abilities, 2)
+	assert.Equal(t, "model-ok", abilities[0].Model)
+	assert.Equal(t, "model-ordinary-failure", abilities[1].Model)
+}
+
+func TestApplyChannelModelTestResultsDisablesChannelWhenEveryModelMatches(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.ChannelCostRatioHistory{}))
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-test",
+		Status: common.ChannelStatusEnabled,
+		Name:   "all-models-failed",
+		Models: "model-a,model-b",
+		Group:  "default",
+	}
+	require.NoError(t, channel.Insert())
+
+	removed, disabled, err := applyChannelModelTestResults(&channel, []channelModelTestResult{
+		{Model: "model-a", MatchesAutoBan: true},
+		{Model: "model-b", MatchesAutoBan: true},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, removed)
+	assert.True(t, disabled)
+	var updated model.Channel
+	require.NoError(t, db.First(&updated, channel.Id).Error)
+	assert.Equal(t, "model-a,model-b", updated.Models)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, updated.Status)
+	var enabledAbilityCount int64
+	require.NoError(t, db.Model(&model.Ability{}).Where("channel_id = ? AND enabled = ?", channel.Id, true).Count(&enabledAbilityCount).Error)
+	assert.Zero(t, enabledAbilityCount)
+}
+
+func TestChannelTestMatchesAutoBanRulesIncludesResponseTimeThreshold(t *testing.T) {
+	originalEnabled := common.AutomaticDisableChannelEnabled
+	common.AutomaticDisableChannelEnabled = true
+	t.Cleanup(func() { common.AutomaticDisableChannelEnabled = originalEnabled })
+
+	assert.False(t, channelTestMatchesAutoBanRules(nil, 999, 1000))
+	assert.True(t, channelTestMatchesAutoBanRules(nil, 1001, 1000))
+}
+
+func TestSelectedChannelModelsEnqueuesDeduplicatedChannelIDs(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}, &model.Log{}))
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 1)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/test/models/batch", strings.NewReader(`{"channel_ids":[11,22,11,0,-1]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	TestSelectedChannelModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			TaskID string `json:"task_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	task, err := model.GetSystemTaskByTaskID(response.Data.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, task)
+	payload := channelTestTaskPayload{}
+	require.NoError(t, task.DecodePayload(&payload))
+	assert.Equal(t, []int{11, 22}, payload.ChannelIDs)
+}
+
+func TestSelectedChannelModelsRejectsOversizedSelection(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.SystemTask{}))
+	ids := make([]int, maxSelectedChannelModelTests+1)
+	for index := range ids {
+		ids[index] = index + 1
+	}
+	body, err := common.Marshal(channelModelTestRequest{ChannelIDs: ids})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/test/models/batch", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	TestSelectedChannelModels(ctx)
+
+	assert.Contains(t, recorder.Body.String(), `"success":false`)
+	var taskCount int64
+	require.NoError(t, model.DB.Model(&model.SystemTask{}).Count(&taskCount).Error)
+	assert.Zero(t, taskCount)
 }
 
 func TestRunChannelTestWorkersStopsAfterCancellation(t *testing.T) {

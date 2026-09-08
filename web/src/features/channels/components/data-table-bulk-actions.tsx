@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
-import { type Table } from '@tanstack/react-table'
-import { Power, PowerOff, Tag, Trash2 } from 'lucide-react'
+import type { Table } from '@tanstack/react-table'
+import { FlaskConical, Power, PowerOff, Tag, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -45,6 +45,7 @@ import {
   handleBatchDisable,
   handleBatchEnable,
   handleBatchSetTag,
+  handleTestSelectedChannelModels,
 } from '../lib'
 import type { Channel } from '../types'
 
@@ -59,12 +60,18 @@ export function DataTableBulkActions<TData>({
   const queryClient = useQueryClient()
   const [showTagDialog, setShowTagDialog] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showModelTestConfirm, setShowModelTestConfirm] = useState(false)
   const [tagValue, setTagValue] = useState('')
   const currentUser = useAuthStore((s) => s.auth.user)
   const canEditSensitive = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+  )
+  const canEditChannels = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.WRITE
   )
 
   const selectedRows = table.getFilteredSelectedRowModel().rows
@@ -106,6 +113,14 @@ export function DataTableBulkActions<TData>({
     })
   }
 
+  const handleModelTest = () => {
+    if (!canEditChannels) return
+    void handleTestSelectedChannelModels(selectedIds, () => {
+      setShowModelTestConfirm(false)
+      handleClearSelection()
+    })
+  }
+
   return (
     <>
       <BulkActionsToolbar table={table} entityName='channel'>
@@ -127,6 +142,44 @@ export function DataTableBulkActions<TData>({
           </TooltipTrigger>
           <TooltipContent>
             <p>{t('Enable selected channels')}</p>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='outline'
+                size='icon'
+                onClick={() => {
+                  if (!canEditChannels) return
+                  setShowModelTestConfirm(true)
+                }}
+                aria-disabled={!canEditChannels}
+                className={cn(
+                  'size-8',
+                  !canEditChannels && 'cursor-not-allowed opacity-50'
+                )}
+                aria-label={t('Test all models in selected channels')}
+                title={
+                  canEditChannels
+                    ? t('Test all models in selected channels')
+                    : t('No permission to perform this action')
+                }
+              />
+            }
+          >
+            <FlaskConical />
+            <span className='sr-only'>
+              {t('Test all models in selected channels')}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>
+              {canEditChannels
+                ? t('Test all models in selected channels')
+                : t('No permission to perform this action')}
+            </p>
           </TooltipContent>
         </Tooltip>
 
@@ -251,6 +304,32 @@ export function DataTableBulkActions<TData>({
             />
           </div>
         </div>
+      </Dialog>
+
+      <Dialog
+        open={showModelTestConfirm}
+        onOpenChange={setShowModelTestConfirm}
+        title={t('Test all selected channel models?')}
+        description={t(
+          'This tests every model in {{count}} selected channel(s). Models matching automatic disable rules will be removed; channels with no passing models will be disabled.',
+          { count: selectedIds.length }
+        )}
+        contentHeight='auto'
+        footer={
+          <>
+            <Button
+              variant='outline'
+              onClick={() => setShowModelTestConfirm(false)}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button onClick={handleModelTest} disabled={!canEditChannels}>
+              {t('Start testing')}
+            </Button>
+          </>
+        }
+      >
+        <div />
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
