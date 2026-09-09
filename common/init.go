@@ -187,6 +187,13 @@ func initConstantEnv() {
 	// MaxRequestBodyMB 请求体最大大小（解压后），用于防止超大请求/zip bomb导致内存暴涨
 	constant.MaxRequestBodyMB = GetEnvOrDefault("MAX_REQUEST_BODY_MB", 128)
 	constant.AnonymousRequestBodyLimitKB = GetEnvOrDefault("ANONYMOUS_REQUEST_BODY_LIMIT_KB", 512)
+	constant.RelayLightConcurrency = GetEnvOrDefault("RELAY_LIGHT_CONCURRENCY", 4096)
+	constant.RelayLightQueue = GetEnvOrDefault("RELAY_LIGHT_QUEUE", 1024)
+	constant.RelayHeavyConcurrencyUnits = GetEnvOrDefault("RELAY_HEAVY_CONCURRENCY_UNITS", 64)
+	constant.RelayHeavyQueue = GetEnvOrDefault("RELAY_HEAVY_QUEUE", 128)
+	constant.RelayHeavyThresholdMB = GetEnvOrDefault("RELAY_HEAVY_THRESHOLD_MB", 8)
+	constant.RelayAdmissionWaitMilliseconds = GetEnvOrDefault("RELAY_ADMISSION_WAIT_MS", 2000)
+	constant.RelayAdmissionRetryAfterSeconds = GetEnvOrDefault("RELAY_ADMISSION_RETRY_AFTER_SECONDS", 3)
 	// ForceStreamOption 覆盖请求参数，强制返回usage信息
 	constant.ForceStreamOption = GetEnvOrDefaultBool("FORCE_STREAM_OPTION", true)
 	constant.CountToken = GetEnvOrDefaultBool("CountToken", true)

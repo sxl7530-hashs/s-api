@@ -209,19 +209,16 @@ func loadFromURL(c *gin.Context, url string, reason ...string) (*types.CachedFil
 		// 使用磁盘缓存
 		diskPath, err := writeToDiskCache(base64Data)
 		if err != nil {
-			// 磁盘缓存失败，回退到内存
-			logger.LogWarn(c, fmt.Sprintf("Failed to write to disk cache, falling back to memory: %v", err))
-			cachedData = types.NewMemoryCachedData(base64Data, mimeType, int64(len(fileBytes)))
-		} else {
-			cachedData = types.NewDiskCachedData(diskPath, mimeType, int64(len(fileBytes)))
-			cachedData.DiskSize = base64Size
-			cachedData.OnClose = func(size int64) {
-				common.DecrementDiskFiles(size)
-			}
-			common.IncrementDiskFiles(base64Size)
-			if common.DebugEnabled {
-				logger.LogDebug(c, "File cached to disk: %s, size: %d bytes", diskPath, base64Size)
-			}
+			return nil, fmt.Errorf("large file disk cache unavailable: %w", err)
+		}
+		cachedData = types.NewDiskCachedData(diskPath, mimeType, int64(len(fileBytes)))
+		cachedData.DiskSize = base64Size
+		cachedData.OnRemove = common.RemoveDiskCacheFile
+		cachedData.OnClose = func(size int64) {
+			common.DecrementDiskFiles(size)
+		}
+		if common.DebugEnabled {
+			logger.LogDebug(c, "File cached to disk: %s, size: %d bytes", diskPath, base64Size)
 		}
 	} else {
 		// 使用内存缓存
@@ -249,9 +246,18 @@ func loadFromURL(c *gin.Context, url string, reason ...string) (*types.CachedFil
 
 func loadURLDiskFirst(resp *http.Response, url string) (*types.CachedFileData, bool, error) {
 	maxFileSize := int64(constant.MaxFileDownloadMB) << 20
+	expectedSize := maxFileSize
+	if resp.ContentLength > 0 && resp.ContentLength <= maxFileSize {
+		expectedSize = resp.ContentLength
+	}
+	reserveSize := expectedSize + int64(base64.StdEncoding.EncodedLen(int(expectedSize)))
+	if !common.TryReserveDiskCache(reserveSize) {
+		return nil, true, common.ErrDiskCacheUnavailable
+	}
+	defer common.ReleaseDiskCacheReservation(reserveSize)
 	rawPath, rawFile, err := common.CreateDiskCacheFile(common.DiskCacheTypeFile)
 	if err != nil {
-		return nil, false, nil
+		return nil, true, err
 	}
 	removeRaw := true
 	var rawTracked int64
@@ -261,7 +267,7 @@ func loadURLDiskFirst(resp *http.Response, url string) (*types.CachedFileData, b
 			common.DecrementDiskFiles(rawTracked)
 		}
 		if removeRaw {
-			_ = os.Remove(rawPath)
+			_ = common.RemoveDiskCacheFile(rawPath)
 		}
 	}()
 	written, err := io.Copy(rawFile, io.LimitReader(resp.Body, maxFileSize+1))
@@ -295,7 +301,7 @@ func loadURLDiskFirst(resp *http.Response, url string) (*types.CachedFileData, b
 	closeErr := encoder.Close()
 	fileCloseErr := b64File.Close()
 	if encodeErr != nil || closeErr != nil || fileCloseErr != nil {
-		_ = os.Remove(b64Path)
+		_ = common.RemoveDiskCacheFile(b64Path)
 		if encodeErr != nil {
 			return nil, true, encodeErr
 		}
@@ -306,7 +312,7 @@ func loadURLDiskFirst(resp *http.Response, url string) (*types.CachedFileData, b
 	}
 	b64Info, err := os.Stat(b64Path)
 	if err != nil {
-		_ = os.Remove(b64Path)
+		_ = common.RemoveDiskCacheFile(b64Path)
 		return nil, true, err
 	}
 	// MIME detection only needs the response headers for the common case. The
@@ -327,6 +333,7 @@ func loadURLDiskFirst(resp *http.Response, url string) (*types.CachedFileData, b
 		}
 	}
 	cached.DiskSize = b64Info.Size()
+	cached.OnRemove = common.RemoveDiskCacheFile
 	cached.OnClose = func(size int64) { common.DecrementDiskFiles(size) }
 	common.IncrementDiskFiles(b64Info.Size())
 	removeRaw = true
@@ -454,14 +461,13 @@ func loadFromBase64(base64String string, providedMimeType string) (*types.Cached
 	if shouldUseDiskCache(base64Size) {
 		diskPath, err := writeToDiskCache(cleanBase64)
 		if err != nil {
-			cachedData = types.NewMemoryCachedData(cleanBase64, mimeType, int64(len(decodedData)))
-		} else {
-			cachedData = types.NewDiskCachedData(diskPath, mimeType, int64(len(decodedData)))
-			cachedData.DiskSize = base64Size
-			cachedData.OnClose = func(size int64) {
-				common.DecrementDiskFiles(size)
-			}
-			common.IncrementDiskFiles(base64Size)
+			return nil, fmt.Errorf("large file disk cache unavailable: %w", err)
+		}
+		cachedData = types.NewDiskCachedData(diskPath, mimeType, int64(len(decodedData)))
+		cachedData.DiskSize = base64Size
+		cachedData.OnRemove = common.RemoveDiskCacheFile
+		cachedData.OnClose = func(size int64) {
+			common.DecrementDiskFiles(size)
 		}
 	} else {
 		cachedData = types.NewMemoryCachedData(cleanBase64, mimeType, int64(len(decodedData)))

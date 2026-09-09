@@ -28,10 +28,12 @@ type DiskSpaceInfo struct {
 
 // SystemStatus 系统状态信息
 type SystemStatus struct {
-	CPUUsage        float64
-	ProcessCPUUsage float64
-	MemoryUsage     float64
-	DiskUsage       float64
+	CPUUsage        float64 `json:"cpu_usage"`
+	ProcessCPUUsage float64 `json:"process_cpu_usage"`
+	MemoryUsage     float64 `json:"memory_usage"`
+	DiskUsage       float64 `json:"disk_usage"`
+	CPUCapacity     float64 `json:"cpu_capacity"`
+	GOMAXPROCS      int     `json:"gomaxprocs"`
 }
 
 type cgroupCPUSample struct {
@@ -76,6 +78,8 @@ func updateSystemStatus(currentProcess *process.Process, cgroupCPU *cgroupCPUMon
 	if cgroupCapacity, ok := getCgroupCPUCapacity(); ok && cgroupCapacity < cpuCapacity {
 		cpuCapacity = cgroupCapacity
 	}
+	status.CPUCapacity = cpuCapacity
+	status.GOMAXPROCS = runtime.GOMAXPROCS(0)
 
 	// Containers report CPU from their own cgroup rather than from the host.
 	// The first cgroup sample has no interval, so retain the host reading only

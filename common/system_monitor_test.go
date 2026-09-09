@@ -91,3 +91,9 @@ func TestNormalizeProcessCPUUsage(t *testing.T) {
 	assert.Zero(t, normalizeProcessCPUUsage(math.NaN(), 2))
 	assert.Zero(t, normalizeProcessCPUUsage(50, 0))
 }
+
+func TestSystemStatusExposesPerInstanceCapacity(t *testing.T) {
+	status := SystemStatus{CPUUsage: 75, ProcessCPUUsage: 50, CPUCapacity: 2.5, GOMAXPROCS: 4}
+	assert.Equal(t, 2.5, status.CPUCapacity)
+	assert.Equal(t, 4, status.GOMAXPROCS)
+}

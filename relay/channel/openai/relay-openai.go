@@ -107,14 +107,8 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	defer service.CloseResponseBodyGracefully(resp)
-	var responseTextBuilder service.ResponseAccumulator
-	defer responseTextBuilder.Close()
-	responseTokens := service.NewTokenEstimator(info.UpstreamModelName)
-	var responseTextWriter io.StringWriter = &responseTextBuilder
-	useIncrementalEstimate := !common.IsOpenAITextModel(info.UpstreamModelName)
-	if useIncrementalEstimate {
-		responseTextWriter = responseTokens
-	}
+	responseTokens := service.NewStreamingTokenCounter(info.UpstreamModelName)
+	var responseTextWriter io.StringWriter = responseTokens
 
 	model := info.UpstreamModelName
 	var responseId string
@@ -186,18 +180,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	if !containStreamUsage {
-		if useIncrementalEstimate {
-			usage = service.ResponseTokens2Usage(c, responseTokens.Tokens(), info.GetEstimatePromptTokens())
-		} else {
-			if accErr := responseTextBuilder.Err(); accErr != nil {
-				return nil, types.NewError(accErr, types.ErrorCodeCountTokenFailed)
-			}
-			text, textErr := responseTextBuilder.String()
-			if textErr != nil {
-				return nil, types.NewError(textErr, types.ErrorCodeCountTokenFailed)
-			}
-			usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
+		completionTokens, err := responseTokens.Tokens()
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeCountTokenFailed)
 		}
+		usage = service.ResponseTokens2Usage(c, completionTokens, info.GetEstimatePromptTokens())
 		usage.CompletionTokens += toolCount * 7
 	}
 
@@ -209,7 +196,6 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
-	_ = responseTextBuilder.Close()
 	return usage, nil
 }
 

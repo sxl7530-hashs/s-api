@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,12 +21,20 @@ const (
 
 const diskCacheOrphanMaxAge = 30 * time.Minute
 
+var activeDiskCacheFiles sync.Map
+
+var diskCacheInstanceID = fmt.Sprintf("instance-%d-%s", os.Getpid(), uuid.New().String()[:8])
+
 // 统一的缓存目录名
 const diskCacheDir = "new-api-body-cache"
 
 // GetDiskCacheDir 获取统一的磁盘缓存目录
 // 注意：每次调用都会重新计算，以响应配置变化
 func GetDiskCacheDir() string {
+	return filepath.Join(getDiskCacheRootDir(), diskCacheInstanceID)
+}
+
+func getDiskCacheRootDir() string {
 	cachePath := GetDiskCachePath()
 	if cachePath == "" {
 		cachePath = os.TempDir()
@@ -55,6 +64,7 @@ func CreateDiskCacheFile(cacheType DiskCacheType) (string, *os.File, error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create cache file: %w", err)
 	}
+	activeDiskCacheFiles.Store(filePath, struct{}{})
 
 	return filePath, file, nil
 }
@@ -62,6 +72,11 @@ func CreateDiskCacheFile(cacheType DiskCacheType) (string, *os.File, error) {
 // WriteDiskCacheFile 写入数据到磁盘缓存文件
 // 返回文件路径
 func WriteDiskCacheFile(cacheType DiskCacheType, data []byte) (string, error) {
+	size := int64(len(data))
+	if !TryReserveDiskCache(size) {
+		return "", ErrDiskCacheUnavailable
+	}
+	defer ReleaseDiskCacheReservation(size)
 	filePath, file, err := CreateDiskCacheFile(cacheType)
 	if err != nil {
 		return "", err
@@ -70,15 +85,16 @@ func WriteDiskCacheFile(cacheType DiskCacheType, data []byte) (string, error) {
 	_, err = file.Write(data)
 	if err != nil {
 		file.Close()
-		os.Remove(filePath)
+		RemoveDiskCacheFile(filePath)
 		return "", fmt.Errorf("failed to write cache file: %w", err)
 	}
 
 	if err := file.Close(); err != nil {
-		os.Remove(filePath)
+		RemoveDiskCacheFile(filePath)
 		return "", fmt.Errorf("failed to close cache file: %w", err)
 	}
 
+	IncrementDiskFiles(size)
 	return filePath, nil
 }
 
@@ -103,16 +119,20 @@ func ReadDiskCacheFileString(filePath string) (string, error) {
 
 // RemoveDiskCacheFile 删除磁盘缓存文件
 func RemoveDiskCacheFile(filePath string) error {
-	return os.Remove(filePath)
+	err := os.Remove(filePath)
+	if err == nil || os.IsNotExist(err) {
+		activeDiskCacheFiles.Delete(filePath)
+	}
+	return err
 }
 
 // CleanupOldDiskCacheFiles 清理旧的缓存文件
 // maxAge: 文件最大存活时间
-// 注意：此函数只删除文件，不更新统计（因为无法知道每个文件的原始大小）
 func CleanupOldDiskCacheFiles(maxAge time.Duration) error {
-	dir := GetDiskCacheDir()
+	rootDir := getDiskCacheRootDir()
+	currentDir := GetDiskCacheDir()
 
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(rootDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // 目录不存在，无需清理
@@ -122,22 +142,44 @@ func CleanupOldDiskCacheFiles(maxAge time.Duration) error {
 
 	now := time.Now()
 	for _, entry := range entries {
-		if entry.IsDir() {
+		entryPath := filepath.Join(rootDir, entry.Name())
+		if !entry.IsDir() {
+			cleanupDiskCacheFile(entryPath, now, maxAge)
 			continue
 		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		if now.Sub(info.ModTime()) > maxAge {
-			// 注意：后台清理任务删除文件时，由于无法得知原始 base64Size，
-			// 只能按磁盘文件大小扣减。这在目前 base64 存储模式下是准确的。
-			if err := os.Remove(filepath.Join(dir, entry.Name())); err == nil {
-				DecrementDiskFiles(info.Size())
+		if entryPath != currentDir {
+			info, infoErr := entry.Info()
+			if infoErr != nil || now.Sub(info.ModTime()) <= maxAge {
+				continue
 			}
+		}
+		files, readErr := os.ReadDir(entryPath)
+		if readErr != nil {
+			continue
+		}
+		for _, file := range files {
+			if !file.IsDir() {
+				cleanupDiskCacheFile(filepath.Join(entryPath, file.Name()), now, maxAge)
+			}
+		}
+		if entryPath != currentDir {
+			_ = os.Remove(entryPath)
 		}
 	}
 	return nil
+}
+
+func cleanupDiskCacheFile(filePath string, now time.Time, maxAge time.Duration) {
+	info, err := os.Stat(filePath)
+	if err != nil || now.Sub(info.ModTime()) <= maxAge {
+		return
+	}
+	if _, active := activeDiskCacheFiles.Load(filePath); active {
+		return
+	}
+	if err = os.Remove(filePath); err == nil {
+		DecrementDiskFiles(info.Size())
+	}
 }
 
 // StartDiskCacheCleanup periodically removes files left behind by interrupted
@@ -145,9 +187,11 @@ func CleanupOldDiskCacheFiles(maxAge time.Duration) error {
 // by Close; the age window is deliberately longer than supported long tasks.
 func StartDiskCacheCleanup() {
 	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
+		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
+			now := time.Now()
+			_ = os.Chtimes(GetDiskCacheDir(), now, now)
 			if err := CleanupOldDiskCacheFiles(diskCacheOrphanMaxAge); err != nil {
 				SysError("failed to clean orphaned disk cache files: " + err.Error())
 				continue
@@ -159,28 +203,28 @@ func StartDiskCacheCleanup() {
 
 // GetDiskCacheInfo 获取磁盘缓存目录信息
 func GetDiskCacheInfo() (fileCount int, totalSize int64, err error) {
-	dir := GetDiskCacheDir()
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, 0, nil
+	err = filepath.WalkDir(getDiskCacheRootDir(), func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
 		}
-		return 0, 0, err
-	}
-
-	for _, entry := range entries {
 		if entry.IsDir() {
-			continue
+			return nil
 		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return nil
 		}
 		fileCount++
 		totalSize += info.Size()
+		return nil
+	})
+	if os.IsNotExist(err) {
+		err = nil
 	}
-	return fileCount, totalSize, nil
+	return
 }
 
 // ShouldUseDiskCache 判断是否应该使用磁盘缓存

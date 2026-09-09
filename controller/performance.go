@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -27,7 +28,9 @@ type PerformanceStats struct {
 	// 磁盘空间信息
 	DiskSpaceInfo common.DiskSpaceInfo `json:"disk_space_info"`
 	// 配置信息
-	Config PerformanceConfig `json:"config"`
+	Config       PerformanceConfig    `json:"config"`
+	SystemStatus common.SystemStatus  `json:"system_status"`
+	HTTPStats    middleware.StatsInfo `json:"http_stats"`
 }
 
 // MemoryStats 内存统计
@@ -143,6 +146,8 @@ func GetPerformanceStats(c *gin.Context) {
 		DiskCacheInfo: diskCacheInfo,
 		DiskSpaceInfo: diskSpaceInfo,
 		Config:        config,
+		SystemStatus:  systemStatus,
+		HTTPStats:     middleware.GetStats(),
 	}
 
 	c.JSON(http.StatusOK, gin.H{

@@ -12,6 +12,7 @@ func SetVideoRouter(router *gin.Engine) {
 	videoSharedRouter.Use(middleware.RouteTag("relay"))
 	videoSharedRouter.Use(middleware.TokenAuth())
 	videoSharedRouter.Use(middleware.SystemPerformanceCheck())
+	videoSharedRouter.Use(middleware.RelayAdmission())
 	videoSharedRouter.POST(
 		"/video/generations",
 		middleware.PinTaskPluginEndpoint(),
@@ -25,7 +26,7 @@ func SetVideoRouter(router *gin.Engine) {
 
 	videoV1Router := router.Group("/v1")
 	videoV1Router.Use(middleware.RouteTag("relay"))
-	videoV1Router.Use(middleware.TokenAuth(), middleware.Distribute())
+	videoV1Router.Use(middleware.TokenAuth(), middleware.RelayAdmission(), middleware.Distribute())
 	{
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
 		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)

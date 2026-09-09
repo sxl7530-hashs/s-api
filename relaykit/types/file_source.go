@@ -156,7 +156,8 @@ type CachedFileData struct {
 	diskClosed      bool       // 是否已关闭/清理
 	statDecremented bool       // 是否已扣减统计
 
-	OnClose func(size int64)
+	OnClose  func(size int64)
+	OnRemove func(path string) error
 }
 
 func NewMemoryCachedData(base64Data string, mimeType string, size int64) *CachedFileData {
@@ -221,7 +222,12 @@ func (c *CachedFileData) Close() error {
 
 	c.diskClosed = true
 	if c.diskPath != "" {
-		err := os.Remove(c.diskPath)
+		var err error
+		if c.OnRemove != nil {
+			err = c.OnRemove(c.diskPath)
+		} else {
+			err = os.Remove(c.diskPath)
+		}
 		if err == nil && !c.statDecremented && c.OnClose != nil {
 			c.OnClose(c.DiskSize)
 			c.statDecremented = true

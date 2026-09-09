@@ -7,7 +7,6 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 // BodyStorage 请求体存储接口
@@ -141,14 +140,14 @@ func newDiskStorage(data []byte, cachePath string) (*diskStorage, error) {
 	n, err := file.Write(data)
 	if err != nil {
 		file.Close()
-		os.Remove(filePath)
+		RemoveDiskCacheFile(filePath)
 		return nil, fmt.Errorf("failed to write to temp file: %w", err)
 	}
 
 	// 重置文件指针
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		file.Close()
-		os.Remove(filePath)
+		RemoveDiskCacheFile(filePath)
 		return nil, fmt.Errorf("failed to seek temp file: %w", err)
 	}
 
@@ -173,20 +172,20 @@ func newDiskStorageFromReader(reader io.Reader, maxBytes int64, cachePath string
 	written, err := io.Copy(file, io.LimitReader(reader, maxBytes+1))
 	if err != nil {
 		file.Close()
-		os.Remove(filePath)
+		RemoveDiskCacheFile(filePath)
 		return nil, fmt.Errorf("failed to write to temp file: %w", err)
 	}
 
 	if written > maxBytes {
 		file.Close()
-		os.Remove(filePath)
+		RemoveDiskCacheFile(filePath)
 		return nil, ErrRequestBodyTooLarge
 	}
 
 	// 重置文件指针
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		file.Close()
-		os.Remove(filePath)
+		RemoveDiskCacheFile(filePath)
 		return nil, fmt.Errorf("failed to seek temp file: %w", err)
 	}
 
@@ -222,7 +221,7 @@ func (d *diskStorage) Close() error {
 	defer d.mu.Unlock()
 	if atomic.CompareAndSwapInt32(&d.closed, 0, 1) {
 		d.file.Close()
-		os.Remove(d.filePath)
+		RemoveDiskCacheFile(d.filePath)
 		DecrementDiskFiles(d.size)
 	}
 	return nil
@@ -400,5 +399,5 @@ func NewReplayableBodyReader(storage BodyStorage) ReplayableBody {
 // CleanupOldCacheFiles 清理旧的缓存文件（用于启动时清理残留）
 func CleanupOldCacheFiles() {
 	// 使用统一的缓存管理
-	CleanupOldDiskCacheFiles(5 * time.Minute)
+	CleanupOldDiskCacheFiles(diskCacheOrphanMaxAge)
 }

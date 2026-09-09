@@ -79,10 +79,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	defer service.CloseResponseBodyGracefully(resp)
 
 	var usage = &dto.Usage{}
-	var responseTextBuilder service.ResponseAccumulator
-	defer responseTextBuilder.Close()
-	responseTokens := service.NewTokenEstimator(info.UpstreamModelName)
-	useIncrementalEstimate := !common.IsOpenAITextModel(info.UpstreamModelName)
+	responseTokens := service.NewStreamingTokenCounter(info.UpstreamModelName)
 	imageCounter := &relaycommon.ImageGenerationCallCounter{}
 	imageCommitted := false
 
@@ -111,9 +108,6 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 					}
 					// A completed provider usage is authoritative; release the
 					// fallback text buffer before the handler returns.
-					if usage.CompletionTokens > 0 {
-						_ = responseTextBuilder.Close()
-					}
 					if streamResponse.Response.Usage.InputTokensDetails != nil {
 						usage.PromptTokensDetails.CachedTokens = streamResponse.Response.Usage.InputTokensDetails.CachedTokens
 						usage.PromptTokensDetails.CacheWriteTokens = streamResponse.Response.Usage.InputTokensDetails.CacheWriteTokens
@@ -145,11 +139,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		case "response.output_text.delta":
 			// 处理输出文本
-			if useIncrementalEstimate {
-				responseTokens.WriteString(streamResponse.Delta)
-			} else {
-				responseTextBuilder.WriteString(streamResponse.Delta)
-			}
+			responseTokens.WriteString(streamResponse.Delta)
 		case dto.ResponsesOutputTypeItemDone:
 			if streamResponse.Item != nil {
 				switch streamResponse.Item.Type {
@@ -169,23 +159,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	})
 
 	if usage.CompletionTokens == 0 {
-		if useIncrementalEstimate {
-			usage.CompletionTokens = responseTokens.Tokens()
-		} else {
-			if accErr := responseTextBuilder.Err(); accErr != nil {
-				return nil, types.NewError(accErr, types.ErrorCodeCountTokenFailed)
-			}
-			// 计算输出文本的 token 数量
-			tempStr, readErr := responseTextBuilder.String()
-			if readErr != nil {
-				return nil, types.NewError(readErr, types.ErrorCodeCountTokenFailed)
-			}
-			if len(tempStr) > 0 {
-				// 非正常结束，使用输出文本的 token 数量
-				completionTokens := service.CountTextToken(tempStr, info.UpstreamModelName)
-				usage.CompletionTokens = completionTokens
-			}
+		completionTokens, err := responseTokens.Tokens()
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeCountTokenFailed)
 		}
+		usage.CompletionTokens = completionTokens
 	}
 
 	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {

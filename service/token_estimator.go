@@ -1,17 +1,70 @@
 package service
 
 import (
+	"context"
 	"io"
 	"math"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 type TokenEstimator struct {
 	m               multipliers
 	count           float64
 	currentWordType int
+}
+
+type StreamingTokenCounter struct {
+	estimator *TokenEstimator
+	exact     *strings.Builder
+	model     string
+	bytes     int
+	openAI    bool
+}
+
+func NewStreamingTokenCounter(model string) *StreamingTokenCounter {
+	counter := &StreamingTokenCounter{
+		estimator: NewTokenEstimator(model),
+		model:     model,
+	}
+	if common.IsOpenAITextModel(model) {
+		counter.openAI = true
+		counter.exact = &strings.Builder{}
+	}
+	return counter
+}
+
+func (c *StreamingTokenCounter) WriteString(text string) (int, error) {
+	c.bytes += len(text)
+	_, _ = c.estimator.WriteString(text)
+	if c.exact != nil {
+		if c.exact.Len()+len(text) <= exactTokenizerTextLimit {
+			return c.exact.WriteString(text)
+		}
+		c.exact = nil
+	}
+	return len(text), nil
+}
+
+func (c *StreamingTokenCounter) Tokens() (int, error) {
+	if c.exact != nil {
+		return CountTextTokenContext(context.Background(), c.exact.String(), c.model)
+	}
+	tokens := c.estimator.Tokens()
+	if c.openAI {
+		byteFloor := (c.bytes + 7) / 8
+		if byteFloor > tokens {
+			tokens = byteFloor
+		}
+	}
+	return tokens, nil
+}
+
+func (c *StreamingTokenCounter) UsesExactTokenizer() bool {
+	return c.exact != nil
 }
 
 func (e *TokenEstimator) WriteString(text string) (int, error) {
