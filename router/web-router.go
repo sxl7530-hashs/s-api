@@ -1,7 +1,7 @@
 package router
 
 import (
-	"embed"
+	"io/fs"
 	"net/http"
 	"strings"
 
@@ -15,12 +15,35 @@ import (
 
 // WebAssets holds the embedded dashboard frontend assets.
 type WebAssets struct {
-	BuildFS   embed.FS
-	IndexPage []byte
+	BuildFS          fs.FS
+	IndexPage        []byte
+	ClassicBuildFS   fs.FS
+	ClassicIndexPage []byte
 }
 
 func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.HandlerFunc) {
 	frontendFS := common.EmbedFolder(assets.BuildFS, "web/dist")
+	classicFS := common.EmbedFolder(assets.ClassicBuildFS, "web/classic/dist")
+	classicFileServer := http.StripPrefix("/classic", http.FileServer(classicFS))
+	classicHandlers := []gin.HandlerFunc{
+		middleware.RouteTag("web"),
+		gzip.Gzip(gzip.DefaultCompression),
+		middleware.GlobalWebRateLimit(),
+		middleware.Cache(),
+		func(c *gin.Context) {
+			filePath := strings.TrimPrefix(c.Request.URL.Path, "/classic")
+			if filePath != "" && filePath != "/" && classicFS.Exists("", filePath) {
+				classicFileServer.ServeHTTP(c.Writer, c.Request)
+				return
+			}
+			c.Header("Cache-Control", "no-cache")
+			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.ClassicIndexPage)
+		},
+	}
+	router.GET("/classic", classicHandlers...)
+	router.GET("/classic/*filepath", classicHandlers...)
+	router.HEAD("/classic", classicHandlers...)
+	router.HEAD("/classic/*filepath", classicHandlers...)
 
 	router.NoRoute(
 		pluginDispatcher,

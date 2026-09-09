@@ -15,6 +15,7 @@
     "dist",
     "build",
     "coverage",
+    "classic",
     ".tanstack",
     ".eslintrc.cjs",
     "src/components/ui",
