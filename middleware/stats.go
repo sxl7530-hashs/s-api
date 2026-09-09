@@ -30,16 +30,12 @@ func StatsMiddleware() gin.HandlerFunc {
 
 // StatsInfo 统计信息结构
 type StatsInfo struct {
-	ActiveConnections  int64               `json:"active_connections"`
-	RelayAdmission     RelayAdmissionStats `json:"relay_admission"`
-	RelayAdmissionLoad int                 `json:"relay_admission_load"`
+	ActiveConnections int64 `json:"active_connections"`
 }
 
 // GetStats 获取统计信息
 func GetStats() StatsInfo {
 	return StatsInfo{
-		ActiveConnections:  atomic.LoadInt64(&globalStats.activeConnections),
-		RelayAdmission:     GetRelayAdmissionStats(),
-		RelayAdmissionLoad: RelayAdmissionLoad(),
+		ActiveConnections: atomic.LoadInt64(&globalStats.activeConnections),
 	}
 }

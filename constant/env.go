@@ -12,13 +12,6 @@ var GetMediaTokenNotStream bool
 var UpdateTask bool
 var MaxRequestBodyMB int
 var AnonymousRequestBodyLimitKB int
-var RelayLightConcurrency int
-var RelayLightQueue int
-var RelayHeavyConcurrencyUnits int
-var RelayHeavyQueue int
-var RelayHeavyThresholdMB int
-var RelayAdmissionWaitMilliseconds int
-var RelayAdmissionRetryAfterSeconds int
 var AzureDefaultAPIVersion string
 var NotifyLimitCount int
 var NotificationLimitDurationMinute int
