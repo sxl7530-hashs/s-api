@@ -39,6 +39,8 @@ jobs:
         run: |
           mkdir -p web/dist
           touch web/dist/index.html
+          mkdir -p web/classic/dist
+          touch web/classic/dist/index.html
 
       - name: Vet root module
         run: go vet ./...

@@ -46,50 +46,6 @@ body {
   flex-direction: column;
 }
 
-.classic-frontend-deprecation-banner {
-  flex: 0 0 auto;
-  margin-top: 64px;
-  padding: 8px 12px 0;
-}
-
-.classic-frontend-deprecation-banner-inner {
-  position: relative;
-}
-
-.classic-frontend-deprecation-banner .semi-banner {
-  border-radius: 8px;
-}
-
-.classic-frontend-deprecation-body {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-right: 32px;
-}
-
-.classic-frontend-deprecation-body > span {
-  min-width: 0;
-}
-
-.classic-frontend-deprecation-close {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-}
-
-@media (max-width: 767px) {
-  .classic-frontend-deprecation-banner {
-    padding: 8px 8px 0;
-  }
-
-  .classic-frontend-deprecation-body {
-    align-items: flex-start;
-    flex-direction: column;
-    padding-right: 24px;
-  }
-}
-
 .classic-page-fill {
   flex: 1 0 auto;
   min-height: 100%;
@@ -1089,7 +1045,9 @@ html.dark .with-pastel-balls::before {
   }
 }
 
-.ec-dbcd0a3c01b55203 { forced-color-adjust: auto; }
+.ec-dbcd0a3c01b55203 {
+  forced-color-adjust: auto;
+}
 
 /* 公告内容主题色适配 */
 .notice-themed-content,

@@ -28,13 +28,7 @@ import {
   Space,
   Card,
 } from '@douyinfe/semi-ui';
-import {
-  API,
-  confirmSwitchToDefaultFrontend,
-  showError,
-  showSuccess,
-  timestamp2string,
-} from '../../helpers';
+import { API, showError, showSuccess, timestamp2string } from '../../helpers';
 import { marked } from 'marked';
 import { useTranslation } from 'react-i18next';
 import { StatusContext } from '../../context/Status';
@@ -88,7 +82,6 @@ const OtherSetting = () => {
     About: false,
     Footer: false,
     CheckUpdate: false,
-    FrontendTheme: false,
   });
   const handleInputChange = async (value, e) => {
     const name = e.target.id;
@@ -286,17 +279,6 @@ const OtherSetting = () => {
     }
   };
 
-  const switchToDefaultFrontend = () => {
-    confirmSwitchToDefaultFrontend(t, {
-      onLoadingChange: (loading) => {
-        setLoadingInput((loadingInput) => ({
-          ...loadingInput,
-          FrontendTheme: loading,
-        }));
-      },
-    });
-  };
-
   const getOptions = async () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
@@ -360,12 +342,6 @@ const OtherSetting = () => {
                       loading={loadingInput['CheckUpdate']}
                     >
                       {t('检查更新')}
-                    </Button>
-                    <Button
-                      onClick={switchToDefaultFrontend}
-                      loading={loadingInput['FrontendTheme']}
-                    >
-                      {t('切换到新版前端')}
                     </Button>
                   </Space>
                 </Col>
