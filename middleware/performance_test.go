@@ -73,6 +73,8 @@ func TestRelayAdmissionSeparatesHeavyRequestsAndBoundsQueue(t *testing.T) {
 	router.POST("/v1/audio/transcriptions", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
 	lightRequest := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+	lightRequest.Header.Set("Content-Type", "application/json")
+	lightRequest.ContentLength = -1
 	lightResponse := httptest.NewRecorder()
 	router.ServeHTTP(lightResponse, lightRequest)
 	assert.Equal(t, http.StatusNoContent, lightResponse.Code)
@@ -92,29 +94,62 @@ func TestRelayAdmissionSeparatesHeavyRequestsAndBoundsQueue(t *testing.T) {
 	assert.Contains(t, claudeResponse.Body.String(), `"type":"new_api_error"`)
 }
 
-func TestRelayAdmissionWeightsUnknownLengthAtMaximumRequestSize(t *testing.T) {
+func TestRelayAdmissionClassifiesUnknownAndMediaRequests(t *testing.T) {
+	previousLightConcurrency := constant.RelayLightConcurrency
+	previousLightQueue := constant.RelayLightQueue
 	previousHeavyConcurrency := constant.RelayHeavyConcurrencyUnits
 	previousHeavyQueue := constant.RelayHeavyQueue
 	previousThreshold := constant.RelayHeavyThresholdMB
-	previousMaxRequest := constant.MaxRequestBodyMB
 	t.Cleanup(func() {
+		constant.RelayLightConcurrency = previousLightConcurrency
+		constant.RelayLightQueue = previousLightQueue
 		constant.RelayHeavyConcurrencyUnits = previousHeavyConcurrency
 		constant.RelayHeavyQueue = previousHeavyQueue
 		constant.RelayHeavyThresholdMB = previousThreshold
-		constant.MaxRequestBodyMB = previousMaxRequest
+		lightRelayPool.Store(nil)
 		heavyRelayPool.Store(nil)
 	})
+	constant.RelayLightConcurrency = 4096
+	constant.RelayLightQueue = 1024
 	constant.RelayHeavyConcurrencyUnits = 64
-	constant.RelayHeavyQueue = 1
+	constant.RelayHeavyQueue = 128
 	constant.RelayHeavyThresholdMB = 8
-	constant.MaxRequestBodyMB = 128
+	lightRelayPool.Store(nil)
 	heavyRelayPool.Store(nil)
 
-	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(nil))
-	request.ContentLength = -1
-	pool, weight := relayAdmissionPoolFor(request)
-	require.NotNil(t, pool)
-	assert.EqualValues(t, 16, weight)
+	tests := []struct {
+		name          string
+		path          string
+		contentType   string
+		contentLength int64
+		heavy         bool
+		weight        int64
+	}{
+		{name: "chunked JSON chat remains light", path: "/v1/chat/completions", contentType: "application/json", contentLength: -1, weight: 1},
+		{name: "chunked multipart upload remains light", path: "/v1/audio/transcriptions", contentType: "multipart/form-data; boundary=test", contentLength: -1, weight: 1},
+		{name: "chunked binary upload remains light", path: "/v1/tasks/upload", contentType: "application/octet-stream", contentLength: -1, weight: 1},
+		{name: "known large JSON uses size weight", path: "/v1/chat/completions", contentType: "application/json", contentLength: 20 << 20, heavy: true, weight: 3},
+		{name: "small audio route remains heavy", path: "/v1/audio/speech", contentType: "application/json", contentLength: 1024, heavy: true, weight: 1},
+		{name: "chunked legacy image edit remains light", path: "/v1/edits", contentType: "application/json", contentLength: -1, weight: 1},
+		{name: "known legacy image edit remains heavy", path: "/v1/edits", contentType: "application/json", contentLength: 1024, heavy: true, weight: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, tt.path, bytes.NewReader(nil))
+			request.Header.Set("Content-Type", tt.contentType)
+			request.ContentLength = tt.contentLength
+
+			pool, weight := relayAdmissionPoolFor(request)
+			require.NotNil(t, pool)
+			if tt.heavy {
+				assert.Same(t, heavyRelayPool.Load(), pool)
+			} else {
+				assert.Same(t, lightRelayPool.Load(), pool)
+			}
+			assert.Equal(t, tt.weight, weight)
+		})
+	}
 }
 
 func TestRelayAdmissionLoadUsesMostSaturatedPool(t *testing.T) {

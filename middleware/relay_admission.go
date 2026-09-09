@@ -97,9 +97,6 @@ func relayAdmissionPoolFor(request *http.Request) (*relayAdmissionPool, int64) {
 		weight := int64(1)
 		if size > 0 {
 			weight = int64(math.Ceil(float64(size) / float64(unitBytes)))
-		} else if size < 0 {
-			maxRequestBytes := int64(max(constant.MaxRequestBodyMB, constant.RelayHeavyThresholdMB)) << 20
-			weight = int64(math.Ceil(float64(maxRequestBytes) / float64(unitBytes)))
 		}
 		return pool, weight
 	}
@@ -123,12 +120,22 @@ func loadRelayAdmissionPool(target *atomic.Pointer[relayAdmissionPool], limit, q
 }
 
 func isHeavyRelayRequest(request *http.Request) (bool, int64) {
+	if request.ContentLength < 0 {
+		return false, request.ContentLength
+	}
 	threshold := int64(max(constant.RelayHeavyThresholdMB, 1)) << 20
-	if request.ContentLength < 0 || request.ContentLength >= threshold {
+	if request.ContentLength >= threshold {
 		return true, request.ContentLength
 	}
 	contentType := strings.ToLower(request.Header.Get("Content-Type"))
-	if strings.HasPrefix(contentType, "multipart/") {
+	if strings.HasPrefix(contentType, "multipart/") ||
+		strings.HasPrefix(contentType, "audio/") ||
+		strings.HasPrefix(contentType, "image/") ||
+		strings.HasPrefix(contentType, "video/") ||
+		strings.HasPrefix(contentType, "application/octet-stream") ||
+		strings.HasPrefix(contentType, "application/pdf") ||
+		strings.HasPrefix(contentType, "application/zip") ||
+		strings.HasPrefix(contentType, "application/gzip") {
 		return true, request.ContentLength
 	}
 	path := request.URL.Path
@@ -136,6 +143,9 @@ func isHeavyRelayRequest(request *http.Request) (bool, int64) {
 		if strings.Contains(path, marker) {
 			return true, request.ContentLength
 		}
+	}
+	if path == "/v1/edits" {
+		return true, request.ContentLength
 	}
 	return false, request.ContentLength
 }
