@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { Settings2 } from 'lucide-react'
+import { Network, Settings2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
@@ -88,7 +88,10 @@ export function Channels() {
     <ChannelsProvider>
       <SectionPageLayout fixedContent>
         <SectionPageLayout.Title>
-          <span className='flex min-w-0 items-center gap-2'>
+          <span className='flex min-w-0 items-center gap-3'>
+            <span className='flex size-8 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/8 text-primary shadow-[inset_0_1px_0_rgb(255_255_255_/_0.55)]'>
+              <Network className='size-4' aria-hidden='true' />
+            </span>
             <span className='truncate'>{t('Channels')}</span>
             {retryBadge}
           </span>
@@ -97,7 +100,9 @@ export function Channels() {
           <ChannelsPrimaryButtons />
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
-          <ChannelsTable />
+          <div className='h-full min-h-0'>
+            <ChannelsTable />
+          </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>
 

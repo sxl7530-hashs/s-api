@@ -108,7 +108,7 @@ export function ChannelsPrimaryButtons() {
     <>
       <div className='flex items-center gap-2'>
         {/* Desktop: Toggle switches visible */}
-        <div className='hidden items-center gap-2 rounded-md border px-3 py-1.5 sm:flex'>
+        <div className='hidden items-center gap-2 border-r border-border/70 pr-3 sm:flex'>
           <ListChecks className='text-muted-foreground h-4 w-4' />
           <Label
             htmlFor='channel-batch-mode'
@@ -123,7 +123,7 @@ export function ChannelsPrimaryButtons() {
           />
         </div>
 
-        <div className='hidden items-center gap-2 rounded-md border px-3 py-1.5 sm:flex'>
+        <div className='hidden items-center gap-2 border-r border-border/70 pr-3 sm:flex'>
           <Tags className='text-muted-foreground h-4 w-4' />
           <Label htmlFor='tag-mode' className='cursor-pointer text-sm'>
             {t('Tag Mode')}
@@ -135,7 +135,7 @@ export function ChannelsPrimaryButtons() {
           />
         </div>
 
-        <div className='hidden items-center gap-2 rounded-md border px-3 py-1.5 sm:flex'>
+        <div className='hidden items-center gap-2 border-r border-border/70 pr-3 sm:flex'>
           <SortAsc className='text-muted-foreground h-4 w-4' />
           <Label htmlFor='id-sort' className='cursor-pointer text-sm'>
             {t('Sort by ID')}
@@ -159,7 +159,9 @@ export function ChannelsPrimaryButtons() {
               size='sm'
               disabled={!canEditSensitive}
             >
-              <Plus className='h-4 w-4' />
+              <span className='flex size-5 items-center justify-center rounded-md bg-white/15'>
+                <Plus className='h-3.5 w-3.5' />
+              </span>
               <span className='max-sm:hidden'>{t('Create Channel')}</span>
               <span className='sm:hidden'>{t('Create')}</span>
             </Button>

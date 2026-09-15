@@ -85,8 +85,8 @@ function PulseCard(props: {
   children: React.ReactNode
 }) {
   return (
-    <div className='bg-card overflow-hidden rounded-lg border'>
-      <header className='border-b px-4 py-3'>
+    <div className='bg-card overflow-hidden rounded-2xl border border-emerald-900/12 shadow-[0_14px_32px_-28px_rgba(6,78,59,0.55)]'>
+      <header className='border-b border-emerald-900/10 bg-emerald-950/[0.025] px-4 py-3.5'>
         <h3 className='text-foreground inline-flex items-center gap-2 text-sm font-semibold'>
           {props.icon}
           {props.title}

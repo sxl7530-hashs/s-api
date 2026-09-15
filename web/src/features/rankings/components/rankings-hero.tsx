@@ -42,12 +42,16 @@ export function RankingsHero(props: RankingsHeroProps) {
   const { t } = useTranslation()
 
   return (
-    <section className='space-y-5'>
-      <div className='space-y-2'>
+    <section className='relative space-y-5 overflow-hidden rounded-2xl border border-emerald-900/12 bg-card/75 px-5 py-5 shadow-[0_18px_40px_-32px_rgba(6,78,59,0.6)] sm:px-7 sm:py-7'>
+      <div className='absolute top-0 right-0 h-32 w-64 bg-[radial-gradient(ellipse_at_top_right,rgba(16,185,129,0.16),transparent_68%)]' aria-hidden='true' />
+      <div className='relative space-y-2'>
+        <p className='font-mono text-[10px] font-semibold tracking-[0.2em] text-primary uppercase'>
+          {t('Usage')}
+        </p>
         <h1 className='text-[clamp(1.75rem,4vw,2.5rem)] leading-[1.15] font-bold tracking-tight'>
           {t('Rankings')}
         </h1>
-        <p className='text-muted-foreground/80 max-w-2xl text-sm'>
+        <p className='text-muted-foreground max-w-2xl text-sm'>
           {t(
             'Discover the most-used models and rising vendors on the platform, updated from live usage data.'
           )}
@@ -58,7 +62,7 @@ export function RankingsHero(props: RankingsHeroProps) {
       <div
         role='tablist'
         aria-label={t('Period')}
-        className='border-border/60 flex items-center border-b'
+        className='relative z-10 flex items-center gap-1 border-b border-emerald-900/12'
       >
         {PERIODS.map((p) => {
           const isActive = props.period === p.id
@@ -80,7 +84,7 @@ export function RankingsHero(props: RankingsHeroProps) {
               <span
                 aria-hidden
                 className={cn(
-                  'bg-foreground absolute inset-x-3 -bottom-px h-[2px] rounded-full transition-opacity',
+                  'bg-primary absolute inset-x-3 -bottom-px h-[2px] rounded-full transition-opacity',
                   isActive ? 'opacity-100' : 'opacity-0'
                 )}
               />

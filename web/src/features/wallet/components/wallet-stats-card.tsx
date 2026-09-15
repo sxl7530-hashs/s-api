@@ -34,7 +34,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
   const { t } = useTranslation()
   if (props.loading) {
     return (
-      <div className='grid grid-cols-3 divide-x rounded-lg border'>
+      <div className='grid grid-cols-3 divide-x divide-border/70 rounded-xl border border-border/70 bg-card shadow-sm'>
         {['balance', 'usage', 'requests'].map((key) => (
           <div key={key} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
             <Skeleton className='h-3.5 w-full' />
@@ -77,19 +77,19 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
   ]
 
   return (
-    <div className='grid grid-cols-3 divide-x rounded-lg border'>
+    <div className='grid grid-cols-3 divide-x divide-border/70 rounded-xl border border-border/70 bg-linear-to-br from-card via-card to-primary/5 shadow-sm'>
       {stats.map((item) => (
-        <div key={item.label} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
+        <div key={item.label} className='min-w-0 px-2.5 py-3 sm:px-5 sm:py-5'>
           <div className='flex items-center gap-1.5 sm:gap-2.5'>
             <IconBadge tone={item.tone} size='stat'>
               <item.icon />
             </IconBadge>
-            <div className='text-muted-foreground truncate text-[11px] font-medium tracking-wider uppercase sm:text-xs'>
+            <div className='text-muted-foreground truncate text-[10px] font-semibold tracking-wider uppercase sm:text-xs'>
               {item.label}
             </div>
           </div>
 
-          <div className='text-foreground mt-1.5 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:mt-2.5 sm:text-2xl'>
+          <div className='text-foreground mt-1.5 font-mono text-lg font-bold tracking-tight break-all tabular-nums sm:mt-2.5 sm:text-2xl'>
             {item.value}
           </div>
           <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>

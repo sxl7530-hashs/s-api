@@ -148,7 +148,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             )
           })}
           {cardExamplePrice && (
-            <span className='text-muted-foreground/70 min-w-0 max-w-full truncate text-xs'>
+          <span className='text-muted-foreground min-w-0 max-w-full truncate text-xs'>
               {cardExamplePrice.label} ≈ {cardExamplePrice.formatted}
             </span>
           )}
@@ -317,12 +317,12 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             </span>
           ))}
           {!dynamicSummary?.isTaskUsage && !isUnconfiguredTaskUsage && (
-            <span className='text-muted-foreground/50 text-xs'>
+            <span className='text-muted-foreground/80 text-xs'>
               {tokenUnitLabel}
             </span>
           )}
           {hiddenCount > 0 && (
-            <span className='text-muted-foreground/40 text-xs'>
+            <span className='text-muted-foreground/70 text-xs'>
               +{hiddenCount}
             </span>
           )}

@@ -33,7 +33,7 @@ export function EmptyState(props: EmptyStateProps) {
 
   return (
     <div className='flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed px-6 py-12 text-center'>
-      <Search className='text-muted-foreground/40 mb-3 size-10' />
+      <Search className='text-muted-foreground/70 mb-3 size-10' />
 
       <h3 className='text-foreground mb-1 text-base font-semibold'>
         {t('No models found')}

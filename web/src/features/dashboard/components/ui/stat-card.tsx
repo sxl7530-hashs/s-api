@@ -257,7 +257,7 @@ export function StatCard(props: StatCardProps) {
   } else if (props.error) {
     valueContent = (
       <div className='flex flex-col gap-1'>
-        <div className='text-muted-foreground mt-0.5 font-mono text-base font-bold tracking-tight break-all tabular-nums sm:text-2xl'>
+        <div className='text-muted-foreground mt-0.5 font-mono text-lg font-bold tracking-tight break-all tabular-nums sm:text-2xl'>
           --
         </div>
         <p
@@ -273,7 +273,7 @@ export function StatCard(props: StatCardProps) {
   } else {
     valueContent = (
       <div className='flex flex-col gap-1'>
-        <div className='text-foreground font-mono text-base font-semibold tracking-tight break-all tabular-nums sm:text-2xl'>
+        <div className='text-foreground font-mono text-xl font-semibold tracking-tight break-all tabular-nums sm:text-3xl'>
           {props.value}
         </div>
         <p
@@ -300,12 +300,12 @@ export function StatCard(props: StatCardProps) {
   return (
     <div
       className={cn(
-        'group flex flex-col justify-between sm:min-h-32 sm:gap-3',
+        'group relative flex flex-col justify-between overflow-hidden sm:min-h-36 sm:gap-3',
         props.compactMobile ? 'gap-1' : 'gap-1.5'
       )}
     >
       <div className='flex items-start justify-between gap-1'>
-        <div className='text-muted-foreground flex items-center gap-1 text-[11px] font-medium sm:gap-2 sm:text-xs'>
+        <div className='text-muted-foreground flex items-center gap-2 text-xs font-medium sm:gap-2.5'>
           <IconBadge
             tone={iconTone}
             size='stat'

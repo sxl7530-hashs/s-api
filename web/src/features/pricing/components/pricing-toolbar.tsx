@@ -166,7 +166,7 @@ export function PricingToolbar(props: PricingToolbarProps) {
   )
 
   return (
-    <div className='rounded-xl border p-3'>
+    <div className='rounded-2xl border border-emerald-900/12 bg-card px-3 py-3 shadow-[0_14px_30px_-28px_rgba(6,78,59,0.6)] sm:px-4'>
       <div className='flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between'>
         <div className='flex items-center gap-2'>
           <Button
@@ -191,7 +191,7 @@ export function PricingToolbar(props: PricingToolbarProps) {
             </span>
             <span>{props.filteredCount === 1 ? t('model') : t('models')}</span>
             {props.hasActiveFilters && props.totalCount && (
-              <span className='text-muted-foreground/60 text-xs'>
+              <span className='text-muted-foreground/80 text-xs'>
                 / {props.totalCount.toLocaleString()}
               </span>
             )}

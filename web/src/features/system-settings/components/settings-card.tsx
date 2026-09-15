@@ -25,6 +25,7 @@ import {
   CardTitle,
   CardDescription,
 } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 
 type SettingsCardProps = {
   title: string
@@ -33,19 +34,28 @@ type SettingsCardProps = {
   className?: string
 }
 
-export const SettingsCard = memo(function SettingsCard({
-  title,
-  description,
-  children,
-  className,
-}: SettingsCardProps) {
+export const SettingsCard = memo(function SettingsCard(
+  props: SettingsCardProps
+) {
   return (
-    <Card className={className}>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        {description && <CardDescription>{description}</CardDescription>}
+    <Card
+      data-card-hover='false'
+      className={cn(
+        'gap-0 overflow-hidden rounded-2xl border-border/70 bg-card py-0 shadow-[0_14px_32px_-28px_rgba(6,78,59,0.6)]',
+        props.className
+      )}
+    >
+      <CardHeader className='border-b border-border/70 bg-[linear-gradient(90deg,color-mix(in_oklch,var(--primary)_8%,var(--card)),var(--card)_72%)] px-4 py-4 sm:px-5'>
+        <CardTitle className='text-[15px] font-semibold tracking-tight text-foreground'>
+          {props.title}
+        </CardTitle>
+        {props.description && (
+          <CardDescription className='max-w-3xl text-[13px] leading-relaxed text-muted-foreground'>
+            {props.description}
+          </CardDescription>
+        )}
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent className='bg-background/35 p-4 sm:p-5'>{props.children}</CardContent>
     </Card>
   )
 })

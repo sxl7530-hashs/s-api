@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
+import { Boxes, Plus } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -86,7 +86,14 @@ function ModelsContent() {
   return (
     <>
       <SectionPageLayout fixedContent>
-        <SectionPageLayout.Title>{t(meta.titleKey)}</SectionPageLayout.Title>
+        <SectionPageLayout.Title>
+          <span className='flex items-center gap-3'>
+            <span className='flex size-8 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/8 text-primary shadow-[inset_0_1px_0_rgb(255_255_255_/_0.55)]'>
+              <Boxes className='size-4' aria-hidden='true' />
+            </span>
+            <span>{t(meta.titleKey)}</span>
+          </span>
+        </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
           {activeSection === 'metadata' ? (
             <ModelsPrimaryButtons />
@@ -109,11 +116,13 @@ function ModelsContent() {
               </TabsList>
             </Tabs>
             <div className='min-h-0 flex-1'>
-              {activeSection === 'metadata' ? (
-                <ModelsTable />
-              ) : (
-                <DeploymentsSection />
-              )}
+              <div className='h-full min-h-0'>
+                {activeSection === 'metadata' ? (
+                  <ModelsTable />
+                ) : (
+                  <DeploymentsSection />
+                )}
+              </div>
             </div>
           </div>
         </SectionPageLayout.Content>

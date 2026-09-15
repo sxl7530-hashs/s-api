@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
+import { Activity } from 'lucide-react'
 import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -126,7 +127,12 @@ function UsageLogsContent() {
     <>
       <SectionPageLayout fixedContent>
         <SectionPageLayout.Title>
-          {t(pageMeta.titleKey)}
+          <span className='flex items-center gap-3'>
+            <span className='flex size-8 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/8 text-primary shadow-[inset_0_1px_0_rgb(255_255_255_/_0.55)]'>
+              <Activity className='size-4' aria-hidden='true' />
+            </span>
+            <span>{t(pageMeta.titleKey)}</span>
+          </span>
         </SectionPageLayout.Title>
         {canManageScope && (
           <SectionPageLayout.Actions>
@@ -152,7 +158,9 @@ function UsageLogsContent() {
               </Tabs>
             )}
             <div className='min-h-0 flex-1'>
-              <UsageLogsTable logCategory={activeCategory} />
+              <div className='h-full min-h-0'>
+                <UsageLogsTable logCategory={activeCategory} />
+              </div>
             </div>
           </div>
         </SectionPageLayout.Content>

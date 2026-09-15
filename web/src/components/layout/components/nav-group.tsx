@@ -65,8 +65,8 @@ export function NavGroup({ title, items }: NavGroupProps) {
   const href = useLocation({ select: (location) => location.href })
 
   return (
-    <SidebarGroup className='px-2 py-1'>
-      <SidebarGroupLabel className='text-muted-foreground/70 px-2 text-[11px] font-medium tracking-wider uppercase'>
+    <SidebarGroup className='px-2 py-1.5'>
+      <SidebarGroupLabel className='text-sidebar-foreground/50 px-2 text-[11px] font-semibold tracking-[0.14em] uppercase'>
         {title}
       </SidebarGroupLabel>
       <SidebarMenu>
@@ -126,6 +126,7 @@ function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
     <SidebarMenuItem>
       <SidebarMenuButton
         isActive={checkIsActive(href, item)}
+        className='text-sidebar-foreground/75 data-active:border-sidebar-primary/20 data-active:bg-sidebar-primary/15 data-active:text-sidebar-primary data-active:shadow-xs'
         tooltip={item.title}
         render={
           <Link
@@ -176,7 +177,13 @@ function SidebarMenuCollapsible({
     >
       <CollapsibleTrigger
         className='group/collapsible-trigger'
-        render={<SidebarMenuButton tooltip={item.title} />}
+        render={
+          <SidebarMenuButton
+            tooltip={item.title}
+            isActive={isSubItemActive}
+            className='data-active:border-primary/30 data-active:bg-primary/10 data-active:text-primary data-active:shadow-xs'
+          />
+        }
       >
         {item.icon && <item.icon className='shrink-0' />}
         <span className='min-w-0 flex-1 truncate'>{item.title}</span>

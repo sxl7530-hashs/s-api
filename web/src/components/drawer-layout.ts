@@ -29,25 +29,25 @@ export const sideDrawerContentClassName = (className?: string) =>
 
 export const sideDrawerHeaderClassName = (className?: string) =>
   cn(
-    'border-border/70 bg-background/95 border-b px-4 py-3 text-start backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:px-6 sm:py-4',
+    'border-border/70 bg-background/95 border-b px-4 py-4 text-start backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:px-7 sm:py-5',
     className
   )
 
 export const sideDrawerFormClassName = (className?: string) =>
   cn(
-    'flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5',
+    'flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto overscroll-contain px-4 py-5 sm:px-7 sm:py-6',
     className
   )
 
 export const sideDrawerFooterClassName = (className?: string) =>
   cn(
-    'border-border/70 bg-background/95 grid grid-cols-2 gap-2 border-t px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:flex sm:flex-row sm:justify-end sm:px-6 sm:py-4',
+    'border-border/70 bg-background/95 grid grid-cols-2 gap-2 border-t px-4 py-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:flex sm:flex-row sm:justify-end sm:px-7 sm:py-4',
     className
   )
 
 export const sideDrawerSectionClassName = (className?: string) =>
   cn(
-    'border-border/60 flex flex-col gap-4 border-b pb-6 last:border-b-0 last:pb-0',
+    'border-border/60 flex flex-col gap-4 border-b pb-7 last:border-b-0 last:pb-0',
     className
   )
 

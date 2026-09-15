@@ -96,11 +96,11 @@ export function AnnouncementsPanel() {
                     </p>
                     <div className='flex items-center justify-between'>
                       {item.publishDate && (
-                        <time className='text-muted-foreground/60 text-xs'>
+                        <time className='text-muted-foreground/75 text-xs'>
                           {formatDateTimeObject(new Date(item.publishDate))}
                         </time>
                       )}
-                      <span className='text-muted-foreground/40 text-xs opacity-0 transition-opacity group-hover:opacity-100'>
+                      <span className='text-muted-foreground/70 text-xs opacity-0 transition-opacity group-hover:opacity-100'>
                         {t('Click for details')}
                       </span>
                     </div>

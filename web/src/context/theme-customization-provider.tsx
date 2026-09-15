@@ -57,11 +57,13 @@ function readCookie<T extends string>(
 function applyAttribute(name: string, value: string | null) {
   if (typeof document === 'undefined') return
   const body = document.body
-  if (!body) return
-  if (value === null) {
-    body.removeAttribute(name)
-  } else {
-    body.setAttribute(name, value)
+  const root = document.documentElement
+  if (!body || !root) return
+  // Keep the attribute on both roots. Portaled surfaces inherit variables
+  // from the document root, while legacy theme selectors target the body.
+  for (const element of [root, body]) {
+    if (value === null) element.removeAttribute(name)
+    else element.setAttribute(name, value)
   }
 }
 

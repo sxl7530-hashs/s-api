@@ -235,8 +235,8 @@ export function SubscriptionPlansCard({
 
   if (loading) {
     return (
-      <Card data-card-hover='false' className='gap-0 overflow-hidden py-0'>
-        <CardHeader className='border-b p-3 !pb-3 sm:p-5 sm:!pb-5'>
+      <Card data-card-hover='false' className='gap-0 overflow-hidden rounded-xl border-border/70 bg-card shadow-sm py-0'>
+        <CardHeader className='border-b border-border/70 bg-muted/20 p-3 !pb-3 sm:p-5 sm:!pb-5'>
           <Skeleton className='h-6 w-32' />
         </CardHeader>
         <CardContent className='space-y-4 p-3 sm:p-5'>
@@ -266,7 +266,8 @@ export function SubscriptionPlansCard({
         contentClassName='space-y-4 sm:space-y-5'
       >
         {/* My subscriptions & billing preference */}
-        <div className='rounded-xl border p-3 sm:p-4'>
+        <div className='relative overflow-hidden rounded-2xl border border-primary/15 bg-linear-to-br from-primary/5 via-background to-muted/30 p-3.5 shadow-sm sm:p-5'>
+          <div className='pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-primary/10 blur-3xl' aria-hidden='true' />
           <div className='flex flex-wrap items-center justify-between gap-2.5 sm:gap-3'>
             <div className='flex min-w-0 flex-wrap items-center gap-2'>
               <span className='text-sm font-medium'>
@@ -446,8 +447,9 @@ export function SubscriptionPlansCard({
                   return (
                     <div
                       key={subscription?.id}
-                      className='bg-background rounded-md border p-3 text-xs'
+                      className='group relative overflow-hidden rounded-xl border border-border/70 bg-background/85 p-3.5 text-xs shadow-xs transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md sm:p-4'
                     >
+                      <div className={cn('absolute inset-y-0 left-0 w-1', isActive ? 'bg-emerald-500' : 'bg-muted-foreground/25')} aria-hidden='true' />
                       <div className='flex items-center justify-between'>
                         <div className='flex items-center gap-2'>
                           <span className='font-medium'>
@@ -550,7 +552,10 @@ export function SubscriptionPlansCard({
                 <Card
                   key={plan.id}
                   data-card-hover='false'
-                  className={cn(isPopular && 'border-primary/70 shadow-sm')}
+                  className={cn(
+                    'relative overflow-hidden rounded-2xl border-border/70 bg-linear-to-b from-background to-muted/20 transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg',
+                    isPopular && 'border-primary/70 shadow-md ring-1 ring-primary/20'
+                  )}
                 >
                   <CardContent className='flex h-full flex-col p-3.5 sm:p-4'>
                     <div className='mb-2 flex items-start justify-between gap-3'>
@@ -576,8 +581,8 @@ export function SubscriptionPlansCard({
                       )}
                     </div>
 
-                    <div className='py-2'>
-                      <span className='text-primary text-2xl font-bold'>
+                    <div className='rounded-xl bg-primary/5 px-3 py-2.5'>
+                      <span className='text-primary text-3xl font-bold tracking-tight'>
                         ${price}
                       </span>
                     </div>

@@ -17,7 +17,7 @@ export default defineConfig(({ envMode }) => {
 
   const isProd = envMode === 'production'
   const devProxy = Object.fromEntries(
-    (['/api', '/v1', '/mj', '/pg'] as const).map((key) => [
+    (['/api', '/v1', '/mj', '/pg', '/classic'] as const).map((key) => [
       key,
       { target: serverUrl, changeOrigin: true },
     ])
@@ -48,6 +48,30 @@ export default defineConfig(({ envMode }) => {
           name: 'vendor-tanstack',
           chunks: 'all',
           priority: 0,
+          enforce: true,
+        },
+        // Keep opt-in, data-heavy UI dependencies out of unrelated route
+        // chunks. These modules are used by charts, editors, and rich text
+        // views and should be fetched only when those features are opened.
+        'vendor-charts': {
+          test: /node_modules[\\/](?:@visactor|recharts)[\\/]/,
+          name: 'vendor-charts',
+          chunks: 'all',
+          priority: 5,
+          enforce: true,
+        },
+        'vendor-editors': {
+          test: /node_modules[\\/](?:@codemirror|yace|shiki)[\\/]/,
+          name: 'vendor-editors',
+          chunks: 'all',
+          priority: 5,
+          enforce: true,
+        },
+        'vendor-markdown': {
+          test: /node_modules[\\/](?:katex|marked)[\\/]/,
+          name: 'vendor-markdown',
+          chunks: 'all',
+          priority: 5,
           enforce: true,
         },
       },

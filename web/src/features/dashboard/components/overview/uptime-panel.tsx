@@ -134,7 +134,7 @@ export function UptimePanel() {
                   <h4 className='text-muted-foreground text-xs font-semibold tracking-wider uppercase'>
                     {group.categoryName}
                   </h4>
-                  <span className='text-muted-foreground/40 font-mono text-xs tabular-nums'>
+                  <span className='text-muted-foreground/70 font-mono text-xs tabular-nums'>
                     {group.monitors?.length || 0}
                   </span>
                 </div>
@@ -157,7 +157,7 @@ export function UptimePanel() {
                       <StatusDot status={monitor.status} />
                       <span className='truncate text-sm'>{monitor.name}</span>
                       {monitor.group && (
-                        <span className='text-muted-foreground/40 shrink-0 text-xs'>
+                        <span className='text-muted-foreground/70 shrink-0 text-xs'>
                           ({monitor.group})
                         </span>
                       )}

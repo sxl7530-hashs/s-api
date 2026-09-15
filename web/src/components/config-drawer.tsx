@@ -138,7 +138,7 @@ function SectionTitle(props: {
   return (
     <div
       className={cn(
-        'text-muted-foreground mb-2 flex items-center gap-2 text-sm font-semibold',
+        'text-foreground mb-3 flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] uppercase',
         props.className
       )}
     >
@@ -147,7 +147,7 @@ function SectionTitle(props: {
         <Button
           size='icon'
           variant='secondary'
-          className='size-4'
+          className='size-5 rounded-md'
           onClick={props.onReset}
           aria-label='Reset'
         >
@@ -256,7 +256,7 @@ function PresetConfig() {
       <Radio
         value={customization.preset}
         onValueChange={(v) => setPreset(v as ThemePreset)}
-        className='grid w-full grid-cols-4 gap-3'
+        className='grid w-full grid-cols-2 gap-3 sm:grid-cols-4'
         aria-label={t('Select color preset')}
       >
         {THEME_PRESETS.map((preset) => (
@@ -268,8 +268,8 @@ function PresetConfig() {
           >
             <div
               className={cn(
-                'ring-border relative h-12 rounded-md ring-[1px] transition',
-                'group-data-checked:ring-primary group-data-checked:shadow-md',
+                'ring-border relative h-14 overflow-hidden rounded-xl ring-[1px] transition-all',
+                'group-data-checked:ring-primary group-data-checked:shadow-[0_0_0_2px_color-mix(in_oklch,var(--primary)_18%,transparent)]',
                 'group-focus-visible:ring-2',
                 'group-hover:ring-primary/60'
               )}
@@ -351,8 +351,8 @@ function FontConfig() {
           >
             <div
               className={cn(
-                'ring-border relative h-12 rounded-md ring-[1px] transition',
-                'group-data-checked:ring-primary group-data-checked:shadow-md',
+                'ring-border relative h-14 rounded-xl ring-[1px] transition-all',
+                'group-data-checked:ring-primary group-data-checked:shadow-[0_0_0_2px_color-mix(in_oklch,var(--primary)_18%,transparent)]',
                 'group-focus-visible:ring-2',
                 'group-hover:ring-primary/60'
               )}
@@ -427,8 +427,8 @@ function RadiusConfig() {
           >
             <div
               className={cn(
-                'ring-border relative h-12 rounded-md ring-[1px] transition',
-                'group-data-checked:ring-primary group-data-checked:shadow-md',
+                'ring-border relative h-14 rounded-xl ring-[1px] transition-all',
+                'group-data-checked:ring-primary group-data-checked:shadow-[0_0_0_2px_color-mix(in_oklch,var(--primary)_18%,transparent)]',
                 'group-focus-visible:ring-2',
                 'group-hover:ring-primary/60'
               )}

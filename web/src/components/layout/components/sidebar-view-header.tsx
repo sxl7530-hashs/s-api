@@ -46,13 +46,13 @@ export function SidebarViewHeader(props: SidebarViewHeaderProps) {
   const { isMobile, setOpenMobile } = useSidebar()
 
   return (
-    <SidebarHeader className='border-sidebar-border border-b px-2 py-2'>
+    <SidebarHeader className='border-sidebar-border/70 border-b bg-sidebar/80 px-2 py-2'>
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
             tooltip={t(props.view.parent.label)}
             className={cn(
-              'text-muted-foreground hover:text-foreground',
+              'text-sidebar-foreground/60 hover:text-sidebar-foreground',
               'gap-1.5 font-medium'
             )}
             render={

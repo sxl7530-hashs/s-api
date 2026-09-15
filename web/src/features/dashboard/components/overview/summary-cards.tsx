@@ -250,12 +250,13 @@ export function SummaryCards() {
   })
 
   return (
-    <div className='bg-card overflow-hidden rounded-2xl border shadow-xs'>
+    <div className='from-card via-card to-primary/[0.08] bg-linear-to-br overflow-hidden rounded-2xl border border-border shadow-lg shadow-primary/5'>
       <div className='grid xl:grid-cols-[minmax(0,1fr)_19rem]'>
         <div className='flex flex-col gap-2.5 p-3 sm:gap-3 sm:p-5'>
           <div className='flex flex-wrap items-start justify-between gap-3'>
             <div className='flex flex-col gap-1'>
-              <h3 className='text-sm font-semibold sm:text-base'>
+              <h3 className='flex items-center gap-2 text-base font-semibold tracking-tight sm:text-lg'>
+                <span className='h-4 w-1 rounded-full bg-primary' aria-hidden='true' />
                 {t('Usage at a glance')}
               </h3>
               <p className='text-muted-foreground text-xs sm:text-sm'>
@@ -263,11 +264,17 @@ export function SummaryCards() {
               </p>
             </div>
           </div>
-          <StaggerContainer className='grid grid-cols-3 gap-1.5 sm:gap-3'>
-            {items.map((it) => (
+          <StaggerContainer className='grid grid-cols-1 gap-2.5 sm:grid-cols-12 sm:gap-3'>
+            {items.map((it, index) => (
               <StaggerItem
                 key={it.key}
-                className='bg-background/60 rounded-lg border px-2 py-1.5 sm:rounded-xl sm:p-3'
+                className={cn(
+                  'rounded-xl border border-border bg-background/85 px-3 py-2.5 shadow-xs transition-colors hover:border-primary/30 hover:bg-background sm:p-3',
+                  index === 0 && 'bg-primary/[0.08]',
+                  index === 0 && 'sm:col-span-5',
+                  index === 1 && 'sm:col-span-4',
+                  index === 2 && 'sm:col-span-3'
+                )}
               >
                 <StatCard
                   title={it.title}

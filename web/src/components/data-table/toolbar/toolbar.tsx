@@ -250,7 +250,7 @@ export function DataTableToolbar<TData>(props: DataTableToolbarProps<TData>) {
       onChange={handleSearchChange}
       onCompositionStart={handleSearchCompositionStart}
       onCompositionEnd={handleSearchCompositionEnd}
-      className='w-full sm:w-[200px] lg:w-[240px]'
+      className='h-9 w-full bg-background/80 sm:w-[200px] lg:w-[240px]'
     />
   )
 
@@ -343,7 +343,12 @@ export function DataTableToolbar<TData>(props: DataTableToolbarProps<TData>) {
 
   if (hasLeftActions) {
     return (
-      <div className={cn('flex flex-col gap-2', props.className)}>
+      <div
+        className={cn(
+          'flex flex-col gap-2 border-b border-border/70 px-0 pb-3 sm:gap-3',
+          props.className
+        )}
+      >
         <div className='flex flex-wrap items-center gap-2 sm:gap-3'>
           {props.customSearch !== undefined ? props.customSearch : searchInput}
           {props.additionalSearch}
@@ -376,7 +381,7 @@ export function DataTableToolbar<TData>(props: DataTableToolbarProps<TData>) {
   return (
     <div
       className={cn(
-        'flex flex-wrap items-center gap-2 sm:gap-3',
+        'flex flex-wrap items-center gap-2 border-b border-border/70 px-0 pb-3 sm:gap-3',
         props.className
       )}
     >

@@ -29,7 +29,9 @@ export function ApiKeysPrimaryButtons() {
   return (
     <div className='flex gap-2'>
       <Button size='sm' onClick={() => setOpen('create')}>
-        <Plus className='h-4 w-4' />
+        <span className='flex size-5 items-center justify-center rounded-md bg-white/15'>
+          <Plus className='h-3.5 w-3.5' />
+        </span>
         {t('Create API Key')}
       </Button>
     </div>

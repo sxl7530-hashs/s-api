@@ -120,13 +120,13 @@ export function ConsumptionDistributionChart(
   ].join('-')
 
   return (
-    <div className='overflow-hidden rounded-lg border'>
-      <div className='flex w-full flex-col gap-1.5 border-b px-3 py-2 sm:gap-3 sm:px-5 sm:py-3 lg:flex-row lg:items-center lg:justify-between'>
+    <div className='overflow-hidden rounded-2xl border border-border bg-card shadow-[0_14px_32px_-26px_rgba(0,0,0,0.16)]'>
+      <div className='flex w-full flex-col gap-2 border-b border-border bg-primary/[0.035] px-3 py-3 sm:px-5 sm:py-4 lg:flex-row lg:items-center lg:justify-between'>
         <div className='flex items-center gap-2'>
           <IconBadge tone='success' size='sm'>
             <WalletCards />
           </IconBadge>
-          <div className='text-sm font-semibold'>{t('Quota Distribution')}</div>
+          <div className='text-sm font-semibold tracking-tight'>{t('Quota Distribution')}</div>
           <span className='text-muted-foreground text-xs'>
             {t('Total:')} {chartData.totalQuotaDisplay}
           </span>
@@ -154,7 +154,7 @@ export function ConsumptionDistributionChart(
         </div>
       </div>
 
-      <div className='h-[300px] p-1.5 sm:h-96 sm:p-2'>
+      <div className='h-[300px] bg-[radial-gradient(circle_at_80%_0%,rgba(16,185,129,0.06),transparent_42%)] p-1.5 sm:h-96 sm:p-2'>
         {themeReady && spec && (
           <VChart
             key={chartKey}

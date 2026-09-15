@@ -49,7 +49,12 @@ export function DataTableHeader<TData>({
   const { t } = useTranslation()
 
   return (
-    <TableHeader className={className}>
+    <TableHeader
+      className={cn(
+        'bg-muted/35 [&_th]:text-xs [&_th]:font-semibold [&_th]:tracking-wide [&_th]:text-muted-foreground',
+        className
+      )}
+    >
       {table.getHeaderGroups().map((headerGroup) => (
         <TableRow key={headerGroup.id} className={rowClassName}>
           {headerGroup.headers.map((header) => (
