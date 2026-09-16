@@ -757,6 +757,87 @@ For commercial licensing, please contact support@quantumnous.com
 }
 
 /* Micro-interactions — Vercel-style subtle hover/active feedback */
+.dashboard-panel-header {
+  position: relative;
+}
+
+.dashboard-panel-header::after {
+  position: absolute;
+  right: 1.25rem;
+  bottom: -1px;
+  left: 1.25rem;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--primary) 30%, transparent),
+    transparent
+  );
+  content: '';
+  opacity: 0.65;
+}
+
+.dashboard-summary-shell {
+  position: relative;
+  isolation: isolate;
+}
+
+.dashboard-summary-shell::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 18%,
+    color-mix(in oklch, var(--primary) 7%, transparent) 48%,
+    transparent 76%
+  );
+  content: '';
+  opacity: 0.7;
+  transform: translateX(-18%);
+  animation: dashboard-summary-glint 11s cubic-bezier(0.32, 0.72, 0, 1)
+    infinite;
+  pointer-events: none;
+}
+
+.dashboard-summary-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-summary-shell::before {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+
+  .dashboard-panel,
+  .dashboard-summary-item {
+    transform: none !important;
+    transition: none !important;
+  }
+}
+
+.dashboard-stat-card .text-foreground {
+  text-shadow: 0 1px 0 color-mix(in oklch, var(--background) 70%, transparent);
+}
+
+@keyframes dashboard-summary-glint {
+  0%,
+  35% {
+    opacity: 0;
+    transform: translateX(-24%);
+  }
+  48% {
+    opacity: 0.7;
+  }
+  62%,
+  100% {
+    opacity: 0;
+    transform: translateX(24%);
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   [data-slot='card']:not([data-card-hover='false']) {
     transition:

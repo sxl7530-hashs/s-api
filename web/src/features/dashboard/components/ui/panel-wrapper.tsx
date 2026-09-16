@@ -42,15 +42,19 @@ function PanelHeader(props: {
 }) {
   const heading = (
     <div className='flex flex-col gap-1'>
-      <div className='text-[15px] font-semibold tracking-tight'>{props.title}</div>
+      <div className='text-[15px] font-semibold tracking-tight'>
+        {props.title}
+      </div>
       {props.description != null && (
-        <div className='text-muted-foreground text-[13px]'>{props.description}</div>
+        <div className='text-muted-foreground text-[13px]'>
+          {props.description}
+        </div>
       )}
     </div>
   )
 
   return (
-    <div className='border-b border-border/70 bg-muted/20 px-4 py-3.5 sm:px-5'>
+    <div className='dashboard-panel-header border-border/70 bg-muted/20 border-b px-4 py-3.5 sm:px-5'>
       {props.actions != null ? (
         <div className='flex items-start justify-between gap-2'>
           {heading}
@@ -68,7 +72,7 @@ export function PanelWrapper(props: PanelWrapperProps) {
   const resolvedEmptyMessage = props.emptyMessage ?? t('No data available')
   const height = props.height ?? 'h-64'
   const frameClassName = cn(
-    'overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm transition-shadow hover:shadow-md',
+    'dashboard-panel overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm transition-[transform,box-shadow,border-color] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:-translate-y-0.5 hover:border-primary/20 hover:shadow-lg hover:shadow-primary/5',
     props.className
   )
 

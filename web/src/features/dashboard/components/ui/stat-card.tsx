@@ -300,7 +300,7 @@ export function StatCard(props: StatCardProps) {
   return (
     <div
       className={cn(
-        'group relative flex flex-col justify-between overflow-hidden sm:min-h-36 sm:gap-3',
+        'dashboard-stat-card group relative flex flex-col justify-between overflow-hidden sm:min-h-36 sm:gap-3',
         props.compactMobile ? 'gap-1' : 'gap-1.5'
       )}
     >

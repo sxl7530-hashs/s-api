@@ -250,13 +250,16 @@ export function SummaryCards() {
   })
 
   return (
-    <div className='from-card via-card to-primary/[0.08] bg-linear-to-br overflow-hidden rounded-2xl border border-border shadow-lg shadow-primary/5'>
+    <div className='dashboard-summary-shell from-card via-card to-primary/[0.08] border-border shadow-primary/5 overflow-hidden rounded-2xl border bg-linear-to-br shadow-lg'>
       <div className='grid xl:grid-cols-[minmax(0,1fr)_19rem]'>
         <div className='flex flex-col gap-2.5 p-3 sm:gap-3 sm:p-5'>
           <div className='flex flex-wrap items-start justify-between gap-3'>
             <div className='flex flex-col gap-1'>
               <h3 className='flex items-center gap-2 text-base font-semibold tracking-tight sm:text-lg'>
-                <span className='h-4 w-1 rounded-full bg-primary' aria-hidden='true' />
+                <span
+                  className='bg-primary h-4 w-1 rounded-full'
+                  aria-hidden='true'
+                />
                 {t('Usage at a glance')}
               </h3>
               <p className='text-muted-foreground text-xs sm:text-sm'>
@@ -269,7 +272,7 @@ export function SummaryCards() {
               <StaggerItem
                 key={it.key}
                 className={cn(
-                  'rounded-xl border border-border bg-background/85 px-3 py-2.5 shadow-xs transition-colors hover:border-primary/30 hover:bg-background sm:p-3',
+                  'dashboard-summary-item rounded-xl border border-border bg-background/85 px-3 py-2.5 shadow-xs transition-[transform,box-shadow,border-color,background-color] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:-translate-y-0.5 hover:border-primary/30 hover:bg-background hover:shadow-md hover:shadow-primary/5 sm:p-3',
                   index === 0 && 'bg-primary/[0.08]',
                   index === 0 && 'sm:col-span-5',
                   index === 1 && 'sm:col-span-4',
