@@ -530,15 +530,229 @@ For commercial licensing, please contact support@quantumnous.com
   animation: landing-fade-right 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Landing visual system: one restrained light field, a technical grid, and
+ * small motion cues around the live API preview. Every animation is transform
+ * and opacity only so the page stays stable while it feels active. */
+.hero-title-sheen {
+  text-shadow: 0 0 24px color-mix(in oklch, var(--primary) 18%, transparent);
+}
+
+.hero-light-field {
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in oklch, var(--primary) 18%, transparent) 0%,
+    color-mix(in oklch, var(--primary) 7%, transparent) 42%,
+    transparent 72%
+  );
+  filter: blur(18px);
+  opacity: 0.72;
+  animation: hero-light-field 12s cubic-bezier(0.32, 0.72, 0, 1) infinite
+    alternate;
+  will-change: transform, opacity;
+}
+
+.hero-scanline {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--primary) 60%, transparent),
+    transparent
+  );
+  opacity: 0.45;
+  animation: hero-scanline 9s cubic-bezier(0.32, 0.72, 0, 1) infinite;
+  will-change: transform, opacity;
+}
+
+.hero-grid-drift {
+  opacity: 0.58;
+  animation: hero-grid-drift 18s cubic-bezier(0.32, 0.72, 0, 1) infinite
+    alternate;
+  will-change: transform, opacity;
+}
+
+.hero-terminal-float {
+  animation: hero-terminal-float 8s cubic-bezier(0.32, 0.72, 0, 1) infinite
+    alternate;
+  will-change: transform;
+}
+
+.hero-terminal-frame {
+  animation: hero-terminal-frame 5s cubic-bezier(0.32, 0.72, 0, 1) infinite
+    alternate;
+  will-change: transform, opacity;
+}
+
+.hero-terminal-telemetry {
+  animation: hero-telemetry 5s cubic-bezier(0.32, 0.72, 0, 1) infinite
+    alternate;
+  will-change: opacity;
+}
+
+.hero-status-rail {
+  border-top: 1px solid color-mix(in oklch, var(--border) 72%, transparent);
+  background: color-mix(in oklch, var(--background) 78%, transparent);
+}
+
+.hero-status-rail span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  white-space: nowrap;
+}
+
+.hero-status-dot {
+  position: relative;
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 999px;
+  background: var(--primary);
+}
+
+.hero-status-dot::after {
+  position: absolute;
+  inset: -0.25rem;
+  border: 1px solid color-mix(in oklch, var(--primary) 45%, transparent);
+  border-radius: inherit;
+  content: '';
+  opacity: 0;
+  animation: hero-status-pulse 2.4s cubic-bezier(0.32, 0.72, 0, 1) infinite;
+}
+
+.hero-stats-sweep {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--primary) 10%, transparent),
+    transparent
+  );
+  filter: blur(10px);
+  opacity: 0;
+  transform: translateX(-140%);
+  animation: hero-stats-sweep 10s cubic-bezier(0.32, 0.72, 0, 1) infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes hero-light-field {
+  0% {
+    opacity: 0.48;
+    transform: translate3d(-1.5rem, 0, 0) scale(0.96);
+  }
+  100% {
+    opacity: 0.78;
+    transform: translate3d(1.5rem, 1.25rem, 0) scale(1.04);
+  }
+}
+
+@keyframes hero-scanline {
+  0% {
+    opacity: 0;
+    transform: translateY(-1rem);
+  }
+  12%,
+  72% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(56rem);
+  }
+}
+
+@keyframes hero-grid-drift {
+  0% {
+    opacity: 0.38;
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    opacity: 0.65;
+    transform: translate3d(0.75rem, 1.25rem, 0);
+  }
+}
+
+@keyframes hero-terminal-float {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, -0.45rem, 0);
+  }
+}
+
+@keyframes hero-terminal-frame {
+  0% {
+    opacity: 0.35;
+    transform: scale(0.985);
+  }
+  100% {
+    opacity: 0.8;
+    transform: scale(1.012);
+  }
+}
+
+@keyframes hero-telemetry {
+  0%,
+  100% {
+    opacity: 0.48;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes hero-status-pulse {
+  0% {
+    opacity: 0.6;
+    transform: scale(0.55);
+  }
+  75%,
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+
+@keyframes hero-stats-sweep {
+  0%,
+  18% {
+    opacity: 0;
+    transform: translateX(-140%);
+  }
+  32% {
+    opacity: 1;
+  }
+  52%,
+  100% {
+    opacity: 0;
+    transform: translateX(420%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .landing-animate-fade-up,
   .landing-animate-fade-in,
   .landing-animate-scale-in,
   .landing-animate-fade-left,
-  .landing-animate-fade-right {
+  .landing-animate-fade-right,
+  .hero-light-field,
+  .hero-scanline,
+  .hero-grid-drift,
+  .hero-terminal-float,
+  .hero-terminal-frame,
+  .hero-terminal-telemetry,
+  .hero-badge .animate-ping,
+  .hero-status-dot::after,
+  .hero-stats-sweep {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;
+  }
+
+  .hero-scanline,
+  .hero-stats-sweep {
+    opacity: 0 !important;
   }
 }
 

@@ -46,14 +46,14 @@ export function Features(_props: FeaturesProps) {
         'Optimized network architecture ensures millisecond response times'
       ),
       span: 'md:col-span-2',
-      icon: <Zap className='size-4 text-blue-400' />,
+      icon: <Zap className='text-primary size-4' />,
       visual: (
         <div className='mt-4 grid grid-cols-3 gap-2'>
           {['OpenAI', 'Claude', 'Gemini', 'DeepSeek', 'Qwen', 'Llama'].map(
             (name) => (
               <div
                 key={name}
-                className='border-border/30 bg-muted/20 text-muted-foreground flex items-center justify-center rounded-lg border px-3 py-2 text-xs transition-colors duration-300 hover:border-blue-500/30 hover:bg-blue-500/5'
+                className='border-border/30 bg-muted/20 text-muted-foreground hover:border-primary/30 hover:bg-primary/5 flex items-center justify-center rounded-lg border px-3 py-2 text-xs transition-colors duration-300'
               >
                 {name}
               </div>
@@ -70,17 +70,14 @@ export function Features(_props: FeaturesProps) {
         'Enterprise-grade security with comprehensive permission management'
       ),
       span: 'md:col-span-1',
-      icon: <Shield className='size-4 text-emerald-400' />,
+      icon: <Shield className='text-primary size-4' />,
       visual: (
         <div className='mt-4 flex items-center justify-center'>
           <div className='relative'>
-            <div className='flex size-16 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/5'>
-              <Shield
-                className='size-7 text-emerald-500/70'
-                strokeWidth={1.5}
-              />
+            <div className='border-primary/20 bg-primary/5 flex size-16 items-center justify-center rounded-2xl border'>
+              <Shield className='text-primary/70 size-7' strokeWidth={1.5} />
             </div>
-            <div className='absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-emerald-500'>
+            <div className='bg-primary absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full'>
               <svg
                 className='size-2.5 text-white'
                 fill='none'
@@ -105,7 +102,7 @@ export function Features(_props: FeaturesProps) {
       title: t('Global Coverage'),
       desc: t('Multi-region deployment for stable global access'),
       span: 'md:col-span-1',
-      icon: <Globe className='size-4 text-violet-400' />,
+      icon: <Globe className='text-primary size-4' />,
       visual: (
         <div className='mt-4 space-y-2'>
           {[t('Load Balancing'), t('Rate Limiting'), t('Cost Tracking')].map(
@@ -114,7 +111,7 @@ export function Features(_props: FeaturesProps) {
                 <div
                   className={`flex size-6 items-center justify-center rounded-full text-[10px] font-bold ${
                     i === 1
-                      ? 'border border-blue-500/30 bg-blue-500/20 text-blue-500'
+                      ? 'border-primary/30 bg-primary/20 text-primary border'
                       : 'border-border/40 bg-muted text-muted-foreground border'
                   }`}
                 >
@@ -134,7 +131,7 @@ export function Features(_props: FeaturesProps) {
       title: t('Developer Friendly'),
       desc: t('Compatible API routes for common AI application workflows'),
       span: 'md:col-span-2',
-      icon: <Code className='size-4 text-amber-400' />,
+      icon: <Code className='text-primary size-4' />,
       visual: (
         <div className='mt-4 flex items-center gap-3'>
           <div className='flex -space-x-2'>
@@ -148,7 +145,7 @@ export function Features(_props: FeaturesProps) {
             ))}
           </div>
           <div className='text-muted-foreground flex items-center gap-1.5 text-xs'>
-            <Code className='size-3.5 text-blue-500' />
+            <Code className='text-primary size-3.5' />
             {t('Multi-protocol Compatible')}
           </div>
         </div>
