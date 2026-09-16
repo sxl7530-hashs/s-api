@@ -822,6 +822,83 @@ For commercial licensing, please contact support@quantumnous.com
   text-shadow: 0 1px 0 color-mix(in oklch, var(--background) 70%, transparent);
 }
 
+/* Legal confirmation is a required step, so it gets a clear affordance even
+ * before the user has focused the form. The accent remains token-driven and
+ * inherits every light/dark preset. */
+.legal-consent-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: color-mix(in oklch, var(--primary) 32%, var(--border));
+  background: color-mix(in oklch, var(--primary) 5%, var(--card));
+  box-shadow: 0 8px 24px color-mix(in oklch, var(--primary) 7%, transparent);
+  cursor: pointer;
+  transition:
+    transform 280ms cubic-bezier(0.32, 0.72, 0, 1),
+    border-color 280ms cubic-bezier(0.32, 0.72, 0, 1),
+    background-color 280ms cubic-bezier(0.32, 0.72, 0, 1),
+    box-shadow 280ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.legal-consent-card::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--primary);
+  content: '';
+  opacity: 0.8;
+}
+
+.legal-consent-card::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    115deg,
+    color-mix(in oklch, var(--primary) 7%, transparent),
+    transparent 42%
+  );
+  content: '';
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.legal-consent-card:hover {
+  border-color: color-mix(in oklch, var(--primary) 52%, var(--border));
+  background: color-mix(in oklch, var(--primary) 8%, var(--card));
+  box-shadow: 0 10px 28px color-mix(in oklch, var(--primary) 11%, transparent);
+  transform: translateY(-1px);
+}
+
+.legal-consent-card[data-consent-checked='true'] {
+  border-color: color-mix(in oklch, var(--primary) 58%, var(--border));
+  background: color-mix(in oklch, var(--primary) 10%, var(--card));
+}
+
+.legal-consent-checkbox {
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 10%, transparent);
+  transition:
+    box-shadow 220ms cubic-bezier(0.32, 0.72, 0, 1),
+    transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.legal-consent-checkbox:hover {
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--primary) 16%, transparent);
+  transform: scale(1.04);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .legal-consent-card,
+  .legal-consent-checkbox {
+    transition: none;
+  }
+
+  .legal-consent-card:hover,
+  .legal-consent-checkbox:hover {
+    transform: none;
+  }
+}
+
 @keyframes dashboard-summary-glint {
   0%,
   35% {

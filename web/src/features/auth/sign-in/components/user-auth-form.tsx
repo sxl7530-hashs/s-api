@@ -405,7 +405,18 @@ export function UserAuthForm({
                 </FormItem>
               )}
             />
+          </>
+        )}
 
+        <LegalConsent
+          status={status}
+          checked={agreedToLegal}
+          onCheckedChange={setAgreedToLegal}
+          className='mt-1'
+        />
+
+        {passwordLoginEnabled && (
+          <>
             {/* Submit Button */}
             <Button
               type='submit'
@@ -429,13 +440,6 @@ export function UserAuthForm({
             )}
           </>
         )}
-
-        <LegalConsent
-          status={status}
-          checked={agreedToLegal}
-          onCheckedChange={setAgreedToLegal}
-          className='mt-1'
-        />
 
         {!hasAlternativeLogin && alternativeLoginMethods}
       </form>

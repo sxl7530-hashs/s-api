@@ -51,8 +51,9 @@ export function LegalConsent({
 
   return (
     <div
+      data-consent-checked={checked ? 'true' : 'false'}
       className={cn(
-        'border-border/60 bg-muted/40 flex items-start gap-3 rounded-md border p-3',
+        'legal-consent-card flex items-start gap-3 rounded-lg border p-3.5 sm:p-4',
         className
       )}
     >
@@ -60,11 +61,11 @@ export function LegalConsent({
         id='legal-consent'
         checked={checked}
         onCheckedChange={handleChange}
-        className='mt-0.5'
+        className='legal-consent-checkbox mt-0.5 size-5 rounded-md border-2'
       />
       <Label
         htmlFor='legal-consent'
-        className='text-muted-foreground items-start gap-1 text-left text-xs leading-5 font-normal'
+        className='text-foreground/85 items-start gap-1 text-left text-[13px] leading-5 font-medium'
       >
         <span>
           {t('I have read and agree to the')}{' '}
@@ -73,7 +74,7 @@ export function LegalConsent({
               href='/user-agreement'
               target='_blank'
               rel='noopener noreferrer'
-              className='text-primary hover:underline'
+              className='text-primary decoration-primary/40 hover:decoration-primary font-semibold underline underline-offset-4'
             >
               {t('User Agreement')}
             </a>
@@ -84,7 +85,7 @@ export function LegalConsent({
               href='/privacy-policy'
               target='_blank'
               rel='noopener noreferrer'
-              className='text-primary hover:underline'
+              className='text-primary decoration-primary/40 hover:decoration-primary font-semibold underline underline-offset-4'
             >
               {t('Privacy Policy')}
             </a>
