@@ -4,6 +4,7 @@ import path from 'node:path'
 const dir = path.resolve('src/i18n/locales')
 const newKeys = {
   en: {
+	'Filter by username, name, email or remark...': 'Filter by username, name, email or remark...',
 	'Sync timeout': 'Sync timeout',
 	'Select at least one group or restore the configured order.': 'Select at least one group or restore the configured order.',
 	'Choose portable group': 'Choose portable group',
@@ -41,6 +42,7 @@ const newKeys = {
     'Always keep this space free': 'Always keep this space free',
   },
   zh: {
+	'Filter by username, name, email or remark...': '按用户名、姓名、邮箱或备注筛选...',
 	'Sync timeout': '同步超时',
 	'Select at least one group or restore the configured order.': '请至少选择一个分组，或恢复配置顺序。',
 	'Choose portable group': '选择便携分组',
@@ -78,6 +80,7 @@ const newKeys = {
     'Always keep this space free': '始终保留这部分空间',
   },
   'zh-TW': {
+	'Filter by username, name, email or remark...': '按用戶名、姓名、電子郵件或備註篩選...',
 	'Sync timeout': '同步逾時',
 	'Select at least one group or restore the configured order.': '請至少選擇一個分組，或恢復設定順序。',
 	'Choose portable group': '選擇便攜分組',
@@ -105,6 +108,7 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': '未知長度請求優先使用磁碟',
   },
   fr: {
+	'Filter by username, name, email or remark...': "Filtrer par nom d'utilisateur, nom, e-mail ou remarque...",
 	'Sync timeout': 'Délai de synchronisation',
 	'Select at least one group or restore the configured order.': 'Sélectionnez au moins un groupe ou restaurez l’ordre configuré.',
 	'Choose portable group': 'Choisir un groupe portable',
@@ -132,6 +136,7 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': 'Utiliser le disque en priorité pour les requêtes de longueur inconnue',
   },
   ja: {
+	'Filter by username, name, email or remark...': 'ユーザー名、名前、メールアドレスまたは備考でフィルター...',
 	'Sync timeout': '同期タイムアウト',
 	'Select at least one group or restore the configured order.': '少なくとも1つのグループを選択するか、設定済みの順序に戻してください。',
 	'Choose portable group': 'ポータブルグループを選択',
@@ -159,6 +164,7 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': '長さ不明のリクエストはディスクを優先',
   },
   ru: {
+	'Filter by username, name, email or remark...': 'Фильтр по имени пользователя, имени, email или примечанию...',
 	'Sync timeout': 'Тайм-аут синхронизации',
 	'Select at least one group or restore the configured order.': 'Выберите хотя бы одну группу или восстановите настроенный порядок.',
 	'Choose portable group': 'Выбрать переносную группу',
@@ -186,6 +192,7 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': 'Для запросов неизвестной длины сначала использовать диск',
   },
   vi: {
+	'Filter by username, name, email or remark...': 'Lọc theo tên người dùng, tên, email hoặc ghi chú...',
 	'Sync timeout': 'Thời gian chờ đồng bộ',
 	'Select at least one group or restore the configured order.': 'Chọn ít nhất một nhóm hoặc khôi phục thứ tự đã cấu hình.',
 	'Choose portable group': 'Chọn nhóm di động',

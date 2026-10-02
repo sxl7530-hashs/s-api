@@ -139,10 +139,7 @@ func getImageToken(c *gin.Context, fileMeta *types.FileMeta, model string, strea
 			hScaled = float64(height) * r
 			patchesW := math.Ceil(wScaled / 32.0)
 			patchesH := math.Ceil(hScaled / 32.0)
-			imageTokens := int(patchesW * patchesH)
-			if imageTokens > 1536 {
-				imageTokens = 1536
-			}
+			imageTokens := min(int(patchesW*patchesH), 1536)
 			return common.QuotaRound(float64(imageTokens) * multiplier), nil
 		}
 		// below cap
@@ -234,11 +231,7 @@ func CountRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *relayco
 	if meta.TokenType == types.TokenTypeTextNumber {
 		tkm += utf8.RuneCountInString(meta.CombineText)
 	} else {
-		count, err := CountTextTokenContext(c.Request.Context(), meta.CombineText, model)
-		if err != nil {
-			return 0, err
-		}
-		tkm += count
+		tkm += CountTextToken(meta.CombineText, model)
 	}
 
 	if info.RelayFormat == types.RelayFormatOpenAI {
@@ -377,14 +370,14 @@ func CountTokenInput(input any, model string) int {
 			text.WriteString(s)
 		}
 		return CountTextToken(text.String(), model)
-	case []interface{}:
+	case []any:
 		var text strings.Builder
 		for _, item := range v {
-			fmt.Fprint(&text, item)
+			text.WriteString(fmt.Sprintf("%v", item))
 		}
 		return CountTextToken(text.String(), model)
 	}
-	return CountTextToken(fmt.Sprintf("%v", input), model)
+	return CountTokenInput(fmt.Sprintf("%v", input), model)
 }
 
 func CountAudioTokenInput(audioBase64 string, audioFormat string) (int, error) {
@@ -417,36 +410,26 @@ func CountTextToken(text string, model string) int {
 	return tokens
 }
 
-// CountTextTokenContext keeps exact tokenization for ordinary OpenAI prompts.
-// Large prompts use the same linear estimator already used for non-OpenAI
-// providers. The tokenizer's BPE implementation can allocate tens of times the
-// input size and cannot be cancelled, so invoking it for unbounded user input
-// lets a handful of concurrent requests exhaust both memory and CPU.
 func CountTextTokenContext(ctx context.Context, text string, model string) (int, error) {
 	if text == "" {
 		return 0, nil
 	}
-	if common.IsOpenAITextModel(model) {
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		default:
-		}
-		if len(text) > exactTokenizerTextLimit {
-			estimated := EstimateTokenByModel(model, text)
-			// The word-based estimator intentionally treats a continuous Latin
-			// sequence as one word. For adversarial/random input that can severely
-			// under-reserve quota, so keep a conservative byte-based floor.
-			byteFloor := (len(text) + 7) / 8
-			if byteFloor > estimated {
-				estimated = byteFloor
-			}
-			return estimated, nil
-		}
-		tokenEncoder := getTokenEncoder(model)
-		return getTokenNum(tokenEncoder, text), nil
-	} else {
-		// 非openai模型，使用tiktoken-go计算没有意义，使用估算节省资源
+	if !common.IsOpenAITextModel(model) {
 		return EstimateTokenByModel(model, text), nil
 	}
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
+	}
+	if len(text) > exactTokenizerTextLimit {
+		estimated := EstimateTokenByModel(model, text)
+		byteFloor := (len(text) + 7) / 8
+		if byteFloor > estimated {
+			estimated = byteFloor
+		}
+		return estimated, nil
+	}
+	tokenEncoder := getTokenEncoder(model)
+	return getTokenNum(tokenEncoder, text), nil
 }

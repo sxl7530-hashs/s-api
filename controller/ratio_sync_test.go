@@ -1,124 +1,142 @@
 package controller
 
 import (
-	"context"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"net/http"
+	"net/http/httptest"
 )
 
-func TestFetchRatioSyncResponseRetriesWithFreshAttemptContext(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if requests.Add(1) == 1 {
-			<-request.Context().Done()
-			return
-		}
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write([]byte(`{"success":true}`))
-	}))
-	t.Cleanup(server.Close)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	response, responseCancel, err := fetchRatioSyncResponse(ctx, server.Client(), server.URL, nil, 20*time.Millisecond)
-	require.NoError(t, err)
-	require.NotNil(t, response)
-	require.NotNil(t, responseCancel)
-	defer responseCancel()
-	defer response.Body.Close()
-
-	body, err := io.ReadAll(response.Body)
-	require.NoError(t, err)
-	assert.Equal(t, `{"success":true}`, string(body))
-	assert.Equal(t, int32(2), requests.Load())
+func TestPricingSyncExpressionPriority(t *testing.T) {
+	expression := `tier("base", p * 2 + c * 8 + cr * 0)`
+	cases := []struct {
+		name       string
+		local      map[string]any
+		source     map[string]any
+		wantFields []string
+	}{
+		{"equal expressions suppress stale ratios", map[string]any{"billing_mode": map[string]string{"m": "tiered_expr"}, "billing_expr": map[string]string{"m": expression}}, map[string]any{"billing_mode": map[string]string{"m": "tiered_expr"}, "billing_expr": map[string]string{"m": expression}, "model_ratio": map[string]float64{"m": 3}, "model_price": map[string]float64{"m": 2}}, nil},
+		{"local expression excludes legacy-only source", map[string]any{"billing_mode": map[string]string{"m": "tiered_expr"}, "billing_expr": map[string]string{"m": expression}}, map[string]any{"model_ratio": map[string]float64{"m": 3}, "completion_ratio": map[string]float64{"m": 2}}, nil},
+		{"expression imports without legacy conflicts", map[string]any{"model_ratio": map[string]float64{"m": 1}}, map[string]any{"billing_mode": map[string]string{"m": "tiered_expr"}, "billing_expr": map[string]string{"m": expression}, "model_ratio": map[string]float64{"m": 3}, "model_price": map[string]float64{"m": 2}}, []string{"billing_mode", "billing_expr"}},
+		{"inactive expression follows explicit ratio mode", map[string]any{"model_ratio": map[string]float64{"m": 1}}, map[string]any{"billing_mode": map[string]string{"m": "ratio"}, "billing_expr": map[string]string{"m": expression}, "model_ratio": map[string]float64{"m": 3}}, []string{"model_ratio"}},
+		{"empty active expression never imports a false free price", map[string]any{}, map[string]any{"billing_mode": map[string]string{"m": "tiered_expr"}, "billing_expr": map[string]string{"m": " "}, "model_ratio": map[string]float64{"m": 0}}, nil},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			diff := buildDifferences(tt.local, []struct {
+				name string
+				data map[string]any
+			}{{"source", tt.source}})
+			fields := make([]string, 0, len(diff["m"]))
+			for field := range diff["m"] {
+				fields = append(fields, field)
+			}
+			assert.ElementsMatch(t, tt.wantFields, fields)
+		})
+	}
 }
 
-func TestFetchRatioSyncResponseAppliesAuthenticationHeadersOnEveryAttempt(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		assert.Equal(t, "Bearer channel-key", request.Header.Get("Authorization"))
-		assert.Equal(t, "override", request.Header.Get("X-Channel-Auth"))
-		if requests.Add(1) == 1 {
-			<-request.Context().Done()
-			return
-		}
-		writer.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(server.Close)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	response, responseCancel, err := fetchRatioSyncResponse(ctx, server.Client(), server.URL, http.Header{
-		"Authorization":  {"Bearer channel-key"},
-		"X-Channel-Auth": {"override"},
-	}, 20*time.Millisecond)
-	require.NoError(t, err)
-	require.NotNil(t, responseCancel)
-	defer responseCancel()
-	defer response.Body.Close()
-	assert.Equal(t, int32(2), requests.Load())
-}
-
-func TestRatioSyncURLUsesChannelOrigin(t *testing.T) {
-	baseURL := "https://api.example.com"
-	channel := &model.Channel{BaseURL: &baseURL}
-
-	assert.True(t, ratioSyncURLUsesChannelOrigin(channel, "https://api.example.com/api/pricing"))
-	assert.False(t, ratioSyncURLUsesChannelOrigin(channel, "http://api.example.com/api/pricing"))
-	assert.False(t, ratioSyncURLUsesChannelOrigin(channel, "https://attacker.example/api/pricing"))
-}
-
-func TestRatioSyncAuthenticatedClientRejectsCrossOriginRedirect(t *testing.T) {
-	destinationCalled := false
-	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		destinationCalled = true
-	}))
-	t.Cleanup(destination.Close)
-	source := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		http.Redirect(writer, &http.Request{}, destination.URL, http.StatusFound)
-	}))
-	t.Cleanup(source.Close)
-
-	client := ratioSyncAuthenticatedClient(source.Client(), source.URL+"/api/pricing")
-	request, err := http.NewRequest(http.MethodGet, source.URL+"/api/pricing", nil)
-	require.NoError(t, err)
-	request.Header.Set("Authorization", "Bearer secret")
-	response, err := client.Do(request)
-
-	require.Error(t, err)
-	require.NotNil(t, response)
-	defer response.Body.Close()
-	assert.Equal(t, http.StatusFound, response.StatusCode)
-	assert.False(t, destinationCalled)
-}
-
-func TestFetchUpstreamRatiosKeepsLongRequestAliveAndReturnsJSON(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write([]byte(`{"success":true,"data":{"model_ratio":{"gpt-test":1}}}`))
-	}))
-	t.Cleanup(upstream.Close)
-
+func TestRatioConfigExportsEffectiveExpressions(t *testing.T) {
+	before := config.GlobalConfig.ExportAllConfigs()
+	expose := ratio_setting.IsExposeRatioEnabled()
+	t.Cleanup(func() {
+		config.UpdateConfigFromMap(config.GlobalConfig.Get("billing_setting"), map[string]string{"billing_mode": before["billing_setting.billing_mode"], "billing_expr": before["billing_setting.billing_expr"]})
+		ratio_setting.SetExposeRatioEnabled(expose)
+	})
+	config.UpdateConfigFromMap(config.GlobalConfig.Get("billing_setting"), map[string]string{"billing_mode": `{"sync-export":"tiered_expr"}`, "billing_expr": `{"sync-export":"tier(\"base\", p * 2)"}`})
+	ratio_setting.SetExposeRatioEnabled(true)
 	recorder := httptest.NewRecorder()
-	context, _ := gin.CreateTestContext(recorder)
-	context.Request = httptest.NewRequest(
-		http.MethodPost,
-		"/api/ratio_sync/fetch",
-		strings.NewReader(`{"upstreams":[{"name":"test","base_url":"`+upstream.URL+`","endpoint":"/api/pricing"}],"timeout":15}`),
-	)
-	context.Request.Header.Set("Content-Type", "application/json")
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/ratio_config", nil)
+	GetRatioConfig(c)
+	var response struct {
+		Success bool
+		Data    map[string]any
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, valueMap(response.Data["billing_mode"])["sync-export"])
+	assert.Equal(t, `tier("base", p * 2)`, valueMap(response.Data["billing_expr"])["sync-export"])
+}
 
-	FetchUpstreamRatios(context)
-
-	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.JSONEq(t, `{"success":true,"data":{"differences":{"gpt-test":{"model_ratio":{"current":null,"upstreams":{"test":1},"confidence":{"test":true}}}},"test_results":[{"name":"test","status":"success"}]}}`, recorder.Body.String())
+func TestPricingSyncCompleteSourcesAndArrayFormats(t *testing.T) {
+	before := config.GlobalConfig.ExportAllConfigs()
+	oldRatios, oldCompletion := ratio_setting.ModelRatio2JSONString(), ratio_setting.CompletionRatio2JSONString()
+	t.Cleanup(func() {
+		config.UpdateConfigFromMap(config.GlobalConfig.Get("billing_setting"), map[string]string{"billing_mode": before["billing_setting.billing_mode"], "billing_expr": before["billing_setting.billing_expr"]})
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldRatios))
+		require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(oldCompletion))
+	})
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"sync-token":1}`))
+	require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(`{"sync-token":2}`))
+	expression := `len <= 200000 ? tier("short", p * 2 + c * 8 + cr * 0) : tier("long", p * 4 + c * 12)`
+	expressions, err := common.Marshal(map[string]string{"sync-already": expression})
+	require.NoError(t, err)
+	config.UpdateConfigFromMap(config.GlobalConfig.Get("billing_setting"), map[string]string{"billing_mode": `{"sync-already":"tiered_expr"}`, "billing_expr": string(expressions)})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var data any
+		if r.URL.Path == "/ratio_config" {
+			data = map[string]any{
+				"billing_mode":     map[string]string{"sync-already": "tiered_expr", "sync-expression": "tiered_expr"},
+				"billing_expr":     map[string]string{"sync-already": expression, "sync-expression": expression},
+				"model_ratio":      map[string]float64{"sync-already": 9, "sync-expression": 9, "sync-token": 1},
+				"model_price":      map[string]float64{"sync-expression": 4},
+				"completion_ratio": map[string]float64{"sync-token": 4},
+				"cache_ratio":      map[string]float64{"sync-token": 0},
+			}
+		} else {
+			data = []map[string]any{
+				{"model_name": "sync-already", "model_ratio": 5, "completion_ratio": 3},
+				{"model_name": "sync-expression", "model_ratio": 2, "model_price": 1},
+				{"model_name": "sync-array-expression", "billing_mode": "tiered_expr", "billing_expr": expression, "quota_type": 1, "model_price": 0},
+				{"model_name": "sync-unpriced"},
+				{"model_name": "sync-invalid-expression", "billing_mode": "tiered_expr", "billing_expr": "", "model_ratio": 0},
+				{"model_name": "sync-free", "model_ratio": 0, "completion_ratio": 0},
+			}
+		}
+		encoded, err := common.Marshal(map[string]any{"success": true, "data": data})
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(encoded)
+	}))
+	defer server.Close()
+	var response struct {
+		Success bool
+		Data    struct {
+			Differences map[string]map[string]dto.DifferenceItem
+			Prices      map[string]struct {
+				Current   map[string]any
+				Upstreams map[string]map[string]any
+			}
+			TestResults []dto.TestResult `json:"test_results"`
+		}
+	}
+	body := map[string]any{"upstreams": []map[string]any{
+		{"id": 1, "name": "Expressions", "base_url": server.URL, "endpoint": "/ratio_config"},
+		{"id": 2, "name": "Legacy", "base_url": server.URL, "endpoint": "/pricing"},
+	}}
+	recorder := modelManagementRequest(t, FetchUpstreamRatios, http.MethodPost, "/api/channel/fetch_upstream_ratios", body, &response)
+	require.True(t, response.Success, recorder.Body.String())
+	require.Len(t, response.Data.TestResults, 2)
+	for _, result := range response.Data.TestResults {
+		require.Equal(t, "success", result.Status, result.Error)
+	}
+	assert.NotContains(t, response.Data.Differences, "sync-already")
+	assert.NotContains(t, response.Data.Differences, "sync-unpriced")
+	assert.NotContains(t, response.Data.Differences, "sync-invalid-expression")
+	assert.Equal(t, map[string]any{"billing_mode": "tiered_expr", "billing_expr": expression}, response.Data.Prices["sync-expression"].Upstreams["Expressions(1)"])
+	assert.NotContains(t, response.Data.Prices["sync-expression"].Upstreams, "Legacy(2)")
+	assert.Equal(t, map[string]any{"billing_mode": "tiered_expr", "billing_expr": expression}, response.Data.Prices["sync-array-expression"].Upstreams["Legacy(2)"])
+	assert.Equal(t, float64(1), response.Data.Prices["sync-token"].Upstreams["Expressions(1)"]["model_ratio"], "unchanged base prices are included for a complete price preview")
+	assert.Equal(t, float64(4), response.Data.Prices["sync-token"].Upstreams["Expressions(1)"]["completion_ratio"])
+	assert.Equal(t, float64(0), response.Data.Prices["sync-token"].Upstreams["Expressions(1)"]["cache_ratio"])
+	assert.Equal(t, float64(0), response.Data.Prices["sync-free"].Upstreams["Legacy(2)"]["model_ratio"])
 }

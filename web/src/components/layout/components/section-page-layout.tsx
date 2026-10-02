@@ -52,6 +52,7 @@ SectionPageLayoutBreadcrumb.displayName = 'SectionPageLayout.Breadcrumb'
 export type SectionPageLayoutProps = {
   children: ReactNode
   fixedContent?: boolean
+  stackActionsOnMobile?: boolean
 }
 
 export function SectionPageLayout(props: SectionPageLayoutProps) {
@@ -70,11 +71,9 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
     if (child.type === SectionPageLayoutTitle) title = child.props.children
     else if (child.type === SectionPageLayoutActions) {
       actions = child.props.children
-    }
-    else if (child.type === SectionPageLayoutContent) {
+    } else if (child.type === SectionPageLayoutContent) {
       content = child.props.children
-    }
-    else if (child.type === SectionPageLayoutBreadcrumb) {
+    } else if (child.type === SectionPageLayoutBreadcrumb) {
       breadcrumb = child.props.children
     }
   })
@@ -82,18 +81,24 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
   return (
     <PageFooterProvider container={footerContainer}>
       <Main>
-        <div className='relative shrink-0 overflow-hidden border-b border-border/70 bg-[linear-gradient(rgb(15_23_20_/_0.025)_1px,transparent_1px),linear-gradient(90deg,rgb(15_23_20_/_0.025)_1px,transparent_1px),linear-gradient(90deg,var(--card)_0%,var(--card)_68%,color-mix(in_oklch,var(--primary)_7%,var(--card))_100%)] bg-[size:28px_28px,28px_28px,auto] px-4 pt-4 pb-3 sm:px-6 sm:pt-6 sm:pb-4'>
+        <div className='shrink-0 px-3 pt-3 pb-2.5 sm:px-4 sm:pt-5 sm:pb-3'>
           {breadcrumb != null && (
             <div className='mb-2 sm:mb-3'>{breadcrumb}</div>
           )}
-          <div className='relative flex flex-wrap items-center justify-between gap-x-4 gap-y-3'>
-            <div className='min-w-0 flex-1 border-l-2 border-primary pl-3 sm:pl-4'>
-              <h2 className='truncate text-xl font-semibold tracking-tight sm:text-2xl'>
+          <div className='flex flex-wrap items-center justify-between gap-x-3 gap-y-2 sm:gap-x-4'>
+            <div
+              className={
+                props.stackActionsOnMobile
+                  ? 'min-w-0 flex-1 max-sm:basis-full'
+                  : 'min-w-0 flex-1'
+              }
+            >
+              <h2 className='truncate text-base font-bold tracking-tight sm:text-lg'>
                 {title}
               </h2>
             </div>
             {actions != null && (
-              <div className='flex shrink-0 flex-wrap items-center justify-end gap-2'>
+              <div className='flex shrink-0 flex-wrap items-center justify-end gap-2 sm:gap-x-4'>
                 {actions}
               </div>
             )}
@@ -103,8 +108,8 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
         <div
           className={
             props.fixedContent
-              ? 'min-h-0 flex-1 overflow-hidden px-4 pt-2 pb-4 sm:px-6 sm:pt-2.5 sm:pb-6'
-              : 'min-h-0 flex-1 overflow-auto px-4 pt-2 pb-4 sm:px-6 sm:pt-2.5 sm:pb-6'
+              ? 'min-h-0 flex-1 overflow-hidden px-3 pt-1 pb-3 sm:px-4 sm:pt-1.5 sm:pb-4'
+              : 'min-h-0 flex-1 overflow-auto px-3 pt-1 pb-3 sm:px-4 sm:pt-1.5 sm:pb-4'
           }
         >
           {content}

@@ -21,7 +21,6 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/samber/lo"
@@ -30,10 +29,7 @@ import (
 )
 
 const (
-	defaultSyncTimeoutSeconds   = 30
-	minSyncTimeoutSeconds       = 15
-	maxSyncTimeoutSeconds       = 45
-	maxSyncAttempts             = 3
+	defaultTimeoutSeconds       = 10
 	defaultEndpoint             = "/api/pricing"
 	maxConcurrentFetches        = 8
 	maxRatioConfigBytes         = 10 << 20 // 10MB
@@ -56,7 +52,7 @@ func nearlyEqual(a, b float64) bool {
 	return b-a < floatEpsilon
 }
 
-func valuesEqual(a, b interface{}) bool {
+func valuesEqual(a, b any) bool {
 	af, aok := a.(float64)
 	bf, bok := b.(float64)
 	if aok && bok {
@@ -93,78 +89,6 @@ type upstreamResult struct {
 	Name string         `json:"name"`
 	Data map[string]any `json:"data,omitempty"`
 	Err  string         `json:"err,omitempty"`
-}
-
-func fetchRatioSyncResponse(ctx context.Context, client *http.Client, requestURL string, headers http.Header, attemptTimeout time.Duration) (*http.Response, context.CancelFunc, error) {
-	var lastErr error
-	for attempt := 0; attempt < maxSyncAttempts; attempt++ {
-		if ctx.Err() != nil {
-			return nil, nil, ctx.Err()
-		}
-		currentTimeout := attemptTimeout
-		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < currentTimeout {
-			currentTimeout = time.Until(deadline)
-		}
-		attemptCtx, attemptCancel := context.WithTimeout(ctx, currentTimeout)
-		httpReq, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, requestURL, nil)
-		if err != nil {
-			attemptCancel()
-			return nil, nil, err
-		}
-		for name, values := range headers {
-			for _, value := range values {
-				httpReq.Header.Add(name, value)
-			}
-			if strings.EqualFold(name, "Host") {
-				httpReq.Host = headers.Get(name)
-			}
-		}
-		resp, err := client.Do(httpReq)
-		if err == nil {
-			return resp, attemptCancel, nil
-		}
-		attemptCancel()
-		lastErr = err
-		if attempt+1 >= maxSyncAttempts {
-			break
-		}
-		backoff := time.NewTimer(time.Duration(200*(1<<attempt)) * time.Millisecond)
-		select {
-		case <-backoff.C:
-		case <-ctx.Done():
-			backoff.Stop()
-			return nil, nil, ctx.Err()
-		}
-	}
-	return nil, nil, lastErr
-}
-
-func ratioSyncURLUsesChannelOrigin(channel *model.Channel, requestURL string) bool {
-	channelURL, channelErr := url.Parse(channel.GetBaseURL())
-	requestURLParsed, requestErr := url.Parse(requestURL)
-	if channelErr != nil || requestErr != nil {
-		return false
-	}
-	return strings.EqualFold(channelURL.Scheme, requestURLParsed.Scheme) &&
-		strings.EqualFold(channelURL.Host, requestURLParsed.Host)
-}
-
-func ratioSyncAuthenticatedClient(client *http.Client, requestURL string) *http.Client {
-	boundClient := *client
-	originalCheckRedirect := client.CheckRedirect
-	boundClient.CheckRedirect = func(request *http.Request, via []*http.Request) error {
-		if originalCheckRedirect != nil {
-			if err := originalCheckRedirect(request, via); err != nil {
-				return err
-			}
-		}
-		originalURL, err := url.Parse(requestURL)
-		if err != nil || !strings.EqualFold(originalURL.Scheme, request.URL.Scheme) || !strings.EqualFold(originalURL.Host, request.URL.Host) {
-			return fmt.Errorf("authenticated ratio sync redirect to another origin is not allowed")
-		}
-		return nil
-	}
-	return &boundClient
 }
 
 func valueMap(value any) map[string]any {
@@ -215,6 +139,75 @@ func getLocalPricingSyncData() map[string]any {
 	return data
 }
 
+// effectivePricingSyncData follows the billing engine's mode precedence. An
+// inactive expression and numeric settings covered by an active expression
+// are not separate prices and must not appear as synchronization differences.
+func effectivePricingSyncData(data map[string]any) map[string]any {
+	result := make(map[string]any, len(pricingSyncFields))
+	names := make(map[string]struct{})
+	for _, field := range pricingSyncFields {
+		entries := make(map[string]any)
+		for name, raw := range valueMap(data[field]) {
+			value := normalizeSyncValue(field, raw)
+			if numericPricingSyncFields[field] {
+				number, ok := value.(float64)
+				if !ok || math.IsNaN(number) || math.IsInf(number, 0) || number < 0 {
+					continue
+				}
+			}
+			entries[name] = value
+			names[name] = struct{}{}
+		}
+		result[field] = entries
+	}
+	modes := valueMap(result[billing_setting.BillingModeField])
+	expressions := valueMap(result[billing_setting.BillingExprField])
+	for name := range names {
+		expression, _ := expressions[name].(string)
+		if modes[name] == billing_setting.BillingModeTieredExpr {
+			if strings.TrimSpace(expression) == "" {
+				for _, field := range pricingSyncFields {
+					delete(valueMap(result[field]), name)
+				}
+				continue
+			}
+			expressions[name] = strings.TrimSpace(expression)
+			for field := range numericPricingSyncFields {
+				delete(valueMap(result[field]), name)
+			}
+			continue
+		}
+		delete(expressions, name)
+		modes[name] = billing_setting.BillingModeRatio
+		_, fixed := valueMap(result["model_price"])[name]
+		_, token := valueMap(result["model_ratio"])[name]
+		if !fixed && !token {
+			for _, field := range pricingSyncFields {
+				delete(valueMap(result[field]), name)
+			}
+			continue
+		}
+		if fixed {
+			for field := range numericPricingSyncFields {
+				if field != "model_price" {
+					delete(valueMap(result[field]), name)
+				}
+			}
+		}
+	}
+	return result
+}
+
+func modelPricingSyncValues(data map[string]any, name string) map[string]any {
+	values := make(map[string]any)
+	for _, field := range pricingSyncFields {
+		if value, exists := valueMap(data[field])[name]; exists {
+			values[field] = value
+		}
+	}
+	return values
+}
+
 func FetchUpstreamRatios(c *gin.Context) {
 	var req dto.UpstreamRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -224,11 +217,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 	}
 
 	if req.Timeout <= 0 {
-		req.Timeout = defaultSyncTimeoutSeconds
-	} else if req.Timeout < minSyncTimeoutSeconds {
-		req.Timeout = minSyncTimeoutSeconds
-	} else if req.Timeout > maxSyncTimeoutSeconds {
-		req.Timeout = maxSyncTimeoutSeconds
+		req.Timeout = defaultTimeoutSeconds
 	}
 
 	var upstreams []dto.UpstreamDTO
@@ -270,24 +259,6 @@ func FetchUpstreamRatios(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无有效上游渠道"})
 		return
 	}
-	databaseChannels := make(map[int]*model.Channel)
-	databaseChannelIDs := make([]int, 0, len(upstreams))
-	for _, upstream := range upstreams {
-		if upstream.ID > 0 {
-			databaseChannelIDs = append(databaseChannelIDs, upstream.ID)
-		}
-	}
-	if len(databaseChannelIDs) > 0 {
-		channels, err := model.GetChannelsByIds(databaseChannelIDs)
-		if err != nil {
-			logger.LogError(c.Request.Context(), "failed to query ratio sync channels: "+err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "查询渠道失败"})
-			return
-		}
-		for _, channel := range channels {
-			databaseChannels[channel.Id] = channel
-		}
-	}
 
 	var wg sync.WaitGroup
 	ch := make(chan upstreamResult, len(upstreams))
@@ -295,9 +266,9 @@ func FetchUpstreamRatios(c *gin.Context) {
 	sem := make(chan struct{}, maxConcurrentFetches)
 
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	transport := &http.Transport{MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: 1 * time.Second}
+	transport := &http.Transport{MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: 1 * time.Second, ResponseHeaderTimeout: 10 * time.Second}
 	if common.TLSInsecureSkipVerify {
-		transport.TLSClientConfig = common.InsecureTLSConfig
+		transport.TLSClientConfig = common.InsecureTLSConfig.Clone()
 	}
 	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, _, err := net.SplitHostPort(addr)
@@ -314,21 +285,13 @@ func FetchUpstreamRatios(c *gin.Context) {
 		return dialer.DialContext(ctx, network, addr)
 	}
 	client := &http.Client{Transport: transport}
-	defer transport.CloseIdleConnections()
-	syncCtx, syncCancel := context.WithTimeout(c.Request.Context(), time.Duration(req.Timeout)*time.Second)
-	defer syncCancel()
 
 	for _, chn := range upstreams {
 		wg.Add(1)
 		go func(chItem dto.UpstreamDTO) {
 			defer wg.Done()
 
-			select {
-			case sem <- struct{}{}:
-			case <-syncCtx.Done():
-				ch <- upstreamResult{Name: chItem.Name, Err: syncCtx.Err().Error()}
-				return
-			}
+			sem <- struct{}{}
 			defer func() { <-sem }()
 
 			isOpenRouter := chItem.Endpoint == "openrouter"
@@ -354,10 +317,24 @@ func FetchUpstreamRatios(c *gin.Context) {
 				uniqueName = fmt.Sprintf("%s(%d)", chItem.Name, chItem.ID)
 			}
 
-			requestClient := client
-			requestHeaders := make(http.Header)
-			if dbChannel := databaseChannels[chItem.ID]; dbChannel != nil && ratioSyncURLUsesChannelOrigin(dbChannel, fullURL) {
-				key, _, apiErr := dbChannel.GetNextEnabledKey()
+			ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(req.Timeout)*time.Second)
+			defer cancel()
+
+			httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+			if err != nil {
+				logger.LogWarn(c.Request.Context(), "build request failed: "+err.Error())
+				ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
+				return
+			}
+
+			// OpenRouter requires Bearer token auth
+			if isOpenRouter && chItem.ID != 0 {
+				dbCh, err := model.GetChannelById(chItem.ID, true)
+				if err != nil {
+					ch <- upstreamResult{Name: uniqueName, Err: "failed to get channel key: " + err.Error()}
+					return
+				}
+				key, _, apiErr := dbCh.GetNextEnabledKey()
 				if apiErr != nil {
 					ch <- upstreamResult{Name: uniqueName, Err: "failed to get enabled channel key: " + apiErr.Error()}
 					return
@@ -366,39 +343,27 @@ func FetchUpstreamRatios(c *gin.Context) {
 					ch <- upstreamResult{Name: uniqueName, Err: "no API key configured for this channel"}
 					return
 				}
-				channelHeaders, err := buildFetchModelsHeaders(dbChannel, strings.TrimSpace(key))
-				if err != nil {
-					ch <- upstreamResult{Name: uniqueName, Err: "failed to build channel authentication headers: " + err.Error()}
-					return
-				}
-				requestHeaders = channelHeaders
-				channelSettings := dbChannel.GetSetting()
-				requestClient, err = service.GetHttpClientWithProxySettings(channelSettings.Proxy, channelSettings)
-				if err != nil {
-					ch <- upstreamResult{Name: uniqueName, Err: "failed to configure channel proxy: " + err.Error()}
-					return
-				}
-				requestClient = ratioSyncAuthenticatedClient(requestClient, fullURL)
+				httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(key))
 			} else if isOpenRouter {
 				ch <- upstreamResult{Name: uniqueName, Err: "OpenRouter requires a valid channel with API key"}
 				return
 			}
 
-			// Give every retry a fresh context, while keeping the complete request
-			// below common reverse-proxy timeout thresholds.
-			resp, responseCancel, lastErr := fetchRatioSyncResponse(
-				syncCtx,
-				requestClient,
-				fullURL,
-				requestHeaders,
-				time.Duration(req.Timeout/maxSyncAttempts)*time.Second,
-			)
+			// 简单重试：最多 3 次，指数退避
+			var resp *http.Response
+			var lastErr error
+			for attempt := range 3 {
+				resp, lastErr = client.Do(httpReq)
+				if lastErr == nil {
+					break
+				}
+				time.Sleep(time.Duration(200*(1<<attempt)) * time.Millisecond)
+			}
 			if lastErr != nil {
 				logger.LogWarn(c.Request.Context(), "http error on "+chItem.Name+": "+lastErr.Error())
 				ch <- upstreamResult{Name: uniqueName, Err: lastErr.Error()}
 				return
 			}
-			defer responseCancel()
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
 				logger.LogWarn(c.Request.Context(), "non-200 from "+chItem.Name+": "+resp.Status)
@@ -485,9 +450,9 @@ func FetchUpstreamRatios(c *gin.Context) {
 			var pricingItems []struct {
 				ModelName            string   `json:"model_name"`
 				QuotaType            int      `json:"quota_type"`
-				ModelRatio           float64  `json:"model_ratio"`
-				ModelPrice           float64  `json:"model_price"`
-				CompletionRatio      float64  `json:"completion_ratio"`
+				ModelRatio           *float64 `json:"model_ratio"`
+				ModelPrice           *float64 `json:"model_price"`
+				CompletionRatio      *float64 `json:"completion_ratio"`
 				CacheRatio           *float64 `json:"cache_ratio"`
 				CreateCacheRatio     *float64 `json:"create_cache_ratio"`
 				ImageRatio           *float64 `json:"image_ratio"`
@@ -517,16 +482,22 @@ func FetchUpstreamRatios(c *gin.Context) {
 				if item.ModelName == "" {
 					continue
 				}
-				if item.BillingMode == billing_setting.BillingModeTieredExpr && strings.TrimSpace(item.BillingExpr) != "" {
+				if item.BillingMode == billing_setting.BillingModeTieredExpr {
 					billingModeMap[item.ModelName] = billing_setting.BillingModeTieredExpr
 					billingExprMap[item.ModelName] = item.BillingExpr
+					continue
 				}
 				if item.QuotaType == 1 {
-					modelPriceMap[item.ModelName] = item.ModelPrice
+					if item.ModelPrice != nil {
+						modelPriceMap[item.ModelName] = *item.ModelPrice
+					}
 				} else {
-					modelRatioMap[item.ModelName] = item.ModelRatio
-					// completionRatio 可能为 0，此时也直接赋值，保持与上游一致
-					completionRatioMap[item.ModelName] = item.CompletionRatio
+					if item.ModelRatio != nil {
+						modelRatioMap[item.ModelName] = *item.ModelRatio
+					}
+					if item.CompletionRatio != nil {
+						completionRatioMap[item.ModelName] = *item.CompletionRatio
+					}
 				}
 				if item.CacheRatio != nil {
 					cacheRatioMap[item.ModelName] = *item.CacheRatio
@@ -596,32 +567,10 @@ func FetchUpstreamRatios(c *gin.Context) {
 		}(chn)
 	}
 
-	fetchDone := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(ch)
-		close(fetchDone)
-	}()
-	heartbeat := time.NewTicker(5 * time.Second)
-	defer heartbeat.Stop()
-	fetchCompleted := false
-	for !fetchCompleted {
-		select {
-		case <-fetchDone:
-			fetchCompleted = true
-		case <-heartbeat.C:
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			c.Header("Cache-Control", "no-store")
-			if _, err := c.Writer.Write([]byte(" ")); err != nil {
-				syncCancel()
-				<-fetchDone
-				return
-			}
-			c.Writer.Flush()
-		}
-	}
+	wg.Wait()
+	close(ch)
 
-	localData := getLocalPricingSyncData()
+	localData := effectivePricingSyncData(getLocalPricingSyncData())
 
 	var testResults []dto.TestResult
 	var successfulChannels []struct {
@@ -644,16 +593,39 @@ func FetchUpstreamRatios(c *gin.Context) {
 			successfulChannels = append(successfulChannels, struct {
 				name string
 				data map[string]any
-			}{name: r.Name, data: r.Data})
+			}{name: r.Name, data: effectivePricingSyncData(r.Data)})
 		}
 	}
 
 	differences := buildDifferences(localData, successfulChannels)
+	type modelSyncPrices struct {
+		Current   map[string]any            `json:"current"`
+		Upstreams map[string]map[string]any `json:"upstreams"`
+	}
+	prices := make(map[string]modelSyncPrices, len(differences))
+	for name, fields := range differences {
+		row := modelSyncPrices{Current: modelPricingSyncValues(localData, name), Upstreams: make(map[string]map[string]any)}
+		_, expressionPriority := fields[billing_setting.BillingExprField]
+		for _, channel := range successfulChannels {
+			candidate := modelPricingSyncValues(channel.data, name)
+			if expressionPriority && candidate[billing_setting.BillingModeField] != billing_setting.BillingModeTieredExpr {
+				continue
+			}
+			_, hasRatio := candidate["model_ratio"]
+			_, hasPrice := candidate["model_price"]
+			_, hasExpression := candidate[billing_setting.BillingExprField]
+			if hasRatio || hasPrice || hasExpression {
+				row.Upstreams[channel.name] = candidate
+			}
+		}
+		prices[name] = row
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
 			"differences":  differences,
+			"prices":       prices,
 			"test_results": testResults,
 		},
 	})
@@ -664,6 +636,16 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 	data map[string]any
 }) map[string]map[string]dto.DifferenceItem {
 	differences := make(map[string]map[string]dto.DifferenceItem)
+	localData = effectivePricingSyncData(localData)
+	normalizedChannels := make([]struct {
+		name string
+		data map[string]any
+	}, 0, len(successfulChannels))
+	for _, channel := range successfulChannels {
+		channel.data = effectivePricingSyncData(channel.data)
+		normalizedChannels = append(normalizedChannels, channel)
+	}
+	successfulChannels = normalizedChannels
 
 	allModels := make(map[string]struct{})
 
@@ -717,19 +699,31 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 	}
 
 	for modelName := range allModels {
+		expressionPriority := valueMap(localData[billing_setting.BillingModeField])[modelName] == billing_setting.BillingModeTieredExpr
+		for _, channel := range successfulChannels {
+			if valueMap(channel.data[billing_setting.BillingModeField])[modelName] == billing_setting.BillingModeTieredExpr {
+				expressionPriority = true
+			}
+		}
 		for _, ratioType := range pricingSyncFields {
-			var localValue interface{} = nil
+			if expressionPriority && numericPricingSyncFields[ratioType] {
+				continue
+			}
+			var localValue any = nil
 			if val, exists := valueMap(localData[ratioType])[modelName]; exists {
 				localValue = normalizeSyncValue(ratioType, val)
 			}
 
-			upstreamValues := make(map[string]interface{})
+			upstreamValues := make(map[string]any)
 			confidenceValues := make(map[string]bool)
 			hasUpstreamValue := false
 			hasDifference := false
 
 			for _, channel := range successfulChannels {
-				var upstreamValue interface{} = nil
+				if expressionPriority && valueMap(channel.data[billing_setting.BillingModeField])[modelName] != billing_setting.BillingModeTieredExpr {
+					continue
+				}
+				var upstreamValue any = nil
 
 				if val, exists := valueMap(channel.data[ratioType])[modelName]; exists {
 					upstreamValue = normalizeSyncValue(ratioType, val)
