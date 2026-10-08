@@ -31,18 +31,10 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   const { systemName, logo, loading } = useSystemConfig()
 
   return (
-    <div className='bg-background text-foreground relative min-h-svh overflow-hidden'>
-      <div
-        aria-hidden
-        className='bg-primary absolute inset-x-0 top-0 z-20 h-1'
-      />
-      <div
-        aria-hidden
-        className='pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,color-mix(in_oklch,var(--foreground)_5%,transparent)_1px,transparent_1px),linear-gradient(to_bottom,color-mix(in_oklch,var(--foreground)_5%,transparent)_1px,transparent_1px)] [mask-image:linear-gradient(90deg,black,transparent_68%)] bg-[size:5rem_5rem]'
-      />
+    <div className='relative grid h-svh max-w-none'>
       <Link
         to='/'
-        className='absolute top-6 left-6 z-30 flex items-center gap-2.5 transition-opacity hover:opacity-80 sm:top-8 sm:left-8'
+        className='absolute top-4 left-4 z-10 flex items-center gap-2 transition-opacity hover:opacity-80 sm:top-8 sm:left-8'
       >
         <div className='relative h-8 w-8'>
           {loading ? (
@@ -51,46 +43,19 @@ export function AuthLayout({ children }: AuthLayoutProps) {
             <img
               src={logo}
               alt={t('Logo')}
-              className='h-8 w-8 rounded-lg object-cover'
+              className='h-8 w-8 rounded-full object-cover'
             />
           )}
         </div>
         {loading ? (
           <Skeleton className='h-6 w-24' />
         ) : (
-          <h1 className='text-base font-semibold'>{systemName}</h1>
+          <h1 className='text-xl font-medium'>{systemName}</h1>
         )}
       </Link>
-
-      <div className='relative z-10 grid min-h-svh lg:grid-cols-[minmax(0,1fr)_minmax(32rem,42%)]'>
-        <div className='hidden items-end p-10 lg:flex xl:p-16'>
-          <div className='max-w-xl pb-8'>
-            <div className='text-primary mb-8 flex items-center gap-3 text-xs font-semibold'>
-              <span className='bg-primary h-px w-10' />
-              {t('AI Application Infrastructure Foundation')}
-            </div>
-            <div className='space-y-3 text-[clamp(2.5rem,4.5vw,4.75rem)] leading-[1.02] font-semibold tracking-tight'>
-              <div>One gateway.</div>
-              <div className='text-primary'>Every model.</div>
-            </div>
-            <div className='border-border mt-10 grid grid-cols-3 gap-3 border-t pt-6'>
-              {['OpenAI', 'Claude', 'Gemini'].map((provider) => (
-                <div
-                  key={provider}
-                  className='text-muted-foreground border-border bg-card rounded-lg border px-3 py-3 font-mono text-xs'
-                >
-                  <span className='text-primary mr-2'>●</span>
-                  {provider}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className='bg-background text-foreground flex min-h-svh items-center px-5 pt-20 pb-8 sm:px-10 lg:px-14 lg:pt-8'>
-          <div className='bg-card mx-auto w-full max-w-md rounded-2xl border p-6 shadow-2xl shadow-black/10 sm:p-9'>
-            {children}
-          </div>
+      <div className='container flex items-center pt-16 sm:pt-0'>
+        <div className='mx-auto flex w-full flex-col justify-center space-y-2 px-4 py-8 sm:w-[480px] sm:p-8'>
+          {children}
         </div>
       </div>
     </div>

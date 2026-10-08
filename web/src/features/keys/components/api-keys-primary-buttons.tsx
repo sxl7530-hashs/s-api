@@ -113,9 +113,7 @@ export function ApiKeysPrimaryButtons() {
         </PopoverContent>
       </Popover>
       <Button size='sm' onClick={() => setOpen('create')}>
-        <span className='flex size-5 items-center justify-center rounded-md bg-white/15'>
-          <Plus className='h-3.5 w-3.5' />
-        </span>
+        <Plus className='h-4 w-4' />
         {t('Create API Key')}
       </Button>
     </div>
