@@ -21,12 +21,16 @@ import (
 //}
 
 func ResponseText2Usage(c *gin.Context, responseText string, modeName string, promptTokens int) *dto.Usage {
+	return ResponseTokens2Usage(c, tokenkit.Estimate(modeName, responseText), promptTokens)
+}
+
+func ResponseTokens2Usage(c *gin.Context, completionTokens int, promptTokens int) *dto.Usage {
 	common.SetContextKey(c, constant.ContextKeyLocalCountTokens, true)
-	usage := &dto.Usage{}
-	usage.PromptTokens = promptTokens
-	usage.CompletionTokens = tokenkit.Estimate(modeName, responseText)
-	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-	return usage
+	return &dto.Usage{
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      promptTokens + completionTokens,
+	}
 }
 
 func ValidUsage(usage *dto.Usage) bool {

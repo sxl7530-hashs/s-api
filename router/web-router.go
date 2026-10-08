@@ -1,7 +1,7 @@
 package router
 
 import (
-	"embed"
+	"io/fs"
 	"net/http"
 	"strings"
 
@@ -14,9 +14,9 @@ import (
 
 // WebAssets holds the embedded dashboard frontend assets.
 type WebAssets struct {
-	BuildFS          embed.FS
+	BuildFS          fs.FS
 	IndexPage        []byte
-	ClassicBuildFS   embed.FS
+	ClassicBuildFS   fs.FS
 	ClassicIndexPage []byte
 }
 
