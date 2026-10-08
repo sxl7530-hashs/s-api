@@ -20,30 +20,41 @@ type WebAssets struct {
 	ClassicIndexPage []byte
 }
 
+type emptyWebFS struct{}
+
+func (emptyWebFS) Open(string) (fs.File, error) {
+	return nil, fs.ErrNotExist
+}
+
 func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.HandlerFunc) {
+	if assets.BuildFS == nil {
+		assets.BuildFS = emptyWebFS{}
+	}
 	frontendFS := common.EmbedFolder(assets.BuildFS, "web/dist")
 	compress := gzip.Gzip(gzip.DefaultCompression)
-	classicFS := common.EmbedFolder(assets.ClassicBuildFS, "web/classic/dist")
-	classicFileServer := http.StripPrefix("/classic", http.FileServer(classicFS))
-	classicHandlers := []gin.HandlerFunc{
-		middleware.RouteTag("web"),
-		compress,
-		middleware.GlobalWebRateLimit(classicFS),
-		middleware.Cache(),
-		func(c *gin.Context) {
-			filePath := strings.TrimPrefix(c.Request.URL.Path, "/classic")
-			if filePath != "" && filePath != "/" && classicFS.Exists("", filePath) {
-				classicFileServer.ServeHTTP(c.Writer, c.Request)
-				return
-			}
-			c.Header("Cache-Control", "no-cache")
-			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.ClassicIndexPage)
-		},
+	if assets.ClassicBuildFS != nil {
+		classicFS := common.EmbedFolder(assets.ClassicBuildFS, "web/classic/dist")
+		classicFileServer := http.StripPrefix("/classic", http.FileServer(classicFS))
+		classicHandlers := []gin.HandlerFunc{
+			middleware.RouteTag("web"),
+			compress,
+			middleware.GlobalWebRateLimit(classicFS),
+			middleware.Cache(),
+			func(c *gin.Context) {
+				filePath := strings.TrimPrefix(c.Request.URL.Path, "/classic")
+				if filePath != "" && filePath != "/" && classicFS.Exists("", filePath) {
+					classicFileServer.ServeHTTP(c.Writer, c.Request)
+					return
+				}
+				c.Header("Cache-Control", "no-cache")
+				c.Data(http.StatusOK, "text/html; charset=utf-8", assets.ClassicIndexPage)
+			},
+		}
+		router.GET("/classic", classicHandlers...)
+		router.GET("/classic/*filepath", classicHandlers...)
+		router.HEAD("/classic", classicHandlers...)
+		router.HEAD("/classic/*filepath", classicHandlers...)
 	}
-	router.GET("/classic", classicHandlers...)
-	router.GET("/classic/*filepath", classicHandlers...)
-	router.HEAD("/classic", classicHandlers...)
-	router.HEAD("/classic/*filepath", classicHandlers...)
 
 	router.NoRoute(
 		pluginDispatcher,

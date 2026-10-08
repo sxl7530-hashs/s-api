@@ -153,7 +153,7 @@ function findButton(text: string, required = true): HTMLButtonElement | null {
 
 function getControlByLabel(labelText: 'Name' | 'Quantity'): HTMLInputElement
 function getControlByLabel(labelText: 'Group'): HTMLButtonElement
-function getControlByLabel(labelText: 'Group order'): HTMLElement
+function getControlByLabel(labelText: 'Auto group order'): HTMLElement
 function getControlByLabel(labelText: string): HTMLElement {
   const label = [...document.querySelectorAll<HTMLLabelElement>('label')].find(
     (candidate) => candidate.textContent?.trim() === labelText
@@ -211,7 +211,7 @@ describe('API keys mutate drawer Auto group integration', () => {
 
     expect(
       document.body.textContent?.includes(
-        'Using the configured group order (2 groups)'
+        'Using the complete global Auto order (2 groups)'
       )
     ).toBe(true)
     expect(
@@ -219,7 +219,7 @@ describe('API keys mutate drawer Auto group integration', () => {
         ...document.querySelectorAll('[data-slot="global-auto-order-name"]'),
       ].map((item) => item.textContent)
     ).toEqual(['vip', 'default'])
-    expect(findButton('Restore configured order', true).disabled).toBe(true)
+    expect(findButton('Restore global Auto', true).disabled).toBe(true)
 
     changeInput(getControlByLabel('Name'), 'batch')
     changeInput(getControlByLabel('Quantity'), '2')
@@ -240,7 +240,7 @@ describe('API keys mutate drawer Auto group integration', () => {
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
 
-    const autoOrderControl = getControlByLabel('Group order')
+    const autoOrderControl = getControlByLabel('Auto group order')
     const addGroupTrigger = autoOrderControl.querySelector<HTMLButtonElement>(
       'button[role="combobox"]'
     )
@@ -255,7 +255,7 @@ describe('API keys mutate drawer Auto group integration', () => {
     expect(document.body.textContent?.includes('1 / 3 groups selected')).toBe(
       true
     )
-    expect(findButton('Restore configured order', true).disabled).toBe(false)
+    expect(findButton('Restore global Auto', true).disabled).toBe(false)
 
     changeInput(getControlByLabel('Name'), 'custom')
     fireEvent.click(findButton('Save changes', true))
