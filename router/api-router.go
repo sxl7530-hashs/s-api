@@ -346,6 +346,7 @@ func SetApiRouter(router *gin.Engine) {
 			systemTaskRoute.DELETE("/history", controller.DeleteSystemTaskHistory)
 			systemTaskRoute.GET("/current", controller.GetCurrentSystemTask)
 			systemTaskRoute.GET("/:task_id", controller.GetSystemTask)
+			systemTaskRoute.POST("/:task_id/cancel", controller.CancelSystemTask)
 		}
 		systemInfoRoute := apiRouter.Group("/system-info")
 		systemInfoRoute.Use(middleware.RootAuth())

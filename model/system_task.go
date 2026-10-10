@@ -15,12 +15,14 @@ const (
 	SystemTaskStatusRunning   SystemTaskStatus = "running"
 	SystemTaskStatusSucceeded SystemTaskStatus = "succeeded"
 	SystemTaskStatusFailed    SystemTaskStatus = "failed"
+	SystemTaskStatusCancelled SystemTaskStatus = "cancelled"
 
-	SystemTaskTypeLogCleanup     = "log_cleanup"
-	SystemTaskTypeChannelTest    = "channel_test"
-	SystemTaskTypeModelUpdate    = "model_update"
-	SystemTaskTypeMidjourneyPoll = "midjourney_poll"
-	SystemTaskTypeAsyncTaskPoll  = "async_task_poll"
+	SystemTaskTypeLogCleanup       = "log_cleanup"
+	SystemTaskTypeChannelTest      = "channel_test"
+	SystemTaskTypeChannelModelTest = "channel_model_test"
+	SystemTaskTypeModelUpdate      = "model_update"
+	SystemTaskTypeMidjourneyPoll   = "midjourney_poll"
+	SystemTaskTypeAsyncTaskPoll    = "async_task_poll"
 )
 
 var ErrSystemTaskLockLost = errors.New("system task lock lost")
@@ -178,7 +180,7 @@ func FindEarliestPendingSystemTasks(taskTypes []string) (map[string]*SystemTask,
 type SystemTaskFilter struct {
 	Scope  string           `form:"scope" binding:"omitempty,oneof=active history"`
 	Type   string           `form:"type" binding:"max=64"`
-	Status SystemTaskStatus `form:"status" binding:"omitempty,oneof=pending running succeeded failed"`
+	Status SystemTaskStatus `form:"status" binding:"omitempty,oneof=pending running succeeded failed cancelled"`
 }
 
 func (filter SystemTaskFilter) query() *gorm.DB {
@@ -187,7 +189,7 @@ func (filter SystemTaskFilter) query() *gorm.DB {
 	case "active":
 		query = query.Where("status IN ?", activeSystemTaskStatuses())
 	case "history":
-		query = query.Where("status IN ?", []SystemTaskStatus{SystemTaskStatusSucceeded, SystemTaskStatusFailed})
+		query = query.Where("status IN ?", []SystemTaskStatus{SystemTaskStatusSucceeded, SystemTaskStatusFailed, SystemTaskStatusCancelled})
 	}
 	if filter.Type != "" {
 		query = query.Where("type = ?", filter.Type)
@@ -439,6 +441,44 @@ func ExpireStaleSystemTaskLocks(now int64) error {
 func ReleaseSystemTaskLock(taskID string, lockedBy string) error {
 	result := DB.Where("task_id = ? AND locked_by = ?", taskID, lockedBy).Delete(&SystemTaskLock{})
 	return result.Error
+}
+
+// CancelSystemTask marks an active task as cancelled. A running task retains
+// its lease until its owning runner observes the status change and exits, so a
+// replacement task cannot overlap with in-flight provider calls.
+// The status predicate makes completion and cancellation race-safe: a task that
+// already reached a terminal state is left untouched.
+func CancelSystemTask(taskID string, reason string) (*SystemTask, bool, error) {
+	if reason == "" {
+		reason = "cancelled by administrator"
+	}
+	cancelled := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&SystemTask{}).
+			Where("task_id = ? AND status IN ?", taskID, activeSystemTaskStatuses()).
+			Updates(map[string]any{
+				"status":     SystemTaskStatusCancelled,
+				"active_key": nil,
+				"error":      reason,
+				"updated_at": common.GetTimestamp(),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		cancelled = result.RowsAffected > 0
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	task, err := GetSystemTaskByTaskID(taskID)
+	if err != nil {
+		return nil, false, err
+	}
+	if task == nil {
+		return nil, false, gorm.ErrRecordNotFound
+	}
+	return task, cancelled, nil
 }
 
 func FinishSystemTask(taskID string, lockedBy string, status SystemTaskStatus, resultPayload any, errorMessage string) error {

@@ -19,6 +19,7 @@ import (
 // service.StartSystemTaskRunner.
 func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
+	service.RegisterSystemTaskHandler(channelModelTestHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
@@ -49,12 +50,15 @@ func (channelTestHandler) NewPayload() any { return nil }
 // scheduled run, which uses the configured monitor ChannelTestMode and does not
 // notify. A manual "test all channels" trigger sets Mode=scheduled_all and
 // Notify=true to reproduce the legacy manual behavior (test every channel and
-// notify root on completion). ChannelIDs switches this exclusive task type to
-// selected-channel all-model testing.
+// notify root on completion).
 type channelTestTaskPayload struct {
 	Mode       string `json:"mode,omitempty"`
 	Notify     bool   `json:"notify,omitempty"`
 	ChannelIDs []int  `json:"channel_ids,omitempty"`
+}
+
+type channelModelTestTaskPayload struct {
+	ChannelIDs []int `json:"channel_ids,omitempty"`
 }
 
 func (channelTestHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
@@ -64,8 +68,14 @@ func (channelTestHandler) Run(ctx context.Context, task *model.SystemTask, runne
 		return
 	}
 	reporter := service.NewSystemTaskProgressReporter(task, runnerID)
+	// Rolling-upgrade compatibility: releases before channel_model_test used a
+	// channel_test payload with channel_ids. Finish those queued rows with their
+	// original semantics instead of treating them as an automatic health check.
 	if len(payload.ChannelIDs) > 0 {
 		summary, err := runSelectedChannelModelTests(ctx, payload.ChannelIDs, reporter)
+		if ctx.Err() != nil {
+			return
+		}
 		if err != nil {
 			finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 			return
@@ -76,6 +86,30 @@ func (channelTestHandler) Run(ctx context.Context, task *model.SystemTask, runne
 	summary, err := runChannelTestTask(ctx, payload.Mode, payload.Notify, reporter)
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+}
+
+// channelModelTestHandler owns the on-demand selected-channel model test. It
+// deliberately has a separate task type and lease from the scheduled health
+// check so a long automatic run cannot block a manual diagnostic.
+type channelModelTestHandler struct{}
+
+func (channelModelTestHandler) Type() string { return model.SystemTaskTypeChannelModelTest }
+
+func (channelModelTestHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	payload := channelModelTestTaskPayload{}
+	if err := task.DecodePayload(&payload); err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	summary, err := runSelectedChannelModelTests(ctx, payload.ChannelIDs, service.NewSystemTaskProgressReporter(task, runnerID))
+	if ctx.Err() != nil {
+		return
+	}
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 		return
 	}
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)

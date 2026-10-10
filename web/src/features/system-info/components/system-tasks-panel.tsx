@@ -16,29 +16,51 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ListChecks, RefreshCw } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ErrorState } from '@/components/error-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { listSystemTasks } from '@/features/system-settings/api'
+import type {
+  SystemTask,
+  SystemTaskListResponse,
+  SystemTaskResponse,
+} from '@/features/system-settings/types'
+import { api } from '@/lib/api'
+import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
+import { cancelSystemTask } from '../api'
 import { SystemTaskHistory } from './system-task-history'
 import { SystemTasksTable } from './system-tasks-table'
 
 const ACTIVE_POLL_INTERVAL_MS = 8000
 
-export function SystemTasksPanel() {
+export function SystemTasksPanel(props: { channelModelTestsOnly?: boolean }) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const [taskToCancel, setTaskToCancel] = useState<SystemTask | null>(null)
+  const queryKey = props.channelModelTestsOnly
+    ? ['channels', 'model-test-tasks']
+    : ['system-info', 'system-tasks', 'active']
   const tasksQuery = useQuery({
-    queryKey: ['system-info', 'system-tasks', 'active'],
+    queryKey,
     queryFn: async () => {
-      const res = await listSystemTasks(100, { scope: 'active' })
+      const res = props.channelModelTestsOnly
+        ? (
+            await api.get<SystemTaskListResponse>(
+              '/api/channel/test/models/tasks'
+            )
+          ).data
+        : await listSystemTasks(100, { scope: 'active' })
       if (!res.success || !Array.isArray(res.data)) {
         throw createServerError(res, t('We could not load system tasks.'))
       }
@@ -47,13 +69,51 @@ export function SystemTasksPanel() {
     staleTime: 30 * 1000,
     retry: false,
     refetchInterval: (query) =>
-      query.state.data?.length ? ACTIVE_POLL_INTERVAL_MS : false,
+      query.state.data?.some(
+        (task) => task.status === 'pending' || task.status === 'running'
+      )
+        ? ACTIVE_POLL_INTERVAL_MS
+        : false,
+  })
+  const cancelMutation = useMutation({
+    mutationFn: async (task: SystemTask) => {
+      const res = props.channelModelTestsOnly
+        ? (
+            await api.post<SystemTaskResponse<SystemTask>>(
+              `/api/channel/test/models/tasks/${encodeURIComponent(task.task_id)}/cancel`
+            )
+          ).data
+        : await cancelSystemTask(task.task_id)
+      if (!res.success || !res.data) {
+        throw createServerError(res, t('Could not stop the task.'))
+      }
+      return res.data
+    },
+    onSuccess: async () => {
+      toast.success(t('Task stopped'))
+      setTaskToCancel(null)
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ['channels', 'model-test-tasks'],
+        }),
+        queryClient.invalidateQueries({ queryKey: ['channels'] }),
+        queryClient.invalidateQueries({
+          queryKey: ['system-info', 'system-tasks', 'active'],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['system-info', 'system-tasks', 'history'],
+        }),
+      ])
+    },
+    onError: (error) => handleServerError(error, t('Could not stop the task.')),
   })
 
   const activeTasks = tasksQuery.data ?? []
   const loading = tasksQuery.isLoading
   const refreshing = tasksQuery.isFetching && !loading
-  const hasActiveTasks = activeTasks.length > 0
+  const hasActiveTasks = activeTasks.some(
+    (task) => task.status === 'pending' || task.status === 'running'
+  )
 
   return (
     <section className='bg-card overflow-hidden rounded-lg border shadow-xs'>
@@ -64,12 +124,18 @@ export function SystemTasksPanel() {
               <ListChecks className='size-4' aria-hidden='true' />
             </span>
             <div className='min-w-0'>
-              <h3 className='text-sm font-semibold'>{t('System Tasks')}</h3>
-              <p className='text-muted-foreground mt-0.5 text-xs'>
-                {t(
-                  'Recent maintenance tasks running across instances and their execution status.'
-                )}
-              </p>
+              <h3 className='text-sm font-semibold'>
+                {props.channelModelTestsOnly
+                  ? t('Selected channel model test')
+                  : t('System Tasks')}
+              </h3>
+              {!props.channelModelTestsOnly && (
+                <p className='text-muted-foreground mt-0.5 text-xs'>
+                  {t(
+                    'Recent maintenance tasks running across instances and their execution status.'
+                  )}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -137,27 +203,59 @@ export function SystemTasksPanel() {
             <div>
               <div className='mb-2 flex items-center justify-between gap-3'>
                 <div>
-                  <h4 className='text-sm font-medium'>{t('Active Tasks')}</h4>
-                  <p className='text-muted-foreground mt-0.5 text-xs'>
-                    {t('Tasks currently pending or running.')}
-                  </p>
+                  <h4 className='text-sm font-medium'>
+                    {props.channelModelTestsOnly
+                      ? t('Task History')
+                      : t('Active Tasks')}
+                  </h4>
+                  {!props.channelModelTestsOnly && (
+                    <p className='text-muted-foreground mt-0.5 text-xs'>
+                      {t('Tasks currently pending or running.')}
+                    </p>
+                  )}
                 </div>
                 <Badge variant='outline'>{activeTasks.length}</Badge>
               </div>
               {activeTasks.length > 0 ? (
-                <SystemTasksTable tasks={activeTasks} />
+                <SystemTasksTable
+                  tasks={activeTasks}
+                  onCancel={setTaskToCancel}
+                  cancellingTaskId={
+                    cancelMutation.isPending ? taskToCancel?.task_id : undefined
+                  }
+                />
               ) : (
                 <div className='text-muted-foreground rounded-md border border-dashed px-4 py-6 text-center text-sm'>
-                  {t('No active system tasks.')}
+                  {props.channelModelTestsOnly
+                    ? t('No historical system tasks.')
+                    : t('No active system tasks.')}
                 </div>
               )}
             </div>
           </div>
         )}
       </div>
-      <div className='p-4 pt-0 sm:p-5 sm:pt-0'>
-        <SystemTaskHistory activeRefreshAt={tasksQuery.dataUpdatedAt} />
-      </div>
+      {!props.channelModelTestsOnly && (
+        <div className='p-4 pt-0 sm:p-5 sm:pt-0'>
+          <SystemTaskHistory activeRefreshAt={tasksQuery.dataUpdatedAt} />
+        </div>
+      )}
+      <ConfirmDialog
+        open={taskToCancel !== null}
+        onOpenChange={(open) => {
+          if (!open && !cancelMutation.isPending) setTaskToCancel(null)
+        }}
+        title={t('Stop model test?')}
+        desc={t(
+          'The remaining model tests will be skipped. Results already applied are not reverted.'
+        )}
+        destructive
+        isLoading={cancelMutation.isPending}
+        confirmText={cancelMutation.isPending ? t('Stopping...') : t('Stop')}
+        handleConfirm={() => {
+          if (taskToCancel) cancelMutation.mutate(taskToCancel)
+        }}
+      />
     </section>
   )
 }

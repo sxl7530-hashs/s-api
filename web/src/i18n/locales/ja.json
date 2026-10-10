@@ -6905,6 +6905,12 @@
     "Maximum disk usage for cache (%)": "Maximum disk usage for cache (%)",
     "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
     "Minimum free disk space (MB)": "Minimum free disk space (MB)",
-    "Always keep this space free": "Always keep this space free"
+    "Always keep this space free": "Always keep this space free",
+    "Selected channel model test": "選択したチャネルの全モデルテスト",
+    "cancelled": "キャンセル済み",
+    "Stop model test?": "モデルテストを停止しますか？",
+    "The remaining model tests will be skipped. Results already applied are not reverted.": "残りのモデルテストはスキップされます。適用済みの結果は元に戻りません。",
+    "Task stopped": "タスクを停止しました",
+    "Could not stop the task.": "タスクを停止できませんでした。"
   }
 }

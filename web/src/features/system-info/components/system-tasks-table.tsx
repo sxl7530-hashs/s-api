@@ -16,10 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { OctagonX } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { StaticDataTable } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import {
   TableBody,
@@ -43,6 +45,7 @@ const STATUS_VARIANT: Record<SystemTaskStatus, 'secondary' | 'destructive'> = {
   running: 'secondary',
   succeeded: 'secondary',
   failed: 'destructive',
+  cancelled: 'secondary',
 }
 
 const STATUS_CLASS_NAME: Record<SystemTaskStatus, string> = {
@@ -53,6 +56,7 @@ const STATUS_CLASS_NAME: Record<SystemTaskStatus, string> = {
   succeeded:
     'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
   failed: '',
+  cancelled: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-500/15 dark:text-zinc-300',
 }
 
 const STATUS_DOT_CLASS_NAME: Record<SystemTaskStatus, string> = {
@@ -60,6 +64,7 @@ const STATUS_DOT_CLASS_NAME: Record<SystemTaskStatus, string> = {
   running: 'bg-sky-500',
   succeeded: 'bg-emerald-500',
   failed: 'bg-destructive',
+  cancelled: 'bg-zinc-500',
 }
 
 const PROGRESS_BAR_CLASS_NAME: Record<SystemTaskStatus, string> = {
@@ -67,6 +72,7 @@ const PROGRESS_BAR_CLASS_NAME: Record<SystemTaskStatus, string> = {
   running: '[&_[data-slot=progress-indicator]]:bg-sky-500',
   succeeded: '[&_[data-slot=progress-indicator]]:bg-emerald-500',
   failed: '[&_[data-slot=progress-indicator]]:bg-destructive',
+  cancelled: '[&_[data-slot=progress-indicator]]:bg-zinc-500',
 }
 
 const TYPE_DISPLAY_ID: Record<string, string> = {
@@ -81,13 +87,15 @@ function getProgress(task: SystemTask): number | null {
 
 type SystemTasksTableProps = {
   tasks: SystemTask[]
+  onCancel?: (task: SystemTask) => void
+  cancellingTaskId?: string
 }
 
 export function SystemTasksTable(props: SystemTasksTableProps) {
   const { t, i18n } = useTranslation()
 
   return (
-    <StaticDataTable tableClassName='min-w-[900px]'>
+    <StaticDataTable tableClassName='min-w-[980px]'>
       <TableHeader>
         <TableRow className='bg-muted/40 hover:bg-muted/40'>
           <TableHead className='h-9 w-[260px] px-4 text-xs'>
@@ -106,6 +114,11 @@ export function SystemTasksTable(props: SystemTasksTableProps) {
           <TableHead className='h-9 w-[220px] pr-4 text-xs'>
             {t('Detail')}
           </TableHead>
+          {props.onCancel && (
+            <TableHead className='h-9 w-[120px] pr-4 text-right text-xs'>
+              {t('Actions')}
+            </TableHead>
+          )}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -168,6 +181,26 @@ export function SystemTasksTable(props: SystemTasksTableProps) {
               >
                 {task.error || '-'}
               </TableCell>
+              {props.onCancel && (
+                <TableCell className='py-3 pr-4 text-right align-middle'>
+                  {task.type === 'channel_model_test' &&
+                    (task.status === 'pending' ||
+                      task.status === 'running') && (
+                      <Button
+                        type='button'
+                        variant='destructive'
+                        size='sm'
+                        onClick={() => props.onCancel?.(task)}
+                        disabled={props.cancellingTaskId === task.task_id}
+                      >
+                        <OctagonX data-icon='inline-start' aria-hidden='true' />
+                        {props.cancellingTaskId === task.task_id
+                          ? t('Stopping...')
+                          : t('Stop')}
+                      </Button>
+                    )}
+                </TableCell>
+              )}
             </TableRow>
           )
         })}

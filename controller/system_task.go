@@ -95,6 +95,24 @@ func ListSystemTasks(c *gin.Context) {
 	})
 }
 
+// ListChannelModelTestTasks exposes only manual model tests to channel writers.
+// System maintenance tasks and caller-supplied type filters remain inaccessible.
+func ListChannelModelTestTasks(c *gin.Context) {
+	tasks, total, err := model.ListSystemTasks(model.SystemTaskFilter{Type: model.SystemTaskTypeChannelModelTest}, 0, 20)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	responses := make([]model.SystemTaskResponse, 0, len(tasks))
+	for _, task := range tasks {
+		response := task.ToResponse()
+		response.Payload = nil
+		response.LockedBy = ""
+		responses = append(responses, response)
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": responses, "total": total})
+}
+
 func DeleteSystemTaskHistory(c *gin.Context) {
 	var filter model.SystemTaskFilter
 	if err := c.ShouldBindQuery(&filter); err != nil {
@@ -141,4 +159,35 @@ func GetSystemTask(c *gin.Context) {
 		"message": "",
 		"data":    task.ToResponse(),
 	})
+}
+
+func CancelSystemTask(c *gin.Context) {
+	taskID := c.Param("task_id")
+	if taskID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "task id is required"})
+		return
+	}
+	task, err := model.GetSystemTaskByTaskID(taskID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if task == nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "task not found"})
+		return
+	}
+	if task.Type != model.SystemTaskTypeChannelModelTest {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "only selected-channel model tests can be cancelled"})
+		return
+	}
+	task, cancelled, err := model.CancelSystemTask(taskID, "cancelled by administrator")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !cancelled {
+		c.JSON(http.StatusConflict, gin.H{"success": false, "message": "task is no longer active", "data": task.ToResponse()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": task.ToResponse()})
 }

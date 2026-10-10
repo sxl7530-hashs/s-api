@@ -185,6 +185,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/system-task/history":              accessTokenScopeRule("ops:write"),
 	"GET /api/system-task/current":                 accessTokenScopeRule("ops:read"),
 	"GET /api/system-task/:task_id":                accessTokenScopeRule("ops:read"),
+	"POST /api/system-task/:task_id/cancel":        accessTokenScopeRule("ops:write"),
 	"GET /api/system-info/instances":               accessTokenScopeRule("ops:read"),
 	"DELETE /api/system-info/stale-instances":      accessTokenScopeRule("ops:write"),
 	"DELETE /api/system-info/instances/:node_name": accessTokenScopeRule("ops:write"),

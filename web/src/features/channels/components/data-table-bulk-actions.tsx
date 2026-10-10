@@ -116,6 +116,9 @@ export function DataTableBulkActions<TData>({
   const handleModelTest = () => {
     if (!canEditChannels) return
     void handleTestSelectedChannelModels(selectedIds, () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['channels', 'model-test-tasks'],
+      })
       setShowModelTestConfirm(false)
       handleClearSelection()
     })

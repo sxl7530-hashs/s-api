@@ -6905,6 +6905,12 @@
     "Maximum disk usage for cache (%)": "Maximum disk usage for cache (%)",
     "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
     "Minimum free disk space (MB)": "Minimum free disk space (MB)",
-    "Always keep this space free": "Always keep this space free"
+    "Always keep this space free": "Always keep this space free",
+    "Selected channel model test": "Kiểm tra mô hình của kênh đã chọn",
+    "cancelled": "đã hủy",
+    "Stop model test?": "Dừng kiểm tra mô hình?",
+    "The remaining model tests will be skipped. Results already applied are not reverted.": "Các kiểm tra mô hình còn lại sẽ bị bỏ qua. Kết quả đã áp dụng sẽ không được hoàn tác.",
+    "Task stopped": "Đã dừng tác vụ",
+    "Could not stop the task.": "Không thể dừng tác vụ."
   }
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,8 +21,12 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func TestGetChannelDefaultBaseURLsUsesBuiltInDefaults(t *testing.T) {
@@ -519,6 +524,86 @@ func TestApplyChannelModelTestResultsDisablesChannelWhenEveryModelMatches(t *tes
 	assert.Zero(t, enabledAbilityCount)
 }
 
+func TestApplyChannelModelTestResultsPreservesChangesMadeDuringTesting(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		models string
+	}{
+		{"manually disabled", common.ChannelStatusManuallyDisabled, "model-a,model-b"},
+		{"automatically disabled", common.ChannelStatusAutoDisabled, "model-a,model-b"},
+		{"models edited", common.ChannelStatusEnabled, "model-a,model-c"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupModelListControllerTestDB(t)
+			require.NoError(t, db.AutoMigrate(&model.ChannelCostRatioHistory{}))
+			channel := model.Channel{Type: constant.ChannelTypeOpenAI, Key: "sk-test", Status: common.ChannelStatusEnabled, Name: "edited-during-test", Models: "model-a,model-b", Group: "default"}
+			require.NoError(t, channel.Insert())
+			require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(map[string]any{"status": tc.status, "models": tc.models}).Error)
+			removed, disabled, err := applyChannelModelTestResults(&channel, []channelModelTestResult{{Model: "model-a", MatchesAutoBan: true}, {Model: "model-b", MatchesAutoBan: true}})
+			require.NoError(t, err)
+			assert.Zero(t, removed)
+			assert.False(t, disabled)
+			var current model.Channel
+			require.NoError(t, db.First(&current, channel.Id).Error)
+			assert.Equal(t, tc.status, current.Status)
+			assert.Equal(t, tc.models, current.Models)
+		})
+	}
+}
+
+func TestApplyChannelModelTestResultsDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var driver gorm.Dialector
+			switch dialect {
+			case "sqlite":
+				driver = sqlite.Open(":memory:")
+			case "mysql":
+				if os.Getenv("TEST_MYSQL_DSN") == "" {
+					t.Skip("TEST_MYSQL_DSN is not configured")
+				}
+				driver = mysql.Open(os.Getenv("TEST_MYSQL_DSN"))
+			case "postgres":
+				if os.Getenv("TEST_POSTGRES_DSN") == "" {
+					t.Skip("TEST_POSTGRES_DSN is not configured")
+				}
+				driver = postgres.Open(os.Getenv("TEST_POSTGRES_DSN"))
+			}
+			db, err := gorm.Open(driver, &gorm.Config{})
+			require.NoError(t, err)
+			previousDB := model.DB
+			model.DB = db
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				model.DB = previousDB
+				require.NoError(t, db.Migrator().DropTable(&model.Ability{}, &model.Channel{}))
+				require.NoError(t, sqlDB.Close())
+			})
+			require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+			channel := model.Channel{Type: constant.ChannelTypeOpenAI, Key: "sk-test", Status: common.ChannelStatusEnabled, Models: "model-a,model-b", Group: "default"}
+			require.NoError(t, db.Create(&channel).Error)
+			require.NoError(t, channel.UpdateAbilities(db))
+			removed, disabled, err := applyChannelModelTestResults(&channel, []channelModelTestResult{{Model: "model-a", MatchesAutoBan: true}})
+			require.NoError(t, err)
+			assert.Equal(t, 1, removed)
+			assert.False(t, disabled)
+			require.NoError(t, db.First(&channel, channel.Id).Error)
+			assert.Equal(t, "model-b", channel.Models)
+			removed, disabled, err = applyChannelModelTestResults(&channel, []channelModelTestResult{{Model: "model-b", MatchesAutoBan: true}})
+			require.NoError(t, err)
+			assert.Equal(t, 1, removed)
+			assert.True(t, disabled)
+			var abilities []model.Ability
+			require.NoError(t, db.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
+			require.Len(t, abilities, 1)
+			assert.Equal(t, "model-b", abilities[0].Model)
+			assert.False(t, abilities[0].Enabled)
+		})
+	}
+}
+
 func TestChannelTestMatchesAutoBanRulesIncludesResponseTimeThreshold(t *testing.T) {
 	originalEnabled := common.AutomaticDisableChannelEnabled
 	common.AutomaticDisableChannelEnabled = true
@@ -552,9 +637,47 @@ func TestSelectedChannelModelsEnqueuesDeduplicatedChannelIDs(t *testing.T) {
 	task, err := model.GetSystemTaskByTaskID(response.Data.TaskID)
 	require.NoError(t, err)
 	require.NotNil(t, task)
-	payload := channelTestTaskPayload{}
+	assert.Equal(t, model.SystemTaskTypeChannelModelTest, task.Type)
+	payload := channelModelTestTaskPayload{}
 	require.NoError(t, task.DecodePayload(&payload))
 	assert.Equal(t, []int{11, 22}, payload.ChannelIDs)
+}
+
+func TestSelectedChannelModelsDoesNotConflictWithAutomaticChannelTest(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}, &model.Log{}))
+	_, err := model.CreateSystemTask(model.SystemTaskTypeChannelTest, nil, nil)
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 1)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/test/models/batch", strings.NewReader(`{"channel_ids":[11]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	TestSelectedChannelModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	active, err := model.GetActiveSystemTask(model.SystemTaskTypeChannelModelTest)
+	require.NoError(t, err)
+	require.NotNil(t, active)
+	assert.Equal(t, model.SystemTaskTypeChannelModelTest, active.Type)
+}
+
+func TestLegacySelectedModelTaskDoesNotBecomeAutomaticCheck(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}))
+	root := model.User{Username: "legacy-test-root", Role: common.RoleRootUser}
+	require.NoError(t, db.Create(&root).Error)
+	task, err := model.CreateSystemTask(model.SystemTaskTypeChannelTest, channelTestTaskPayload{ChannelIDs: []int{99999}}, nil)
+	require.NoError(t, err)
+	task, claimed, err := model.ClaimSystemTask(task.ID, task.Type, "legacy-runner", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	channelTestHandler{}.Run(context.Background(), task, "legacy-runner")
+	finished, err := model.GetSystemTaskByTaskID(task.TaskID)
+	require.NoError(t, err)
+	assert.Equal(t, model.SystemTaskStatusFailed, finished.Status, "missing selected channel must fail instead of executing an automatic all-channel check")
 }
 
 func TestSelectedChannelModelsRejectsOversizedSelection(t *testing.T) {

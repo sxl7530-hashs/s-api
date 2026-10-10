@@ -308,8 +308,16 @@ func runSystemTaskScheduler() {
 func runWithLeaseHeartbeat(task *model.SystemTask, runnerID string, fn func(ctx context.Context)) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if task.Type == model.SystemTaskTypeChannelModelTest {
+		defer func() { _ = model.ReleaseSystemTaskLock(task.TaskID, runnerID) }()
+	}
 
 	interval := systemTaskLockTTL / 3
+	if task.Type == model.SystemTaskTypeChannelModelTest {
+		// Manual model tests are cancellable. A shorter heartbeat bounds the time
+		// between persisting cancellation and cancelling in-flight provider calls.
+		interval = 2 * time.Second
+	}
 	if interval <= 0 {
 		interval = systemTaskLockTTL
 	}
@@ -323,6 +331,13 @@ func runWithLeaseHeartbeat(task *model.SystemTask, runnerID string, fn func(ctx 
 			case <-done:
 				return
 			case <-ticker.C:
+				if task.Type == model.SystemTaskTypeChannelModelTest {
+					latest, err := model.GetSystemTaskByTaskID(task.TaskID)
+					if err == nil && (latest == nil || latest.Status != model.SystemTaskStatusRunning) {
+						cancel()
+						return
+					}
+				}
 				if err := model.RenewSystemTaskLock(task.TaskID, runnerID, systemTaskLockUntil()); err != nil {
 					cancel()
 					return

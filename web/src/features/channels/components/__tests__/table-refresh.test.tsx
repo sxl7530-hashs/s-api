@@ -31,7 +31,9 @@ import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
+import { Channels } from '../../index'
 import type { Channel } from '../../types'
 import { ChannelsProvider } from '../channels-provider'
 import { ChannelsTable } from '../channels-table'
@@ -84,10 +86,17 @@ afterEach(() => {
   localStorage.clear()
   clients.splice(0).forEach((client) => client.clear())
   vi.restoreAllMocks()
+  useAuthStore.getState().auth.reset()
 })
 
-async function renderChannelsPage(searchGate: () => Promise<void>) {
+async function renderChannelsPage(
+  searchGate: () => Promise<void>,
+  fullPage = false
+) {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/channel/test/models/tasks') {
+      return { data: { success: true, data: [], total: 0 } }
+    }
     if (url === '/api/channel/search') {
       await searchGate()
       return {
@@ -108,11 +117,14 @@ async function renderChannelsPage(searchGate: () => Promise<void>) {
   const channelsRoute = createRoute({
     getParentRoute: () => auth,
     path: 'channels/',
-    component: () => (
-      <ChannelsProvider>
-        <ChannelsTable />
-      </ChannelsProvider>
-    ),
+    component: () =>
+      fullPage ? (
+        <Channels />
+      ) : (
+        <ChannelsProvider>
+          <ChannelsTable />
+        </ChannelsProvider>
+      ),
   })
   const initialEntry =
     '/channels/?filter=prod&group=%5B%22vip%22%5D&status=%5B%22enabled%22%5D&model=gpt-4o'
@@ -152,4 +164,25 @@ it('refetches the channel list with the current filters and marks Refresh busy w
   expect(refresh).toHaveAttribute('aria-busy', 'true')
   release()
   await waitFor(() => expect(refresh).toHaveAttribute('aria-busy', 'false'))
+})
+
+it('opens model test history from the channel toolbar without taking space from the channel table', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
+  const get = await renderChannelsPage(() => Promise.resolve(), true)
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(
+    get.mock.calls.some(([url]) => url === '/api/channel/test/models/tasks')
+  ).toBe(false)
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Selected channel model test' })
+  )
+  expect(await screen.findByRole('dialog')).toBeVisible()
+  expect(await screen.findByText('No historical system tasks.')).toBeVisible()
+  await userEvent.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(
+    screen.getByRole('button', { name: 'Selected channel model test' })
+  ).toHaveFocus()
 })

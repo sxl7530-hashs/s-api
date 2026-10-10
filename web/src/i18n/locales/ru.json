@@ -6905,6 +6905,12 @@
     "Maximum disk usage for cache (%)": "Maximum disk usage for cache (%)",
     "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
     "Minimum free disk space (MB)": "Minimum free disk space (MB)",
-    "Always keep this space free": "Always keep this space free"
+    "Always keep this space free": "Always keep this space free",
+    "Selected channel model test": "Тест моделей выбранных каналов",
+    "cancelled": "отменено",
+    "Stop model test?": "Остановить тест моделей?",
+    "The remaining model tests will be skipped. Results already applied are not reverted.": "Оставшиеся тесты моделей будут пропущены. Уже применённые результаты не отменяются.",
+    "Task stopped": "Задача остановлена",
+    "Could not stop the task.": "Не удалось остановить задачу."
   }
 }

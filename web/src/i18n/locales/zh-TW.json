@@ -6905,6 +6905,12 @@
     "Maximum disk usage for cache (%)": "Maximum disk usage for cache (%)",
     "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
     "Minimum free disk space (MB)": "Minimum free disk space (MB)",
-    "Always keep this space free": "Always keep this space free"
+    "Always keep this space free": "Always keep this space free",
+    "Selected channel model test": "所選渠道全模型測試",
+    "cancelled": "已終止",
+    "Stop model test?": "終止模型測試？",
+    "The remaining model tests will be skipped. Results already applied are not reverted.": "剩餘模型將不再測試，已套用的測試結果不會回復。",
+    "Task stopped": "任務已終止",
+    "Could not stop the task.": "無法終止任務。"
   }
 }

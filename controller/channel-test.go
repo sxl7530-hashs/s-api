@@ -956,7 +956,7 @@ func selectedChannelModels(channel *model.Channel) []string {
 	return models
 }
 
-func testAllModelsForChannel(ctx context.Context, channel *model.Channel, testUserID int) []channelModelTestResult {
+func testAllModelsForChannel(ctx context.Context, channel *model.Channel, testUserID int, reportModel func()) []channelModelTestResult {
 	modelNames := selectedChannelModels(channel)
 	results := make([]channelModelTestResult, 0, len(modelNames))
 	disableThreshold := int64(common.ChannelDisableThreshold * 1000)
@@ -977,6 +977,9 @@ func testAllModelsForChannel(ctx context.Context, channel *model.Channel, testUs
 			Succeeded:      succeeded,
 			MatchesAutoBan: matchesAutoBan,
 		})
+		if reportModel != nil {
+			reportModel()
+		}
 	}
 	return results
 }
@@ -1015,6 +1018,12 @@ func applyChannelModelTestResults(channel *model.Channel, results []channelModel
 		tx.Rollback()
 		return 0, false, err
 	}
+	// A long-running test must not apply an old decision over a channel edited
+	// or disabled while provider calls were in flight.
+	if current.Status == common.ChannelStatusManuallyDisabled || current.Status != channel.Status || current.Models != channel.Models {
+		tx.Rollback()
+		return 0, false, nil
+	}
 	currentModels := current.GetModels()
 	remaining := make([]string, 0, len(currentModels))
 	for _, modelName := range currentModels {
@@ -1031,12 +1040,24 @@ func applyChannelModelTestResults(channel *model.Channel, results []channelModel
 		tx.Rollback()
 		return 0, false, nil
 	}
+	// Compare-and-swap also guards the gap between the read and write. The
+	// transaction keeps the channel mutation and ability updates atomic.
+	channelUpdate := tx.Model(&model.Channel{}).Where("id = ? AND status = ? AND models = ?", current.Id, current.Status, current.Models)
 
 	if len(remaining) == 0 {
-		disabled = true
-		if err = tx.Model(&model.Channel{}).Where("id = ?", current.Id).Update("status", common.ChannelStatusAutoDisabled).Error; err != nil {
+		if current.Status == common.ChannelStatusAutoDisabled {
 			tx.Rollback()
-			return 0, false, err
+			return 0, false, nil
+		}
+		disabled = true
+		update := channelUpdate.Update("status", common.ChannelStatusAutoDisabled)
+		if update.Error != nil {
+			tx.Rollback()
+			return 0, false, update.Error
+		}
+		if update.RowsAffected == 0 {
+			tx.Rollback()
+			return 0, false, nil
 		}
 		if err = tx.Model(&model.Ability{}).Where("channel_id = ?", current.Id).Update("enabled", false).Error; err != nil {
 			tx.Rollback()
@@ -1044,9 +1065,14 @@ func applyChannelModelTestResults(channel *model.Channel, results []channelModel
 		}
 	} else {
 		current.Models = strings.Join(remaining, ",")
-		if err = tx.Model(&model.Channel{}).Where("id = ?", current.Id).Update("models", current.Models).Error; err != nil {
+		update := channelUpdate.Update("models", current.Models)
+		if update.Error != nil {
 			tx.Rollback()
-			return 0, false, err
+			return 0, false, update.Error
+		}
+		if update.RowsAffected == 0 {
+			tx.Rollback()
+			return 0, false, nil
 		}
 		if err = current.UpdateAbilities(tx); err != nil {
 			tx.Rollback()
@@ -1065,19 +1091,37 @@ func runSelectedChannelModelTests(ctx context.Context, channelIDs []int, report 
 	if err != nil {
 		return summary, err
 	}
+	channels := make([]*model.Channel, 0, len(channelIDs))
+	totalModels := 0
+	var firstErr error
+	for _, channelID := range channelIDs {
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
+		channel, loadErr := model.GetChannelById(channelID, true)
+		if loadErr != nil {
+			if firstErr == nil {
+				firstErr = loadErr
+			}
+			continue
+		}
+		channels = append(channels, channel)
+		totalModels += len(selectedChannelModels(channel))
+	}
 	concurrency := operation_setting.NormalizeChannelTestConcurrency(operation_setting.GetMonitorSetting().ChannelTestConcurrency)
-	jobs := make(chan int)
+	jobs := make(chan *model.Channel)
 	type workerResult struct {
-		summary channelModelTestSummary
-		err     error
+		summary         channelModelTestSummary
+		err             error
+		modelsProcessed int
 	}
 	results := make(chan workerResult)
-	workerCount := min(concurrency, len(channelIDs))
+	workerCount := min(concurrency, len(channels))
 	if report != nil {
-		report(0, len(channelIDs))
+		report(0, totalModels)
 	}
 	if workerCount == 0 {
-		return summary, nil
+		return summary, firstErr
 	}
 
 	var workers sync.WaitGroup
@@ -1085,16 +1129,16 @@ func runSelectedChannelModelTests(ctx context.Context, channelIDs []int, report 
 	for range workerCount {
 		go func() {
 			defer workers.Done()
-			for channelID := range jobs {
+			for channel := range jobs {
 				if ctx.Err() != nil {
 					return
 				}
-				channel, loadErr := model.GetChannelById(channelID, true)
-				if loadErr != nil {
-					results <- workerResult{err: loadErr}
-					continue
-				}
-				modelResults := testAllModelsForChannel(ctx, channel, testUserID)
+				modelResults := testAllModelsForChannel(ctx, channel, testUserID, func() {
+					select {
+					case <-ctx.Done():
+					case results <- workerResult{modelsProcessed: 1}:
+					}
+				})
 				if ctx.Err() != nil {
 					return
 				}
@@ -1124,11 +1168,11 @@ func runSelectedChannelModelTests(ctx context.Context, channelIDs []int, report 
 	}
 	go func() {
 		defer close(jobs)
-		for _, channelID := range channelIDs {
+		for _, channel := range channels {
 			select {
 			case <-ctx.Done():
 				return
-			case jobs <- channelID:
+			case jobs <- channel:
 			}
 		}
 	}()
@@ -1137,9 +1181,15 @@ func runSelectedChannelModelTests(ctx context.Context, channelIDs []int, report 
 		close(results)
 	}()
 
-	processed := 0
-	var firstErr error
+	processedModels := 0
 	for result := range results {
+		if result.modelsProcessed > 0 {
+			processedModels += result.modelsProcessed
+			if report != nil && ctx.Err() == nil {
+				report(processedModels, totalModels)
+			}
+			continue
+		}
 		if firstErr == nil && result.err != nil {
 			firstErr = result.err
 		}
@@ -1149,10 +1199,6 @@ func runSelectedChannelModelTests(ctx context.Context, channelIDs []int, report 
 		summary.ModelsFailed += result.summary.ModelsFailed
 		summary.ModelsRemoved += result.summary.ModelsRemoved
 		summary.ChannelsDisabled += result.summary.ChannelsDisabled
-		processed++
-		if report != nil && ctx.Err() == nil {
-			report(processed, len(channelIDs))
-		}
 	}
 	if summary.ModelsRemoved > 0 || summary.ChannelsDisabled > 0 {
 		model.InitChannelCache()
@@ -1182,7 +1228,7 @@ func TestSelectedChannelModels(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeChannelTest, channelTestTaskPayload{ChannelIDs: ids})
+	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeChannelModelTest, channelModelTestTaskPayload{ChannelIDs: ids})
 	if err != nil {
 		common.ApiError(c, err)
 		return

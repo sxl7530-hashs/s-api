@@ -47,6 +47,18 @@ func TestSystemTaskListFiltersAndPaginationResponse(t *testing.T) {
 	assert.EqualValues(t, 2, response.Total)
 	require.Len(t, response.Data, 1)
 	assert.Equal(t, "older", response.Data[0].TaskID)
+
+	require.NoError(t, db.Create(&model.SystemTask{TaskID: "manual", Type: model.SystemTaskTypeChannelModelTest, Status: model.SystemTaskStatusRunning, Payload: `{"channel_ids":[1]}`, LockedBy: "private-runner"}).Error)
+	recorder = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/channel/test/models/tasks?type=channel_test&scope=history&limit=100", nil)
+	ListChannelModelTestTasks(c)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Len(t, response.Data, 1)
+	assert.Equal(t, "manual", response.Data[0].TaskID)
+	assert.Empty(t, response.Data[0].Payload)
+	assert.Empty(t, response.Data[0].LockedBy)
 }
 
 func TestSystemTaskInvalidFiltersAreRejected(t *testing.T) {
@@ -70,4 +82,39 @@ func TestSystemTaskInvalidFiltersAreRejected(t *testing.T) {
 			assert.JSONEq(t, `{"success":false,"message":"invalid system task filters"}`, recorder.Body.String())
 		})
 	}
+}
+
+func TestCancelSystemTaskOnlyAllowsActiveSelectedChannelModelTests(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		require.NoError(t, sqlDB.Close())
+	})
+	require.NoError(t, db.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}))
+
+	task, err := model.CreateSystemTask(model.SystemTaskTypeChannelModelTest, nil, nil)
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/system-task/"+task.TaskID+"/cancel", nil)
+	CancelSystemTask(c)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	automaticTask, err := model.CreateSystemTask(model.SystemTaskTypeChannelTest, nil, nil)
+	require.NoError(t, err)
+	recorder = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(recorder)
+	c.Params = gin.Params{{Key: "task_id", Value: automaticTask.TaskID}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/system-task/"+automaticTask.TaskID+"/cancel", nil)
+	CancelSystemTask(c)
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	reloaded, err := model.GetSystemTaskByTaskID(automaticTask.TaskID)
+	require.NoError(t, err)
+	assert.Equal(t, model.SystemTaskStatusPending, reloaded.Status)
 }

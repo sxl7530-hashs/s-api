@@ -6905,6 +6905,12 @@
     "Maximum disk usage for cache (%)": "缓存最多使用磁盘比例（%）",
     "Automatic mode uses this percentage of the disk": "自动模式按此比例使用磁盘",
     "Minimum free disk space (MB)": "最低剩余磁盘空间（MB）",
-    "Always keep this space free": "始终保留这部分空间"
+    "Always keep this space free": "始终保留这部分空间",
+    "Selected channel model test": "所选渠道全模型测试",
+    "cancelled": "已终止",
+    "Stop model test?": "终止模型测试？",
+    "The remaining model tests will be skipped. Results already applied are not reverted.": "剩余模型将不再测试，已应用的测试结果不会回滚。",
+    "Task stopped": "任务已终止",
+    "Could not stop the task.": "无法终止任务。"
   }
 }

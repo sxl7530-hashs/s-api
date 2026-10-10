@@ -6905,6 +6905,12 @@
     "Maximum disk usage for cache (%)": "Maximum disk usage for cache (%)",
     "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
     "Minimum free disk space (MB)": "Minimum free disk space (MB)",
-    "Always keep this space free": "Always keep this space free"
+    "Always keep this space free": "Always keep this space free",
+    "Selected channel model test": "Test des modèles des canaux sélectionnés",
+    "cancelled": "annulé",
+    "Stop model test?": "Arrêter le test des modèles ?",
+    "The remaining model tests will be skipped. Results already applied are not reverted.": "Les tests restants seront ignorés. Les résultats déjà appliqués ne seront pas annulés.",
+    "Task stopped": "Tâche arrêtée",
+    "Could not stop the task.": "Impossible d'arrêter la tâche."
   }
 }

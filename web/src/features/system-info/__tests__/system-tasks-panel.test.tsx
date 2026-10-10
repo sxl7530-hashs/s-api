@@ -42,13 +42,13 @@ const task = {
   locked_by: 'history-runner',
 }
 
-function renderPanel() {
+function renderPanel(channelModelTestsOnly = false) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   render(
     <QueryClientProvider client={client}>
-      <SystemTasksPanel />
+      <SystemTasksPanel channelModelTestsOnly={channelModelTestsOnly} />
       <Toaster />
     </QueryClientProvider>
   )
@@ -58,6 +58,48 @@ function renderPanel() {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+})
+
+it('lets channel writers view progress and stop tests without accessing maintenance history', async () => {
+  const get = vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: [
+        {
+          ...task,
+          task_id: 'manual',
+          type: 'channel_model_test',
+          status: 'running',
+          state: { total: 10, processed: 4, progress: 40 },
+        },
+      ],
+      total: 1,
+    },
+  })
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: true, data: { ...task, status: 'cancelled' } },
+  })
+  const client = renderPanel(true)
+  expect(await screen.findByText('40%')).toBeVisible()
+  expect(get).toHaveBeenCalledWith('/api/channel/test/models/tasks')
+  expect(
+    screen.queryByRole('combobox', { name: 'Type' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByText('Tasks currently pending or running.')
+  ).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Stop' }))
+  await userEvent.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Stop',
+    })
+  )
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/channel/test/models/tasks/manual/cancel'
+    )
+  )
+  client.clear()
 })
 
 it('filters history on the server and resets pagination without hiding active tasks', async () => {
@@ -128,6 +170,51 @@ it('keeps filters available and disables cleanup when history is empty', async (
   expect(
     screen.getByRole('button', { name: 'Clean task history' })
   ).toBeDisabled()
+  client.clear()
+})
+
+it('shows progress and confirms cancellation for a selected-channel model test', async () => {
+  vi.spyOn(api, 'get').mockImplementation(async (_url, config) => ({
+    data: {
+      success: true,
+      data:
+        config?.params?.scope === 'active'
+          ? [
+              {
+                ...task,
+                task_id: 'model-test-active',
+                type: 'channel_model_test',
+                status: 'running',
+                state: { total: 10, processed: 4, progress: 40 },
+              },
+            ]
+          : [],
+      total: config?.params?.scope === 'active' ? 1 : 0,
+    },
+  }))
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: true,
+      data: { ...task, type: 'channel_model_test', status: 'cancelled' },
+    },
+  })
+  const client = renderPanel()
+
+  expect(await screen.findByText('Selected channel model test')).toBeVisible()
+  expect(await screen.findByText('40%')).toBeVisible()
+  await userEvent.click(screen.getByRole('button', { name: 'Stop' }))
+  const dialog = screen.getByRole('alertdialog')
+  expect(within(dialog).getByText('Stop model test?')).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Stop' }))
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/system-task/model-test-active/cancel'
+    )
+  )
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
   client.clear()
 })
 

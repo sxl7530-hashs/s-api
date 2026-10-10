@@ -162,7 +162,11 @@ export function SystemTaskHistory(props: { activeRefreshAt: number }) {
               onChange={(event) => {
                 setFilters((previous) => ({
                   ...previous,
-                  status: event.target.value as '' | 'succeeded' | 'failed',
+                  status: event.target.value as
+                    | ''
+                    | 'succeeded'
+                    | 'failed'
+                    | 'cancelled',
                 }))
                 setPagination((previous) => ({ ...previous, pageIndex: 0 }))
               }}
@@ -175,6 +179,9 @@ export function SystemTaskHistory(props: { activeRefreshAt: number }) {
               </NativeSelectOption>
               <NativeSelectOption value='failed'>
                 {t('failed')}
+              </NativeSelectOption>
+              <NativeSelectOption value='cancelled'>
+                {t('cancelled')}
               </NativeSelectOption>
             </NativeSelect>
           </>

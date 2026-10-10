@@ -290,12 +290,19 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 	require.NoError(t, authz.Init(model.DB))
 	// The channel router declares this rule when it registers the route.
 	DeclareAccessTokenPermissionRoute(http.MethodGet, "/api/channel/", authz.ChannelRead)
+	DeclareAccessTokenPermissionRoute(http.MethodPost, "/api/channel/test/models/tasks/:task_id/cancel", authz.ChannelWrite)
 
 	legacy := "middleware-legacy-token"
 	admin := createMiddlewarePATUser(t, "route-rule-admin", legacy)
 	require.NoError(t, model.DB.Model(admin).Update("role", common.RoleAdminUser).Error)
 	profile, _ := createMiddlewareScopedToken(t, admin.Id, 0, "profile:read")
 	channel, _ := createMiddlewareScopedToken(t, admin.Id, time.Now().Unix()+3600, "channel:read")
+	adminOps, _ := createMiddlewareScopedToken(t, admin.Id, 0, "ops:write")
+	channelWrite, _ := createMiddlewareScopedToken(t, admin.Id, 0, "channel:write")
+	root := createMiddlewarePATUser(t, "route-rule-root", "")
+	require.NoError(t, model.DB.Model(root).Update("role", common.RoleRootUser).Error)
+	rootOps, _ := createMiddlewareScopedToken(t, root.Id, 0, "ops:write")
+	rootRead, _ := createMiddlewareScopedToken(t, root.Id, 0, "ops:read")
 	expired, _ := createMiddlewareScopedToken(t, admin.Id, time.Now().Unix()-1, "profile:read")
 
 	ok := func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"id": c.GetInt("id")}) }
@@ -305,6 +312,47 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 	router.GET("/api/undeclared", UserAuth(), ok)
 	router.GET("/api/channel/", AdminAuth(), RequirePermission(authz.ChannelRead), ok)
 	router.GET("/api/pricing", TryUserAuth(), ok)
+	router.POST("/api/system-task/:task_id/cancel", RootAuth(), ok)
+	router.POST("/api/channel/test/models/tasks/:task_id/cancel", AdminAuth(), RequirePermission(authz.ChannelWrite), ok)
+	for _, test := range []struct {
+		name, token string
+		status      int
+	}{
+		{"channel writer", channelWrite, http.StatusOK},
+		{"channel reader", channel, http.StatusForbidden},
+		{"unrelated permission", adminOps, http.StatusForbidden},
+		{"anonymous channel cancellation", "", http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/channel/test/models/tasks/test-task/cancel", nil)
+			if test.token != "" {
+				request.Header.Set("Authorization", "Bearer "+test.token)
+			}
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			assert.Equal(t, test.status, recorder.Code, recorder.Body.String())
+		})
+	}
+
+	for _, test := range []struct {
+		name, token string
+		status      int
+	}{
+		{"root with write scope", rootOps, http.StatusOK},
+		{"root with read scope", rootRead, http.StatusForbidden},
+		{"admin with write scope", adminOps, http.StatusForbidden},
+		{"anonymous", "", http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/system-task/test-task/cancel", nil)
+			if test.token != "" {
+				request.Header.Set("Authorization", "Bearer "+test.token)
+			}
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			assert.Equal(t, test.status, recorder.Code, recorder.Body.String())
+		})
+	}
 
 	for _, test := range []struct {
 		name, path, token, code, reason string

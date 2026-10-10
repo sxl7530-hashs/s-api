@@ -114,6 +114,28 @@ func TestSystemTaskHistoryDatabaseMatrix(t *testing.T) {
 			deleted, err = DeleteSystemTaskHistory(SystemTaskFilter{})
 			require.NoError(t, err)
 			assert.Zero(t, deleted, "repeated cleanup preserves the scheduler's latest runs")
+
+			for _, status := range []SystemTaskStatus{SystemTaskStatusPending, SystemTaskStatusRunning} {
+				task, err := CreateSystemTask(SystemTaskTypeChannelModelTest, nil, nil)
+				require.NoError(t, err)
+				require.NoError(t, db.Model(task).Update("status", status).Error)
+				cancelled, changed, err := CancelSystemTask(task.TaskID, "matrix cancellation")
+				require.NoError(t, err)
+				require.True(t, changed)
+				assert.Equal(t, SystemTaskStatusCancelled, cancelled.Status)
+				assert.Nil(t, cancelled.ActiveKey)
+				_, changed, err = CancelSystemTask(task.TaskID, "repeat")
+				require.NoError(t, err)
+				assert.False(t, changed)
+			}
+			history, count, err := ListSystemTasks(SystemTaskFilter{Scope: "history", Status: SystemTaskStatusCancelled}, 0, 20)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, count)
+			assert.Len(t, history, 2)
+			require.NoError(t, db.AutoMigrate(&SystemTask{}))
+			_, count, err = ListSystemTasks(SystemTaskFilter{Status: SystemTaskStatusCancelled}, 0, 20)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, count, "repeat migration preserves cancellations")
 		})
 	}
 }
@@ -181,6 +203,41 @@ func TestSystemTaskCreateAndActiveLifecycle(t *testing.T) {
 
 	_, err = CreateSystemTask(SystemTaskTypeLogCleanup, payload, state)
 	require.NoError(t, err)
+}
+
+func TestCancelSystemTaskRetainsLeaseUntilRunnerExits(t *testing.T) {
+	truncateTables(t)
+	task, err := CreateSystemTask(SystemTaskTypeChannelModelTest, nil, nil)
+	require.NoError(t, err)
+	claimed, ok, err := ClaimSystemTask(task.ID, task.Type, "runner-a", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	cancelledTask, cancelled, err := CancelSystemTask(claimed.TaskID, "cancelled in test")
+	require.NoError(t, err)
+	require.True(t, cancelled)
+	assert.Equal(t, SystemTaskStatusCancelled, cancelledTask.Status)
+	assert.Nil(t, cancelledTask.ActiveKey)
+	assert.Equal(t, "cancelled in test", cancelledTask.Error)
+	var lockCount int64
+	require.NoError(t, DB.Model(&SystemTaskLock{}).Where("task_id = ?", task.TaskID).Count(&lockCount).Error)
+	assert.EqualValues(t, 1, lockCount)
+	replacement, err := CreateSystemTask(SystemTaskTypeChannelModelTest, nil, nil)
+	require.NoError(t, err)
+	_, replacementClaimed, err := ClaimSystemTask(replacement.ID, replacement.Type, "runner-b", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	assert.False(t, replacementClaimed, "a replacement must wait for the old runner to exit")
+	assert.ErrorIs(t, FinishSystemTask(task.TaskID, "runner-a", SystemTaskStatusSucceeded, nil, ""), ErrSystemTaskLockLost)
+	require.NoError(t, ReleaseSystemTaskLock(task.TaskID, "runner-a"))
+	_, replacementClaimed, err = ClaimSystemTask(replacement.ID, replacement.Type, "runner-b", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	assert.True(t, replacementClaimed)
+
+	unchanged, cancelledAgain, err := CancelSystemTask(task.TaskID, "second cancellation")
+	require.NoError(t, err)
+	assert.False(t, cancelledAgain)
+	assert.Equal(t, SystemTaskStatusCancelled, unchanged.Status)
+	assert.Equal(t, "cancelled in test", unchanged.Error)
 }
 
 func TestSystemTaskActiveKeyPreventsDuplicateActiveRun(t *testing.T) {

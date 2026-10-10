@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { SystemTaskFilters } from '@/features/system-settings/types'
+import type {
+  SystemTask,
+  SystemTaskFilters,
+  SystemTaskResponse,
+} from '@/features/system-settings/types'
 import { api } from '@/lib/api'
 
 import type {
@@ -52,6 +56,13 @@ export async function deleteSystemTaskHistory(
   const res = await api.delete<SystemTaskHistoryDeleteResponse>(
     '/api/system-task/history',
     { params: filters }
+  )
+  return res.data
+}
+
+export async function cancelSystemTask(taskId: string) {
+  const res = await api.post<SystemTaskResponse<SystemTask>>(
+    `/api/system-task/${encodeURIComponent(taskId)}/cancel`
   )
   return res.data
 }
