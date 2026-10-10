@@ -257,6 +257,28 @@ func TestClaudeStreamFallbackCountsInterruptedToolUse(t *testing.T) {
 	assert.Equal(t, 100, claudeInfo.Usage.PromptTokens)
 }
 
+func TestClaudeStreamCacheOnlyUsageDoesNotUsePromptFallback(t *testing.T) {
+	claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{
+		PromptTokensDetails: dto.InputTokenDetails{CachedCreationTokens: 576448},
+	}}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{RelayFormat: types.RelayFormatClaude, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-sonnet-5"}}
+	info.SetEstimatePromptTokens(8703291)
+	HandleStreamFinalResponse(c, info, claudeInfo)
+
+	assert.Zero(t, claudeInfo.Usage.PromptTokens)
+	assert.Zero(t, claudeInfo.Usage.CompletionTokens)
+	require.NotNil(t, claudeInfo.Usage.BillingUsage)
+	assert.Equal(t, 576448, claudeInfo.Usage.BillingUsage.ClaudeUsage.CacheCreationInputTokens)
+}
+
+func TestProjectClaudeCacheOnlyCompatibility(t *testing.T) {
+	data := `{"type":"message_delta","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":7}}`
+	patched := projectClaudeCacheOnlyCompatibility(data, &dto.ClaudeUsage{CacheCreationInputTokens: 7})
+	assert.Contains(t, patched, `"output_tokens":1`)
+	assert.Equal(t, data, projectClaudeCacheOnlyCompatibility(data, &dto.ClaudeUsage{OutputTokens: 2, CacheCreationInputTokens: 7}))
+}
+
 func TestBuildOpenAIStyleUsageFromClaudeUsage(t *testing.T) {
 	usage := &dto.Usage{
 		PromptTokens:     100,

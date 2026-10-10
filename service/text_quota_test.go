@@ -479,6 +479,20 @@ func TestCalculateTextQuotaSummaryUsesClaudeBillingUsageBeforeTopLevelUsage(t *t
 	require.Equal(t, 118, summary.Quota)
 }
 
+func TestCalculateTextQuotaSummaryChargesCacheOnlyClaudeUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "claude-3-7-sonnet",
+		PriceData:       hosttypes.PriceData{ModelRatio: 1, CacheCreationRatio: 1.25, CacheCreation5mRatio: 1.25, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
+	}
+	usage := &dto.Usage{BillingUsage: dto.NewClaudeMessagesBillingUsage(&dto.ClaudeUsage{CacheCreationInputTokens: 100})}
+	summary := calculateTextQuotaSummary(ctx, relayInfo, effectiveBillingUsage(usage))
+
+	assert.True(t, summary.hasBillableUsage())
+	assert.Positive(t, summary.Quota)
+}
+
 func TestCalculateTextQuotaSummaryUsesGeminiBillingUsageBeforeTopLevelUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

@@ -90,3 +90,21 @@ func TestValidateClaudeDefaultMaxTokens(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeCacheOnlyCompatibility(t *testing.T) {
+	settings := &ClaudeSettings{
+		CacheOnlyCompatibilityUsers:  map[string]bool{"12": true},
+		CacheOnlyCompatibilityTokens: map[string]bool{"34": false, "56": true},
+	}
+	assert.True(t, settings.UseCacheOnlyCompatibility(12, 0))
+	assert.False(t, settings.UseCacheOnlyCompatibility(12, 34))
+	assert.True(t, settings.UseCacheOnlyCompatibility(1, 56))
+	assert.False(t, settings.UseCacheOnlyCompatibility(1, 0))
+
+	for _, value := range []string{`{}`, `{"12":true,"34":false}`} {
+		require.NoError(t, ValidateClaudeCacheOnlyCompatibility(value))
+	}
+	for _, value := range []string{`null`, `[]`, `{"0":true}`, `{"01":true}`, `{"a":true}`, `{"1":"true"}`, `{"1":null}`} {
+		require.Error(t, ValidateClaudeCacheOnlyCompatibility(value), value)
+	}
+}

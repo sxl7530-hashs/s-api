@@ -320,6 +320,12 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "claude.cache_only_compatibility_users", "claude.cache_only_compatibility_tokens":
+		err = model_setting.ValidateClaudeCacheOnlyCompatibility(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+			return
+		}
 	case operation_setting.ToolPriceOptionKey:
 		err = operation_setting.ValidateToolPricesJSON(option.Value.(string))
 		if err != nil {

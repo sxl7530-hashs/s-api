@@ -6905,6 +6905,11 @@
     "Maximum disk usage for cache (%)": "Maximum disk usage for cache (%)",
     "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
     "Minimum free disk space (MB)": "Minimum free disk space (MB)",
-    "Always keep this space free": "Always keep this space free"
+    "Always keep this space free": "Always keep this space free",
+    "Cache-only compatibility users": "Пользователи режима только кэша",
+    "Enable legacy Claude cache-only usage compatibility by user ID. Disabled by default.": "Включает совместимость старых клиентов Claude для использования только кэша по ID пользователя. По умолчанию выключено.",
+    "Cache-only compatibility API keys": "API-ключи режима только кэша",
+    "API key IDs override the user setting; false disables compatibility for that key.": "Настройка ID API-ключа имеет приоритет над пользовательской; false отключает совместимость для этого ключа.",
+    "Use a JSON object with positive numeric IDs and boolean values": "Используйте объект JSON с положительными числовыми ID и логическими значениями"
   }
 }

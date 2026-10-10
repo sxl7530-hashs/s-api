@@ -12,6 +12,7 @@ import (
 	"time"
 
 	common2 "github.com/QuantumNous/new-api/common"
+	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
@@ -316,7 +317,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
 	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
+	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
@@ -346,7 +347,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
 	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
+	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
@@ -559,8 +560,21 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	}
 
+	requestStarted := time.Now()
 	resp, err := relayClient.Do(req)
 	if err != nil {
+		timeoutType := "upstream"
+		errText := strings.ToLower(err.Error())
+		if strings.Contains(errText, "timeout awaiting response headers") || strings.Contains(errText, "responseheader") {
+			timeoutType = "response_header"
+		} else if errors.Is(err, context.DeadlineExceeded) || strings.Contains(errText, "client.timeout") {
+			timeoutType = "total"
+		} else if strings.Contains(errText, "dial") || strings.Contains(errText, "connect") {
+			timeoutType = "dial"
+		}
+		requestID := common2.GetContextKeyString(c, common2.RequestIdKey)
+		model := common2.GetContextKeyString(c, appconstant.ContextKeyOriginalModel)
+		logger.LogWarn(c, fmt.Sprintf("relay timeout/error: type=%s request_id=%s channel_id=%d model=%s stream=%t first_response_elapsed=unknown total_elapsed=%s err=%v", timeoutType, requestID, info.ChannelId, model, info.IsStream, time.Since(requestStarted), err))
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}

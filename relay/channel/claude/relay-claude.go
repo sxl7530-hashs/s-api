@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/sjson"
 )
 
 func stopReasonClaude2OpenAI(reason string) string {
@@ -72,7 +73,7 @@ func shouldSkipClaudeMessageDeltaUsagePatch(info *relaycommon.RelayInfo) bool {
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled {
 		return true
 	}
-	if info == nil {
+	if info == nil || info.ChannelMeta == nil {
 		return false
 	}
 	return info.ChannelSetting.PassThroughBodyEnabled
@@ -80,6 +81,33 @@ func shouldSkipClaudeMessageDeltaUsagePatch(info *relaycommon.RelayInfo) bool {
 
 func patchClaudeMessageDeltaUsageData(data string, usage *dto.ClaudeUsage) string {
 	return relayconvert.PatchClaudeMessageDeltaUsageData(data, usage)
+}
+
+func usesClaudeCacheOnlyCompatibility(info *relaycommon.RelayInfo) bool {
+	return info != nil && info.RelayFormat == types.RelayFormatClaude &&
+		!shouldSkipClaudeMessageDeltaUsagePatch(info) &&
+		model_setting.GetClaudeSettings().UseCacheOnlyCompatibility(info.UserId, info.TokenId)
+}
+
+func isClaudeCacheOnlyUsage(usage *dto.ClaudeUsage) bool {
+	if usage == nil || usage.OutputTokens != 0 {
+		return false
+	}
+	return usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 ||
+		usage.GetCacheCreation5mTokens() > 0 || usage.GetCacheCreation1hTokens() > 0
+}
+
+// projectClaudeCacheOnlyCompatibility changes only the downstream view for
+// configured legacy clients. The parsed usage remains untouched for billing.
+func projectClaudeCacheOnlyCompatibility(data string, usage *dto.ClaudeUsage) string {
+	if !isClaudeCacheOnlyUsage(usage) {
+		return data
+	}
+	patched, err := sjson.Set(data, "usage.output_tokens", 1)
+	if err != nil {
+		return data
+	}
+	return patched
 }
 
 func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *dto.ChatCompletionsStreamResponse, claudeInfo *ClaudeResponseInfo) bool {
@@ -110,6 +138,20 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	}
 	if info.RelayFormat == types.RelayFormatClaude {
 		FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo)
+		if claudeResponse.Type == "message_stop" && usesClaudeCacheOnlyCompatibility(info) && !claudeInfo.Done {
+			patchUsage := buildMessageDeltaPatchUsage(nil, claudeInfo)
+			if isClaudeCacheOnlyUsage(patchUsage) {
+				compatibilityUsage := *patchUsage
+				compatibilityUsage.OutputTokens = 1
+				compatibilityResponse := dto.ClaudeResponse{Type: "message_delta", Usage: &compatibilityUsage}
+				compatibilityData, marshalErr := common.Marshal(compatibilityResponse)
+				if marshalErr != nil {
+					return types.NewError(marshalErr, types.ErrorCodeBadResponseBody)
+				}
+				helper.ClaudeChunkData(c, compatibilityResponse, string(compatibilityData))
+				info.ClaudeCacheOnlyCompatibilityApplied = true
+			}
+		}
 
 		if claudeResponse.Type == "message_start" {
 			// message_start, 获取usage
@@ -119,8 +161,15 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		} else if claudeResponse.Type == "message_delta" {
 			// 确保 message_delta 的 usage 包含完整的 input_tokens 和 cache 相关字段
 			// 解决 AWS Bedrock 等上游返回的 message_delta 缺少这些字段的问题
+			patchUsage := buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo)
 			if !shouldSkipClaudeMessageDeltaUsagePatch(info) {
-				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
+				data = patchClaudeMessageDeltaUsageData(data, patchUsage)
+			}
+			if usesClaudeCacheOnlyCompatibility(info) {
+				if isClaudeCacheOnlyUsage(patchUsage) {
+					data = projectClaudeCacheOnlyCompatibility(data, patchUsage)
+					info.ClaudeCacheOnlyCompatibilityApplied = true
+				}
 			}
 		}
 		countClaudeStreamBillableTools(info, &claudeResponse)
@@ -260,7 +309,14 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 	if claudeInfo.Usage.PromptTokens == 0 {
 		//上游出错
 	}
-	if claudeInfo.Usage.CompletionTokens == 0 || !claudeInfo.Done {
+	hasReportedUsage := claudeInfo.Usage != nil && (claudeInfo.Usage.PromptTokens > 0 || claudeInfo.Usage.CompletionTokens > 0 ||
+		claudeInfo.Usage.PromptTokensDetails.CachedTokens > 0 || claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens > 0 ||
+		claudeInfo.Usage.ClaudeCacheCreation5mTokens > 0 || claudeInfo.Usage.ClaudeCacheCreation1hTokens > 0)
+	// Interrupted responses with observable output still need an output estimate.
+	// A completed cache-only response has authoritative usage and no output to
+	// estimate, even though its ordinary token fields are all zero.
+	needsFallback := !hasReportedUsage || (!claudeInfo.Done && (claudeInfo.ResponseText.Len() > 0 || claudeInfo.ToolUseCount > 0))
+	if (claudeInfo.Usage.CompletionTokens == 0 || !claudeInfo.Done) && needsFallback {
 		if common.DebugEnabled {
 			common.SysLog("claude response usage is not complete, maybe upstream error")
 		}
@@ -273,7 +329,7 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 			(!claudeInfo.Done && fallback.CompletionTokens > claudeInfo.Usage.CompletionTokens) {
 			claudeInfo.Usage.CompletionTokens = fallback.CompletionTokens
 		}
-		if claudeInfo.Usage.PromptTokens == 0 {
+		if claudeInfo.Usage.PromptTokens == 0 && !hasReportedUsage {
 			claudeInfo.Usage.PromptTokens = fallback.PromptTokens
 		}
 		claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
@@ -391,6 +447,10 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		}
 	case types.RelayFormatClaude:
 		responseData = data
+		if usesClaudeCacheOnlyCompatibility(info) && isClaudeCacheOnlyUsage(claudeResponse.Usage) {
+			responseData = []byte(projectClaudeCacheOnlyCompatibility(string(data), claudeResponse.Usage))
+			info.ClaudeCacheOnlyCompatibilityApplied = true
+		}
 	case types.RelayFormatGemini:
 		{
 			convertResult, convertErr := service.ConvertResponse(c, info, types.RelayFormatGemini, &claudeResponse)

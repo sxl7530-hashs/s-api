@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -210,4 +211,14 @@ func TestRequestPolicyEventsReachLogAdminInfo(t *testing.T) {
 	other := model.NewLogOther()
 	AppendRelayLogAdminInfo(untouched, nil, other)
 	assert.NotContains(t, other.Snapshot()["admin_info"], "request_policy", "requests without decisions do not carry an empty record")
+}
+
+func TestClaudeCacheOnlyCompatibilityReachesLogAdminInfo(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	other := model.NewLogOther()
+	AppendRelayLogAdminInfo(c, &relaycommon.RelayInfo{ClaudeCacheOnlyCompatibilityApplied: true}, other)
+
+	adminInfo, ok := other.Snapshot()["admin_info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, adminInfo["claude_cache_only_compatibility"])
 }

@@ -6905,6 +6905,11 @@
     "Maximum disk usage for cache (%)": "Maximum disk usage for cache (%)",
     "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
     "Minimum free disk space (MB)": "Minimum free disk space (MB)",
-    "Always keep this space free": "Always keep this space free"
+    "Always keep this space free": "Always keep this space free",
+    "Cache-only compatibility users": "純快取相容使用者",
+    "Enable legacy Claude cache-only usage compatibility by user ID. Disabled by default.": "依使用者 ID 啟用舊版 Claude 純快取用量相容，預設關閉。",
+    "Cache-only compatibility API keys": "純快取相容 API Key",
+    "API key IDs override the user setting; false disables compatibility for that key.": "API Key ID 設定優先於使用者設定；設為 false 可對該 Key 關閉相容。",
+    "Use a JSON object with positive numeric IDs and boolean values": "請使用以正整數 ID 為鍵、布林值為值的 JSON 物件"
   }
 }

@@ -1,8 +1,10 @@
 package model_setting
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,16 +23,32 @@ type ClaudeSettings struct {
 	DefaultMaxTokens                      map[string]int                 `json:"default_max_tokens"`
 	ThinkingAdapterEnabled                bool                           `json:"thinking_adapter_enabled"`
 	ThinkingAdapterBudgetTokensPercentage float64                        `json:"thinking_adapter_budget_tokens_percentage"`
+	CacheOnlyCompatibilityUsers           map[string]bool                `json:"cache_only_compatibility_users"`
+	CacheOnlyCompatibilityTokens          map[string]bool                `json:"cache_only_compatibility_tokens"`
 }
 
 // 默认配置
 var defaultClaudeSettings = ClaudeSettings{
-	HeadersSettings:        map[string]map[string][]string{},
-	ThinkingAdapterEnabled: true,
+	HeadersSettings:              map[string]map[string][]string{},
+	ThinkingAdapterEnabled:       true,
+	CacheOnlyCompatibilityUsers:  map[string]bool{},
+	CacheOnlyCompatibilityTokens: map[string]bool{},
 	DefaultMaxTokens: map[string]int{
 		"default": 8192,
 	},
 	ThinkingAdapterBudgetTokensPercentage: 0.8,
+}
+
+// UseCacheOnlyCompatibility reports whether a legacy Claude client should see
+// output_tokens=1 for a cache-only response. Token settings override user
+// settings so an administrator can opt a single API key out.
+func (c *ClaudeSettings) UseCacheOnlyCompatibility(userID, tokenID int) bool {
+	if tokenID > 0 {
+		if enabled, ok := c.CacheOnlyCompatibilityTokens[strconv.Itoa(tokenID)]; ok {
+			return enabled
+		}
+	}
+	return userID > 0 && c.CacheOnlyCompatibilityUsers[strconv.Itoa(userID)]
 }
 
 // 全局实例
@@ -105,6 +123,27 @@ func ValidateClaudeDefaultMaxTokens(value string) error {
 	for model, maxTokens := range settings {
 		if maxTokens < 0 {
 			return fmt.Errorf("negative Claude default max_tokens %d for %q", maxTokens, model)
+		}
+	}
+	return nil
+}
+
+// ValidateClaudeCacheOnlyCompatibility validates the user/token override maps
+// accepted by the root-only option API. JSON object keys must be canonical,
+// positive integer identifiers and values must be boolean literals.
+func ValidateClaudeCacheOnlyCompatibility(value string) error {
+	var raw map[string]json.RawMessage
+	if err := common.UnmarshalJsonStr(value, &raw); err != nil || raw == nil {
+		return fmt.Errorf("Claude cache-only compatibility must be a JSON map of positive IDs to booleans")
+	}
+	for id, rawValue := range raw {
+		parsedID, err := strconv.Atoi(id)
+		if err != nil || parsedID <= 0 || strconv.Itoa(parsedID) != id {
+			return fmt.Errorf("Claude cache-only compatibility ID %q must be a positive integer", id)
+		}
+		var enabled bool
+		if err := common.Unmarshal(rawValue, &enabled); err != nil || (string(rawValue) != "true" && string(rawValue) != "false") {
+			return fmt.Errorf("Claude cache-only compatibility value for ID %q must be boolean", id)
 		}
 	}
 	return nil

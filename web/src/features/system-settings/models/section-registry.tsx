@@ -97,6 +97,10 @@ const MODELS_SECTIONS = [
           claude: {
             model_headers_settings: settings['claude.model_headers_settings'],
             default_max_tokens: settings['claude.default_max_tokens'],
+            cache_only_compatibility_users:
+              settings['claude.cache_only_compatibility_users'],
+            cache_only_compatibility_tokens:
+              settings['claude.cache_only_compatibility_tokens'],
             thinking_adapter_enabled:
               settings['claude.thinking_adapter_enabled'],
             thinking_adapter_budget_tokens_percentage:

@@ -6905,6 +6905,11 @@
     "Maximum disk usage for cache (%)": "Maximum disk usage for cache (%)",
     "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
     "Minimum free disk space (MB)": "Minimum free disk space (MB)",
-    "Always keep this space free": "Always keep this space free"
+    "Always keep this space free": "Always keep this space free",
+    "Cache-only compatibility users": "キャッシュ専用互換ユーザー",
+    "Enable legacy Claude cache-only usage compatibility by user ID. Disabled by default.": "ユーザー ID ごとに旧版 Claude のキャッシュ専用使用量互換を有効にします。既定では無効です。",
+    "Cache-only compatibility API keys": "キャッシュ専用互換 API キー",
+    "API key IDs override the user setting; false disables compatibility for that key.": "API キー ID の設定はユーザー設定より優先され、false でそのキーの互換性を無効にします。",
+    "Use a JSON object with positive numeric IDs and boolean values": "正の数値 ID をキー、真偽値を値とする JSON オブジェクトを使用してください"
   }
 }

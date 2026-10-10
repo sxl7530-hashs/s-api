@@ -92,7 +92,11 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	// 无条件新建 StreamStatus
 	info.StreamStatus = relaycommon.NewStreamStatus()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	parentCtx := context.Background()
+	if c != nil && c.Request != nil {
+		parentCtx = c.Request.Context()
+	}
+	ctx, cancel := context.WithCancel(parentCtx)
 
 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
 	// A zero/negative timeout would make time.NewTicker panic and take down
@@ -262,7 +266,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			default:
 			}
 
-			ticker.Reset(streamingTimeout)
 			data := scanner.Text()
 			if len(data) > streamDebugPreviewBytes {
 				logger.LogDebug(c, "stream scanner data: %s...[truncated, bytes=%d]", data[:streamDebugPreviewBytes], len(data))
@@ -282,6 +285,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				continue
 			}
 			if !strings.HasPrefix(data, "[DONE]") {
+				ticker.Reset(streamingTimeout)
 				info.SetFirstResponseTime()
 				info.ReceivedResponseCount++
 
@@ -293,6 +297,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 					return
 				}
 			} else {
+				ticker.Reset(streamingTimeout)
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 				logger.LogDebug(c, "received [DONE], stopping scanner")
 				return
@@ -311,6 +316,22 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	// 主循环等待完成或超时
 	select {
 	case <-ticker.C:
+		firstResponseElapsed := "unknown"
+		if info != nil && info.HasSendResponse() && !info.StartTime.IsZero() {
+			firstResponseElapsed = info.FirstResponseTime.Sub(info.StartTime).String()
+		}
+		requestID := common.GetContextKeyString(c, common.RequestIdKey)
+		model := ""
+		channelID := 0
+		if info != nil {
+			model = info.OriginModelName
+			channelID = info.ChannelId
+		}
+		timeoutType := "chunk_interval"
+		if firstResponseElapsed == "unknown" {
+			timeoutType = "first_valid_chunk"
+		}
+		logger.LogWarn(c, fmt.Sprintf("relay timeout: type=%s request_id=%s channel_id=%d model=%s stream=true first_response_elapsed=%s timeout=%s", timeoutType, requestID, channelID, model, firstResponseElapsed, streamingTimeout))
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, nil)
 	case <-stopChan:
 		// EndReason already set by the goroutine that triggered stopChan

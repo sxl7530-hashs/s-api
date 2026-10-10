@@ -45,6 +45,7 @@ import {
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { isPositiveIdBooleanMap } from './claude-cache-only-compatibility'
 import {
   formatJsonForTextarea,
   normalizeJsonString,
@@ -71,6 +72,34 @@ const schema = z.object({
         })
       }
     }),
+    cache_only_compatibility_users: z.string().superRefine((value, ctx) => {
+      const result = validateJsonString(value, {
+        allowEmpty: false,
+        predicate: isPositiveIdBooleanMap,
+        predicateMessage:
+          'Use a JSON object with positive numeric IDs and boolean values',
+      })
+      if (!result.valid) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: result.message || 'Invalid JSON',
+        })
+      }
+    }),
+    cache_only_compatibility_tokens: z.string().superRefine((value, ctx) => {
+      const result = validateJsonString(value, {
+        allowEmpty: false,
+        predicate: isPositiveIdBooleanMap,
+        predicateMessage:
+          'Use a JSON object with positive numeric IDs and boolean values',
+      })
+      if (!result.valid) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: result.message || 'Invalid JSON',
+        })
+      }
+    }),
     thinking_adapter_enabled: z.boolean(),
     thinking_adapter_budget_tokens_percentage: z.coerce
       .number()
@@ -85,6 +114,8 @@ type ClaudeSettingsFormInput = z.input<typeof schema>
 type FlatClaudeSettings = {
   'claude.model_headers_settings': string
   'claude.default_max_tokens': string
+  'claude.cache_only_compatibility_users': string
+  'claude.cache_only_compatibility_tokens': string
   'claude.thinking_adapter_enabled': boolean
   'claude.thinking_adapter_budget_tokens_percentage': number
 }
@@ -103,6 +134,12 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
     'claude.default_max_tokens': normalizeJsonString(
       defaultValues.claude.default_max_tokens
     ),
+    'claude.cache_only_compatibility_users': normalizeJsonString(
+      defaultValues.claude.cache_only_compatibility_users
+    ),
+    'claude.cache_only_compatibility_tokens': normalizeJsonString(
+      defaultValues.claude.cache_only_compatibility_tokens
+    ),
     'claude.thinking_adapter_enabled':
       defaultValues.claude.thinking_adapter_enabled,
     'claude.thinking_adapter_budget_tokens_percentage': Number(
@@ -119,6 +156,12 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
       ),
       default_max_tokens: formatJsonForTextarea(
         values.claude.default_max_tokens
+      ),
+      cache_only_compatibility_users: formatJsonForTextarea(
+        values.claude.cache_only_compatibility_users
+      ),
+      cache_only_compatibility_tokens: formatJsonForTextarea(
+        values.claude.cache_only_compatibility_tokens
       ),
       thinking_adapter_enabled: values.claude.thinking_adapter_enabled,
       thinking_adapter_budget_tokens_percentage:
@@ -143,6 +186,12 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
       'claude.default_max_tokens': normalizeJsonString(
         defaultValues.claude.default_max_tokens
       ),
+      'claude.cache_only_compatibility_users': normalizeJsonString(
+        defaultValues.claude.cache_only_compatibility_users
+      ),
+      'claude.cache_only_compatibility_tokens': normalizeJsonString(
+        defaultValues.claude.cache_only_compatibility_tokens
+      ),
       'claude.thinking_adapter_enabled':
         defaultValues.claude.thinking_adapter_enabled,
       'claude.thinking_adapter_budget_tokens_percentage': Number(
@@ -160,6 +209,12 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
       ),
       'claude.default_max_tokens': normalizeJsonString(
         values.claude.default_max_tokens
+      ),
+      'claude.cache_only_compatibility_users': normalizeJsonString(
+        values.claude.cache_only_compatibility_users
+      ),
+      'claude.cache_only_compatibility_tokens': normalizeJsonString(
+        values.claude.cache_only_compatibility_tokens
       ),
       'claude.thinking_adapter_enabled': values.claude.thinking_adapter_enabled,
       'claude.thinking_adapter_budget_tokens_percentage':
@@ -238,6 +293,66 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
                 <FormDescription>
                   {t('Example')}{' '}
                   {`{ "default": 8192, "claude-3-haiku-20240307": 4096, "claude-3-opus-20240229": 4096, "claude-3-7-sonnet-20250219-thinking": 8192 }`}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='claude.cache_only_compatibility_users'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Cache-only compatibility users')}</FormLabel>
+                <FormControl>
+                  <JsonCodeEditor
+                    value={field.value}
+                    onChange={field.onChange}
+                    name={field.name}
+                    onBlur={field.onBlur}
+                    textareaRef={field.ref}
+                    aria-invalid={Boolean(
+                      form.formState.errors.claude
+                        ?.cache_only_compatibility_users
+                    )}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Enable legacy Claude cache-only usage compatibility by user ID. Disabled by default.'
+                  )}{' '}
+                  {t('Example')} {`{ "123": true }`}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='claude.cache_only_compatibility_tokens'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Cache-only compatibility API keys')}</FormLabel>
+                <FormControl>
+                  <JsonCodeEditor
+                    value={field.value}
+                    onChange={field.onChange}
+                    name={field.name}
+                    onBlur={field.onBlur}
+                    textareaRef={field.ref}
+                    aria-invalid={Boolean(
+                      form.formState.errors.claude
+                        ?.cache_only_compatibility_tokens
+                    )}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'API key IDs override the user setting; false disables compatibility for that key.'
+                  )}{' '}
+                  {t('Example')} {`{ "456": false }`}
                 </FormDescription>
                 <FormMessage />
               </FormItem>

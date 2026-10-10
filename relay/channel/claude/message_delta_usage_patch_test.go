@@ -1,11 +1,15 @@
 package claude
 
 import (
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -28,6 +32,41 @@ func TestPatchClaudeMessageDeltaUsageDataPreserveUnknownFields(t *testing.T) {
 	require.EqualValues(t, 100, gjson.Get(patchedData, "usage.input_tokens").Int())
 	require.EqualValues(t, 30, gjson.Get(patchedData, "usage.cache_read_input_tokens").Int())
 	require.EqualValues(t, 50, gjson.Get(patchedData, "usage.cache_creation_input_tokens").Int())
+}
+
+func TestClaudeCacheOnlyCompatibilityEmitsUsageBeforeMessageStop(t *testing.T) {
+	settings := model_setting.GetClaudeSettings()
+	originalUsers := settings.CacheOnlyCompatibilityUsers
+	originalTokens := settings.CacheOnlyCompatibilityTokens
+	settings.CacheOnlyCompatibilityUsers = map[string]bool{"12": true}
+	settings.CacheOnlyCompatibilityTokens = map[string]bool{}
+	t.Cleanup(func() {
+		settings.CacheOnlyCompatibilityUsers = originalUsers
+		settings.CacheOnlyCompatibilityTokens = originalTokens
+	})
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{
+		UserId:       12,
+		RelayFormat:  types.RelayFormatClaude,
+		ChannelMeta:  &relaycommon.ChannelMeta{},
+		StreamStatus: relaycommon.NewStreamStatus(),
+	}
+	claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+	require.Nil(t, HandleStreamResponseData(c, info, claudeInfo,
+		`{"type":"message_start","message":{"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":7}}}`))
+	require.Nil(t, HandleStreamResponseData(c, info, claudeInfo, `{"type":"message_stop"}`))
+
+	body := recorder.Body.String()
+	deltaIndex := strings.Index(body, "event: message_delta")
+	stopIndex := strings.Index(body, "event: message_stop")
+	require.NotEqual(t, -1, deltaIndex)
+	require.Greater(t, stopIndex, deltaIndex)
+	assert.Contains(t, body, `"output_tokens":1`)
+	assert.Contains(t, body, `"cache_creation_input_tokens":7`)
+	assert.True(t, info.ClaudeCacheOnlyCompatibilityApplied)
+	assert.Zero(t, claudeInfo.Usage.CompletionTokens)
 }
 
 func TestPatchClaudeMessageDeltaUsageDataZeroValueChecks(t *testing.T) {

@@ -82,6 +82,9 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		if relayInfo.ConversionDiagnosticsTruncated() {
 			other.SetAdmin("conversion_diagnostics_truncated", true)
 		}
+		if relayInfo.ClaudeCacheOnlyCompatibilityApplied {
+			other.SetAdmin("claude_cache_only_compatibility", true)
+		}
 	}
 	if common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey) {
 		other.SetAdmin("is_multi_key", true)

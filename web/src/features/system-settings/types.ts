@@ -241,6 +241,8 @@ export type ModelSettings = {
   'gemini.remove_function_response_id_enabled': boolean
   'claude.model_headers_settings': string
   'claude.default_max_tokens': string
+  'claude.cache_only_compatibility_users': string
+  'claude.cache_only_compatibility_tokens': string
   'claude.thinking_adapter_enabled': boolean
   'claude.thinking_adapter_budget_tokens_percentage': number
   'grok.violation_deduction_enabled': boolean
