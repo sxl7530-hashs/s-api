@@ -109,13 +109,13 @@ func InitChannelCache() {
 	// invalidating the pricing cache, otherwise the reversed order deadlocks.
 	InvalidatePricingCache()
 	rebuildTaskAliasView()
-	common.SysLog("channels synced from database")
+	common.SysLog(common.LogText("channels synced from database"))
 }
 
 func SyncChannelCache(frequency int) {
 	for {
 		time.Sleep(time.Duration(frequency) * time.Second)
-		common.SysLog("syncing channels from database")
+		common.SysLog(common.LogText("syncing channels from database"))
 		InitChannelCache()
 	}
 }
@@ -151,7 +151,7 @@ func GetRandomSatisfiedChannel(
 		if channel, ok := channelsIDM[channels[0]]; ok {
 			return cloneChannelSnapshot(channel), nil
 		}
-		return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channels[0])
+		return nil, fmt.Errorf("database consistency error: channel #%d does not exist, please contact the administrator", channels[0])
 	}
 
 	if retry < 0 {
@@ -163,7 +163,7 @@ func GetRandomSatisfiedChannel(
 	for i, channelId := range channels {
 		channel, ok := channelsIDM[channelId]
 		if !ok {
-			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
+			return nil, fmt.Errorf("database consistency error: channel #%d does not exist, please contact the administrator", channelId)
 		}
 		priority := channel.GetPriority()
 		if i == 0 {
@@ -238,7 +238,7 @@ func CacheGetChannel(id int) (*Channel, error) {
 
 	c, ok := channelsIDM[id]
 	if !ok {
-		return nil, fmt.Errorf("渠道# %d，已不存在", id)
+		return nil, fmt.Errorf("channel #%d no longer exists", id)
 	}
 	return cloneChannelSnapshot(c), nil
 }
@@ -256,7 +256,7 @@ func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
 
 	c, ok := channelsIDM[id]
 	if !ok {
-		return nil, fmt.Errorf("渠道# %d，已不存在", id)
+		return nil, fmt.Errorf("channel #%d no longer exists", id)
 	}
 	channelInfo := cloneChannelInfo(c.ChannelInfo)
 	if pollingIndex, ok := channel2pollingIndex[id]; ok {
