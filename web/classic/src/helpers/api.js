@@ -46,6 +46,25 @@ function getStoredUser() {
   }
 }
 
+function buildCommonHeaders(user) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'New-Api-User': user?.id || '',
+  };
+  const accessToken = user?.token || user?.access_token;
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+  if (user?.session?.sid) {
+    headers['X-Auth-Session'] = user.session.sid;
+  }
+  return headers;
+}
+
+export function getCommonHeaders() {
+  return buildCommonHeaders(getStoredUser());
+}
+
 API.interceptors.request.use((config) => {
   const user = getStoredUser();
   const accessToken = user?.token || user?.access_token;
@@ -130,6 +149,36 @@ async function refreshAuthentication() {
       refreshPromise = null;
     });
   return refreshPromise;
+}
+
+export async function getFreshAuthHeaders() {
+  const storedUser = getStoredUser();
+  const refreshBefore = Math.floor(Date.now() / 1000) + 60;
+  const accessToken = storedUser?.token || storedUser?.access_token;
+  if (
+    accessToken &&
+    (!storedUser.access_expires_at ||
+      storedUser.access_expires_at > refreshBefore)
+  ) {
+    return getCommonHeaders();
+  }
+
+  try {
+    await refreshAuthentication();
+    return getCommonHeaders();
+  } catch (error) {
+    if ([401, 403].includes(error.response?.status)) {
+      localStorage.removeItem('user');
+      throw error;
+    }
+    if (
+      accessToken &&
+      storedUser.access_expires_at > Math.floor(Date.now() / 1000)
+    ) {
+      return buildCommonHeaders(storedUser);
+    }
+    throw error;
+  }
 }
 
 export async function bootstrapAuthentication() {

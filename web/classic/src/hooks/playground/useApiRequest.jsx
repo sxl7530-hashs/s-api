@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SSE } from 'sse.js';
 import {
@@ -26,7 +26,7 @@ import {
   DEBUG_TABS,
 } from '../../constants/playground.constants';
 import {
-  getUserIdFromLocalStorage,
+  getFreshAuthHeaders,
   handleApiError,
   processThinkTags,
   processIncompleteThinkTags,
@@ -40,6 +40,8 @@ export const useApiRequest = (
   saveMessages,
 ) => {
   const { t } = useTranslation();
+  const requestGenerationRef = useRef(0);
+  const abortControllerRef = useRef(null);
 
   // 处理消息自动关闭逻辑的公共函数
   const applyAutoCollapseLogic = useCallback(
@@ -174,6 +176,10 @@ export const useApiRequest = (
   // 非流式请求
   const handleNonStreamRequest = useCallback(
     async (payload) => {
+      const requestGeneration = ++requestGenerationRef.current;
+      const abortController = new AbortController();
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = abortController;
       setDebugData((prev) => ({
         ...prev,
         request: payload,
@@ -185,12 +191,13 @@ export const useApiRequest = (
       setActiveDebugTab(DEBUG_TABS.REQUEST);
 
       try {
+        const headers = await getFreshAuthHeaders();
+        if (requestGeneration !== requestGenerationRef.current) return;
         const response = await fetch(API_ENDPOINTS.CHAT_COMPLETIONS, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'New-Api-User': getUserIdFromLocalStorage(),
-          },
+          headers,
+          credentials: 'include',
+          signal: abortController.signal,
           body: JSON.stringify(payload),
         });
 
@@ -270,6 +277,12 @@ export const useApiRequest = (
           });
         }
       } catch (error) {
+        if (
+          error.name === 'AbortError' ||
+          requestGeneration !== requestGenerationRef.current
+        ) {
+          return;
+        }
         console.error('Non-stream request error:', error);
 
         const errorInfo = handleApiError(error);
@@ -302,7 +315,8 @@ export const useApiRequest = (
 
   // SSE请求
   const handleSSE = useCallback(
-    (payload) => {
+    async (payload) => {
+      const requestGeneration = ++requestGenerationRef.current;
       setDebugData((prev) => ({
         ...prev,
         request: payload,
@@ -313,13 +327,29 @@ export const useApiRequest = (
       }));
       setActiveDebugTab(DEBUG_TABS.REQUEST);
 
+      let authHeaders;
+      try {
+        authHeaders = await getFreshAuthHeaders();
+        if (requestGeneration !== requestGenerationRef.current) return;
+      } catch (error) {
+        if (requestGeneration !== requestGenerationRef.current) return;
+        const errorInfo = handleApiError(error);
+        setDebugData((prev) => ({
+          ...prev,
+          response: JSON.stringify(errorInfo, null, 2),
+          isStreaming: false,
+        }));
+        setActiveDebugTab(DEBUG_TABS.RESPONSE);
+        streamMessageUpdate(t('建立连接时发生错误'), 'content');
+        completeMessage(MESSAGE_STATUS.ERROR);
+        return;
+      }
+
       const source = new SSE(API_ENDPOINTS.CHAT_COMPLETIONS, {
-        headers: {
-          'Content-Type': 'application/json',
-          'New-Api-User': getUserIdFromLocalStorage(),
-        },
+        headers: authHeaders,
         method: 'POST',
         payload: JSON.stringify(payload),
+        withCredentials: true,
       });
 
       sseSourceRef.current = source;
@@ -421,7 +451,11 @@ export const useApiRequest = (
           setMessage((prevMessage) => {
             const newMessages = [...prevMessage];
             const lastMessage = newMessages[newMessages.length - 1];
-            if (lastMessage && lastMessage.status !== MESSAGE_STATUS.COMPLETE && lastMessage.status !== MESSAGE_STATUS.ERROR) {
+            if (
+              lastMessage &&
+              lastMessage.status !== MESSAGE_STATUS.COMPLETE &&
+              lastMessage.status !== MESSAGE_STATUS.ERROR
+            ) {
               newMessages[newMessages.length - 1] = {
                 ...lastMessage,
                 content: (lastMessage.content || '') + errorMessage,
@@ -492,6 +526,9 @@ export const useApiRequest = (
 
   // 停止生成
   const onStopGenerator = useCallback(() => {
+    requestGenerationRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     // 如果仍有活动的 SSE 连接，首先关闭
     if (sseSourceRef.current) {
       sseSourceRef.current.close();
