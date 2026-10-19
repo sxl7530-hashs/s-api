@@ -22,7 +22,14 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -430,10 +437,12 @@ test('task log prices use localized unit labels from pricing metadata', async ()
     matched_tier: 'images',
   })
   expect(preview).toHaveTextContent('images · images $0.25/image')
-  await act(() => i18n.changeLanguage('zh-CN'))
-  expect(
-    screen.getByRole('button', { name: /images · images/ })
-  ).toHaveTextContent('images · images $0.25/张')
+  await i18n.changeLanguage('zh')
+  await waitFor(() => {
+    expect(
+      screen.getByRole('button', { name: /images · images/ })
+    ).toHaveTextContent('images · images $0.25/张')
+  })
 })
 
 test('task log prices select the executing provider’s schema', () => {
