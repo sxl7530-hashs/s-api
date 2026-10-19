@@ -1,0 +1,273 @@
+- generic [ref=e2]:
+  - generic [ref=e316]:
+    - link "跳到主内容" [ref=e317] [cursor=pointer]:
+      - /url: "#content"
+    - banner [ref=e318]:
+      - generic [ref=e319]:
+        - button "Toggle Sidebar" [ref=e320] [cursor=pointer]
+        - generic [ref=e322]:
+          - link "返回主页" [ref=e323] [cursor=pointer]:
+            - /url: /
+            - img "徽标" [ref=e325]
+            - generic [ref=e326]: New API
+          - button "系统更新，当前版本：未知版本" [ref=e327] [cursor=pointer]:
+            - generic [ref=e328]: 未知版本
+            - status [ref=e329]
+        - generic [ref=e330]:
+          - navigation [ref=e332]:
+            - link "主页" [ref=e333] [cursor=pointer]:
+              - /url: /
+            - link "控制台" [ref=e334] [cursor=pointer]:
+              - /url: /dashboard
+            - link "模型广场" [ref=e335] [cursor=pointer]:
+              - /url: /pricing
+            - link "排行榜" [ref=e336] [cursor=pointer]:
+              - /url: /rankings
+            - link "文档" [ref=e337] [cursor=pointer]:
+              - /url: https://docs.newapi.pro
+            - link "关于" [ref=e338] [cursor=pointer]:
+              - /url: /about
+          - button "搜索" [ref=e339] [cursor=pointer]:
+            - generic:
+              - generic: ⌘
+              - text: K
+          - button "通知" [ref=e341] [cursor=pointer]
+          - button "更改语言" [ref=e342] [cursor=pointer]
+          - button "打开主题设置" [ref=e344] [cursor=pointer]
+          - button "M" [ref=e345] [cursor=pointer]
+    - generic [ref=e348]:
+      - generic [ref=e351]:
+        - generic [ref=e353]:
+          - generic [ref=e354]:
+            - generic [ref=e355]: 聊天
+            - list [ref=e356]:
+              - listitem [ref=e357]:
+                - link "游乐场" [ref=e358] [cursor=pointer]:
+                  - /url: /playground
+              - listitem [ref=e362]:
+                - button "聊天" [ref=e363] [cursor=pointer]
+          - generic [ref=e369]:
+            - generic [ref=e370]: 常规
+            - list [ref=e371]:
+              - listitem [ref=e372]:
+                - link "概览" [ref=e373] [cursor=pointer]:
+                  - /url: /dashboard/overview
+              - listitem [ref=e377]:
+                - link "数据看板" [ref=e378] [cursor=pointer]:
+                  - /url: /dashboard/models
+              - listitem [ref=e385]:
+                - link "API 密钥" [ref=e386] [cursor=pointer]:
+                  - /url: /keys
+              - listitem [ref=e392]:
+                - link "使用日志" [ref=e393] [cursor=pointer]:
+                  - /url: /usage-logs/common
+              - listitem [ref=e398]:
+                - link "审计日志" [ref=e399] [cursor=pointer]:
+                  - /url: /usage-logs/audit
+              - listitem [ref=e404]:
+                - link "任务日志" [ref=e405] [cursor=pointer]:
+                  - /url: /usage-logs/task
+          - generic [ref=e410]:
+            - generic [ref=e411]: 个人
+            - list [ref=e412]:
+              - listitem [ref=e413]:
+                - link "钱包" [ref=e414] [cursor=pointer]:
+                  - /url: /wallet
+              - listitem [ref=e419]:
+                - link "个人资料" [ref=e420] [cursor=pointer]:
+                  - /url: /profile
+              - listitem [ref=e425]:
+                - link "安全与访问" [ref=e426] [cursor=pointer]:
+                  - /url: /security
+          - generic [ref=e431]:
+            - generic [ref=e432]: 管理员
+            - list [ref=e433]:
+              - listitem [ref=e434]:
+                - link "渠道" [ref=e435] [cursor=pointer]:
+                  - /url: /channels
+              - listitem [ref=e443]:
+                - link "模型" [ref=e444] [cursor=pointer]:
+                  - /url: /models/metadata
+              - listitem [ref=e449]:
+                - link "用户" [ref=e450] [cursor=pointer]:
+                  - /url: /users
+              - listitem [ref=e457]:
+                - link "兑换码" [ref=e458] [cursor=pointer]:
+                  - /url: /redemption-codes
+              - listitem [ref=e462]:
+                - link "订阅" [ref=e463] [cursor=pointer]:
+                  - /url: /subscriptions
+              - listitem [ref=e467]:
+                - link "系统信息" [ref=e468] [cursor=pointer]:
+                  - /url: /system-info
+              - listitem [ref=e481]:
+                - link "任务插件" [ref=e482] [cursor=pointer]:
+                  - /url: /task-plugins
+              - listitem [ref=e490]:
+                - link "系统设置" [ref=e491] [cursor=pointer]:
+                  - /url: /system-settings/site
+        - button "Toggle Sidebar" [ref=e496]
+      - main [ref=e497]:
+        - main [ref=e499]:
+          - heading "概览" [level=2] [ref=e503]
+          - generic [ref=e505]:
+            - generic [ref=e507]:
+              - generic [ref=e509]:
+                - generic [aria-hidden]:
+                  - generic: "const request = await client.responses.create({ model: 'gpt-4.1-mini', input: 'Start routing traffic', }) if (request.output_text) { console.log(request.output_text) }"
+                - generic [ref=e510]:
+                  - generic [ref=e511]:
+                    - generic [ref=e512]:
+                      - generic [ref=e513]:
+                        - generic [ref=e514]: 开始使用
+                        - heading "几分钟内开始使用你的 API 网关" [level=3] [ref=e518]
+                        - paragraph [ref=e519]: 集中展示密钥、余额、路由和服务健康状态。
+                      - generic [ref=e520]:
+                        - button "隐藏设置引导" [expanded] [ref=e521] [cursor=pointer]
+                        - button "创建 API 密钥" [ref=e522] [cursor=pointer]
+                    - list [ref=e523]:
+                      - listitem [ref=e524]:
+                        - link "1. 创建 API 密钥 为你的应用或服务创建密钥" [ref=e529] [cursor=pointer]:
+                          - /url: /keys
+                          - generic [ref=e535]:
+                            - generic [ref=e536]:
+                              - generic [ref=e537]: "1."
+                              - generic [ref=e538]: 创建 API 密钥
+                            - generic [ref=e539]: 为你的应用或服务创建密钥
+                      - listitem [ref=e542]:
+                        - link "2. 添加额度 生产流量前保持充足余额" [ref=e547] [cursor=pointer]:
+                          - /url: /wallet
+                          - generic [ref=e552]:
+                            - generic [ref=e553]:
+                              - generic [ref=e554]: "2."
+                              - generic [ref=e555]: 添加额度
+                            - generic [ref=e556]: 生产流量前保持充足余额
+                      - listitem [ref=e559]:
+                        - link "3. 发送请求 使用 Playground 或你的客户端验证路由" [ref=e563] [cursor=pointer]:
+                          - /url: /playground
+                          - generic [ref=e569]:
+                            - generic [ref=e570]:
+                              - generic [ref=e571]: "3."
+                              - generic [ref=e572]: 发送请求
+                            - generic [ref=e573]: 使用 Playground 或你的客户端验证路由
+                  - generic [ref=e576]:
+                    - generic [ref=e577]:
+                      - generic [ref=e583]:
+                        - generic [ref=e584]: 首个 API 请求
+                        - generic [ref=e585]: 测试
+                      - button "复制可直接运行的 curl" [ref=e586] [cursor=pointer]: 复制
+                    - generic [ref=e592]:
+                      - code [ref=e593]: curl http://localhost:5173/v1/chat/completions \
+                      - code [ref=e594]: "-H \"Content-Type: application/json\" \\"
+                      - code [ref=e595]: "-H \"Authorization: Bearer sk-KmWi...Rw37\" \\"
+                      - code [ref=e596]: "-d '{\"model\":\"claude-3-5-sonnet-20240620-v1:0\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one sentence.\"}]}'"
+                    - generic [ref=e597]:
+                      - generic [ref=e598]:
+                        - generic [ref=e599]: 路由已启用
+                        - generic [ref=e609]: 当前域名
+                      - generic [ref=e610]:
+                        - generic [ref=e611]: 认证已配置
+                        - generic [ref=e617]: 已保护
+                      - generic [ref=e618]:
+                        - generic [ref=e619]: 已选择模型
+                        - generic [ref=e625]: claude-3-5-sonnet-20240620-v1:0
+              - generic [ref=e627]:
+                - generic [ref=e628]:
+                  - generic [ref=e629]: 推荐操作
+                  - heading "保持平台就绪" [level=3] [ref=e630]
+                - generic [ref=e631]:
+                  - button "API 密钥 为你的应用或服务创建密钥" [ref=e632] [cursor=pointer]:
+                    - generic [ref=e634]:
+                      - generic [ref=e635]: API 密钥
+                      - generic [ref=e636]: 为你的应用或服务创建密钥
+                  - button "渠道 配置上游提供者和路由。" [ref=e637] [cursor=pointer]:
+                    - generic [ref=e639]:
+                      - generic [ref=e640]: 渠道
+                      - generic [ref=e641]: 配置上游提供者和路由。
+                  - button "使用日志 查看请求、错误和计费详情" [ref=e642] [cursor=pointer]:
+                    - generic [ref=e644]:
+                      - generic [ref=e645]: 使用日志
+                      - generic [ref=e646]: 查看请求、错误和计费详情
+                  - button "定价 扩展流量前查看模型费率" [ref=e647] [cursor=pointer]:
+                    - generic [ref=e649]:
+                      - generic [ref=e650]: 定价
+                      - generic [ref=e651]: 扩展流量前查看模型费率
+            - generic [ref=e653]:
+              - generic [ref=e654]:
+                - generic [ref=e656]:
+                  - heading "用量概览" [level=3] [ref=e657]
+                  - paragraph [ref=e658]: 监控余额、用量和请求量
+                - generic [ref=e659]:
+                  - generic [ref=e661]:
+                    - generic [ref=e662]: 近 24 小时消耗
+                    - generic [ref=e668]:
+                      - generic [ref=e669]: $0
+                      - paragraph [ref=e670]: 近 24 小时消耗量 (USD)
+                  - generic [ref=e676]:
+                    - generic [ref=e677]: 历史使用情况
+                    - generic [ref=e684]:
+                      - generic [ref=e685]: $0
+                      - paragraph [ref=e686]: 总消耗 (USD)
+                  - generic [ref=e692]:
+                    - generic [ref=e693]: 请求计数
+                    - generic [ref=e699]:
+                      - generic [ref=e700]: "0"
+                      - paragraph [ref=e701]: 总请求数
+              - generic [ref=e706]:
+                - generic [ref=e707]:
+                  - generic [ref=e708]:
+                    - generic [ref=e709]: 剩余额度
+                    - generic [ref=e710]: 正常
+                  - generic [ref=e713]: $200
+                  - generic [ref=e714]:
+                    - generic [ref=e715]:
+                      - generic [ref=e716]: 近 24 小时消耗
+                      - generic [ref=e720]: $0
+                    - generic [ref=e721]:
+                      - generic [ref=e722]: 可用时长
+                      - generic [ref=e727]: 暂无使用记录
+                - button "钱包" [ref=e728] [cursor=pointer]
+            - generic [ref=e730]:
+              - generic [ref=e731]:
+                - generic [ref=e733]:
+                  - generic [ref=e734]:
+                    - heading "性能健康" [level=3] [ref=e739]
+                    - generic [ref=e740]: 最近 24 小时的性能指标
+                  - generic [ref=e742]:
+                    - generic [ref=e743]:
+                      - generic [ref=e744]: 成功率
+                      - generic [ref=e750]: —
+                    - generic [ref=e751]:
+                      - generic [ref=e752]: 平均延迟
+                      - generic [ref=e758]: —
+                    - generic [ref=e759]:
+                      - generic [ref=e760]: 吞吐量
+                      - generic [ref=e766]: —
+                - generic [ref=e768]:
+                  - generic [ref=e770]:
+                    - generic [ref=e771]: API 信息
+                    - generic [ref=e778]: 已配置路由和延迟检测
+                  - generic [ref=e779]: 未配置 API 路由
+                - generic [ref=e781]:
+                  - generic [ref=e783]:
+                    - generic [ref=e784]: 公告
+                    - generic [ref=e790]: 最新平台更新和通知
+                  - generic [ref=e791]: 目前暂无公告
+                - generic [ref=e793]:
+                  - generic [ref=e795]:
+                    - generic [ref=e796]: 常见问答
+                    - generic [ref=e802]: 访问与计费常见问题解答
+                  - generic [ref=e803]: 暂无 FAQ 条目
+              - generic [ref=e805]:
+                - generic [ref=e807]:
+                  - generic [ref=e808]: 运行时间
+                  - generic [ref=e813]: 来自 Uptime Kuma 的分组监控状态
+                - generic [ref=e814]: 未配置正常运行时间监控
+  - generic [ref=e815]:
+    - heading "Command Palette" [level=2] [ref=e816]
+    - paragraph [ref=e817]: Search for a command to run...
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=e818]:
+        - button "Close toast" [ref=e819] [cursor=pointer]
+        - generic [ref=e827]: 欢迎回来！

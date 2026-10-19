@@ -215,6 +215,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if decision.Action != "retry" {
 			break
 		}
+		if newAPIError.GetErrorCode() == types.ErrorCodeChannelBedrockRateLimited || newAPIError.GetErrorCode() == types.ErrorCodeChannelBedrockCoolingDown || newAPIError.GetErrorCode() == types.ErrorCodeBedrockThrottled {
+			retryParam.ExcludeCapacityRejectedChannel(channel.Id)
+		}
+		// Local capacity rejections should immediately try another channel.
+		// Only upstream throttling/server failures incur opt-in jitter.
+		if channel.Type == constant.ChannelTypeAws && retryParam.GetRetry() < common.RetryTimes &&
+			(newAPIError.GetErrorCode() == types.ErrorCodeAwsInvokeError || newAPIError.GetErrorCode() == types.ErrorCodeBedrockThrottled) &&
+			(newAPIError.StatusCode == http.StatusTooManyRequests || newAPIError.StatusCode >= 500) {
+			if err := service.WaitBedrockRetry(c.Request.Context(), relayInfo.ChannelSetting.BedrockProtection, retryParam.GetRetry()); err != nil {
+				break
+			}
+		}
 	}
 
 	useChannel := c.GetStringSlice("use_channel")

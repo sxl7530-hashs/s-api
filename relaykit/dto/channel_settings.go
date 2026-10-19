@@ -34,7 +34,36 @@ type ChannelSettings struct {
 	HTTP2ConnectionShards int `json:"http2_connection_shards,omitempty"`
 	// TLSInsecureSkipVerify accepts upstream certificates that fail
 	// verification, such as self-signed ones, for this channel only.
-	TLSInsecureSkipVerify bool `json:"tls_insecure_skip_verify,omitempty"`
+	TLSInsecureSkipVerify bool                       `json:"tls_insecure_skip_verify,omitempty"`
+	BedrockProtection     *BedrockProtectionSettings `json:"bedrock_protection,omitempty"`
+}
+
+type BedrockProtectionSettings struct {
+	ModelRateLimitEnabled     bool                         `json:"model_rate_limit_enabled,omitempty"`
+	ModelLimits               map[string]BedrockModelLimit `json:"model_limits,omitempty"`
+	RampUpEnabled             bool                         `json:"ramp_up_enabled,omitempty"`
+	RampUpStartUnix           int64                        `json:"ramp_up_start_unix,omitempty"`
+	RampUpDays                int                          `json:"ramp_up_days,omitempty"`
+	RampUpInitialPercent      int                          `json:"ramp_up_initial_percent,omitempty"`
+	RetryBackoffEnabled       bool                         `json:"retry_backoff_enabled,omitempty"`
+	RetryBackoffBaseMS        int                          `json:"retry_backoff_base_ms,omitempty"`
+	RetryBackoffMaxMS         int                          `json:"retry_backoff_max_ms,omitempty"`
+	UsageMetricsEnabled       bool                         `json:"usage_metrics_enabled,omitempty"`
+	RateLimitEnabled          bool                         `json:"rate_limit_enabled,omitempty"`
+	RPM                       int                          `json:"rpm,omitempty"`
+	TPM                       int                          `json:"tpm,omitempty"`
+	ThrottlingCooldownEnabled bool                         `json:"throttling_cooldown_enabled,omitempty"`
+	Consecutive429Threshold   int                          `json:"consecutive_429_threshold,omitempty"`
+	ObservationWindowSeconds  int                          `json:"observation_window_seconds,omitempty"`
+	Minimum429SpanSeconds     int                          `json:"minimum_429_span_seconds,omitempty"`
+	MinimumSampleSize         int                          `json:"minimum_sample_size,omitempty"`
+	ThrottlingRatioPercent    int                          `json:"throttling_ratio_percent,omitempty"`
+	CooldownSeconds           int                          `json:"cooldown_seconds,omitempty"`
+}
+
+type BedrockModelLimit struct {
+	RPM int `json:"rpm,omitempty"`
+	TPM int `json:"tpm,omitempty"`
 }
 
 // BindsTaskPlugin reports whether the channel is bound to the task plugin,
@@ -84,6 +113,66 @@ func (s *ChannelSettings) ValidateHTTPTransport() error {
 	}
 	if protocol == HTTPProtocolHTTP1 && s.HTTP2ConnectionShards > 1 {
 		return fmt.Errorf("http2_connection_shards must be 1 when http_protocol is http1")
+	}
+	if p := s.BedrockProtection; p != nil {
+		if len(p.ModelLimits) > 200 {
+			return fmt.Errorf("invalid bedrock model limits")
+		}
+		for name, limit := range p.ModelLimits {
+			if strings.TrimSpace(name) == "" || name != strings.TrimSpace(name) || len(name) > 512 || limit.RPM < 0 || limit.RPM > 10_000_000 || limit.TPM < 0 || limit.TPM > 1_000_000_000 {
+				return fmt.Errorf("invalid bedrock model limits")
+			}
+		}
+		if p.RampUpDays < 0 || p.RampUpDays > 7 || p.RampUpInitialPercent < 0 || p.RampUpInitialPercent > 100 || p.RampUpStartUnix < 0 || p.RampUpStartUnix > 253402300799 {
+			return fmt.Errorf("invalid bedrock ramp-up settings")
+		}
+		if p.RampUpEnabled && (p.RampUpStartUnix == 0 || !p.RateLimitEnabled || (p.RPM == 0 && p.TPM == 0)) {
+			return fmt.Errorf("bedrock ramp-up requires a start time and channel rate limits")
+		}
+		baseMS, maxMS := p.RetryBackoffBaseMS, p.RetryBackoffMaxMS
+		if baseMS == 0 {
+			baseMS = 200
+		}
+		if maxMS == 0 {
+			maxMS = 2000
+		}
+		if baseMS < 1 || maxMS < baseMS || maxMS > 10000 {
+			return fmt.Errorf("invalid bedrock retry backoff settings")
+		}
+		if p.RPM < 0 || p.RPM > 10_000_000 || p.TPM < 0 || p.TPM > 1_000_000_000 {
+			return fmt.Errorf("invalid bedrock protection rpm/tpm")
+		}
+		if p.Consecutive429Threshold < 0 || p.Consecutive429Threshold > 100 || p.ObservationWindowSeconds < 0 || p.ObservationWindowSeconds > 86400 || p.Minimum429SpanSeconds < 0 || p.MinimumSampleSize < 0 || p.MinimumSampleSize > 10000 || p.ThrottlingRatioPercent < 0 || p.ThrottlingRatioPercent > 100 || p.CooldownSeconds < 0 || p.CooldownSeconds > 86400 {
+			return fmt.Errorf("invalid bedrock protection cooldown settings")
+		}
+		if p.ThrottlingCooldownEnabled {
+			threshold := p.Consecutive429Threshold
+			if threshold == 0 {
+				threshold = 3
+			}
+			window := p.ObservationWindowSeconds
+			if window == 0 {
+				window = 60
+			}
+			minimumSpan := p.Minimum429SpanSeconds
+			if minimumSpan == 0 {
+				minimumSpan = 1
+			}
+			if threshold < 2 || minimumSpan > window {
+				return fmt.Errorf("invalid bedrock protection cooldown settings")
+			}
+			minimumSamples := p.MinimumSampleSize
+			if minimumSamples == 0 {
+				minimumSamples = 20
+			}
+			ratioPercent := p.ThrottlingRatioPercent
+			if ratioPercent == 0 {
+				ratioPercent = 50
+			}
+			if minimumSamples < 2 || ratioPercent < 1 {
+				return fmt.Errorf("invalid bedrock protection cooldown settings")
+			}
+		}
 	}
 	return nil
 }

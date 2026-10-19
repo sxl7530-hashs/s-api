@@ -31,6 +31,7 @@ import type {
   ChannelOpsResponse,
   ChannelTestResponse,
   ChannelCostRatioHistory,
+  ChannelUsageResponse,
   CopyChannelParams,
   CopyChannelResponse,
   FetchModelsResponse,
@@ -143,6 +144,16 @@ export async function getChannels(
   return res.data
 }
 
+export async function getChannelUsage(
+  channelIds: number[]
+): Promise<ChannelUsageResponse> {
+  const res = await api.get('/api/channel/usage', {
+    params: { ids: channelIds.join(',') },
+    disableDuplicate: true,
+  })
+  return res.data
+}
+
 /**
  * Search channels with filters
  */
@@ -163,7 +174,11 @@ export async function getChannel(id: number): Promise<GetChannelResponse> {
 
 export async function getChannelCostRatioHistory(
   id: number
-): Promise<{ success: boolean; message?: string; data?: ChannelCostRatioHistory[] }> {
+): Promise<{
+  success: boolean
+  message?: string
+  data?: ChannelCostRatioHistory[]
+}> {
   const res = await api.get(`/api/channel/${id}/cost_ratio_history`)
   return res.data
 }
@@ -299,9 +314,7 @@ export async function testChannel(
   return res.data
 }
 
-export async function testSelectedChannelModels(
-  channelIds: number[]
-): Promise<{
+export async function testSelectedChannelModels(channelIds: number[]): Promise<{
   success: boolean
   message?: string
   data?: { task_id: string; status: string }

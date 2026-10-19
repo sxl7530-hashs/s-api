@@ -128,6 +128,36 @@ function isOptionalJsonObject(value: string | undefined): boolean {
   }
 }
 
+function isBedrockModelLimits(value: string | undefined): boolean {
+  try {
+    const limits = parseOptionalJson(value)
+    if (limits === undefined) return true
+    if (!isJsonObjectValue(limits) || Object.keys(limits).length > 200) {
+      return false
+    }
+    return Object.entries(limits).every(([model, limit]) => {
+      if (
+        !model.trim() ||
+        model !== model.trim() ||
+        model.length > 512 ||
+        !isJsonObjectValue(limit)
+      ) {
+        return false
+      }
+      return Object.entries(limit).every(
+        ([key, amount]) =>
+          (key === 'rpm' || key === 'tpm') &&
+          typeof amount === 'number' &&
+          Number.isInteger(amount) &&
+          amount >= 0 &&
+          amount <= (key === 'rpm' ? 10_000_000 : 1_000_000_000)
+      )
+    })
+  } catch {
+    return false
+  }
+}
+
 function isOptionalModelMapping(value: string | undefined): boolean {
   try {
     const parsed = parseOptionalJson(value)
@@ -270,6 +300,59 @@ export const channelFormSchema = z
     http_protocol: z.enum(['auto', 'http1']).optional(),
     http2_connection_shards: z.number().int().optional(),
     tls_insecure_skip_verify: z.boolean().optional(),
+    bedrock_usage_metrics_enabled: z.boolean().optional(),
+    bedrock_rate_limit_enabled: z.boolean().optional(),
+    bedrock_rpm: z.number().int().min(0).max(10_000_000).optional(),
+    bedrock_tpm: z.number().int().min(0).max(1_000_000_000).optional(),
+    bedrock_model_rate_limit_enabled: z.boolean().optional(),
+    bedrock_model_limits: z
+      .string()
+      .optional()
+      .refine(isBedrockModelLimits, 'Invalid Bedrock model limits'),
+    bedrock_ramp_up_enabled: z.boolean().optional(),
+    bedrock_ramp_up_start_unix: z
+      .number()
+      .int()
+      .min(0)
+      .max(253402300799)
+      .optional(),
+    bedrock_ramp_up_days: z.number().int().min(1).max(7).optional(),
+    bedrock_ramp_up_initial_percent: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional(),
+    bedrock_retry_backoff_enabled: z.boolean().optional(),
+    bedrock_retry_backoff_base_ms: z
+      .number()
+      .int()
+      .min(1)
+      .max(10000)
+      .optional(),
+    bedrock_retry_backoff_max_ms: z.number().int().min(1).max(10000).optional(),
+    bedrock_cooldown_enabled: z.boolean().optional(),
+    bedrock_429_threshold: z.number().int().min(2).max(100).optional(),
+    bedrock_observation_window_seconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(86400)
+      .optional(),
+    bedrock_minimum_429_span_seconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(86400)
+      .optional(),
+    bedrock_minimum_sample_size: z.number().int().min(2).max(10000).optional(),
+    bedrock_throttling_ratio_percent: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional(),
+    bedrock_cooldown_seconds: z.number().int().min(1).max(86400).optional(),
     pass_through_body_enabled: z.boolean().optional(),
     responses_websocket_enabled: z.boolean().optional(),
     system_prompt: z.string().optional(),
@@ -297,6 +380,30 @@ export const channelFormSchema = z
     upstream_model_update_ignored_models: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.type === 33) {
+      if (
+        data.bedrock_ramp_up_enabled &&
+        (!data.bedrock_ramp_up_start_unix ||
+          !data.bedrock_rate_limit_enabled ||
+          (!data.bedrock_rpm && !data.bedrock_tpm))
+      ) {
+        addRequiredIssue(
+          ctx,
+          'bedrock_ramp_up_enabled',
+          'Ramp-up requires a start time and channel rate limits'
+        )
+      }
+      if (
+        (data.bedrock_retry_backoff_base_ms ?? 200) >
+        (data.bedrock_retry_backoff_max_ms ?? 2000)
+      ) {
+        addRequiredIssue(
+          ctx,
+          'bedrock_retry_backoff_max_ms',
+          'Maximum backoff must be at least the base delay'
+        )
+      }
+    }
     if (
       [
         3,
@@ -464,6 +571,26 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   http_protocol: HTTP_PROTOCOL_AUTO,
   http2_connection_shards: 1,
   tls_insecure_skip_verify: false,
+  bedrock_usage_metrics_enabled: false,
+  bedrock_rate_limit_enabled: false,
+  bedrock_rpm: 0,
+  bedrock_tpm: 0,
+  bedrock_model_rate_limit_enabled: false,
+  bedrock_model_limits: '{}',
+  bedrock_ramp_up_enabled: false,
+  bedrock_ramp_up_start_unix: 0,
+  bedrock_ramp_up_days: 7,
+  bedrock_ramp_up_initial_percent: 5,
+  bedrock_retry_backoff_enabled: false,
+  bedrock_retry_backoff_base_ms: 200,
+  bedrock_retry_backoff_max_ms: 2000,
+  bedrock_cooldown_enabled: false,
+  bedrock_429_threshold: 3,
+  bedrock_observation_window_seconds: 60,
+  bedrock_minimum_429_span_seconds: 1,
+  bedrock_minimum_sample_size: 20,
+  bedrock_throttling_ratio_percent: 50,
+  bedrock_cooldown_seconds: 900,
   pass_through_body_enabled: false,
   responses_websocket_enabled: false,
   system_prompt: '',
@@ -511,6 +638,26 @@ export function transformChannelToFormDefaults(
     http_protocol: HTTP_PROTOCOL_AUTO as 'auto' | 'http1',
     http2_connection_shards: 1,
     tls_insecure_skip_verify: false,
+    bedrock_usage_metrics_enabled: false,
+    bedrock_rate_limit_enabled: false,
+    bedrock_rpm: 0,
+    bedrock_tpm: 0,
+    bedrock_model_rate_limit_enabled: false,
+    bedrock_model_limits: '{}',
+    bedrock_ramp_up_enabled: false,
+    bedrock_ramp_up_start_unix: 0,
+    bedrock_ramp_up_days: 7,
+    bedrock_ramp_up_initial_percent: 5,
+    bedrock_retry_backoff_enabled: false,
+    bedrock_retry_backoff_base_ms: 200,
+    bedrock_retry_backoff_max_ms: 2000,
+    bedrock_cooldown_enabled: false,
+    bedrock_429_threshold: 3,
+    bedrock_observation_window_seconds: 60,
+    bedrock_minimum_429_span_seconds: 1,
+    bedrock_minimum_sample_size: 20,
+    bedrock_throttling_ratio_percent: 50,
+    bedrock_cooldown_seconds: 900,
     pass_through_body_enabled: false,
     responses_websocket_enabled: false,
     system_prompt: '',
@@ -533,6 +680,46 @@ export function transformChannelToFormDefaults(
         http_protocol: protocol,
         http2_connection_shards: protocol === HTTP_PROTOCOL_HTTP1 ? 1 : shards,
         tls_insecure_skip_verify: parsed.tls_insecure_skip_verify === true,
+        bedrock_usage_metrics_enabled:
+          parsed.bedrock_protection?.usage_metrics_enabled === true,
+        bedrock_rate_limit_enabled:
+          parsed.bedrock_protection?.rate_limit_enabled === true,
+        bedrock_rpm: parsed.bedrock_protection?.rpm || 0,
+        bedrock_tpm: parsed.bedrock_protection?.tpm || 0,
+        bedrock_model_rate_limit_enabled:
+          parsed.bedrock_protection?.model_rate_limit_enabled === true,
+        bedrock_model_limits: JSON.stringify(
+          parsed.bedrock_protection?.model_limits || {},
+          null,
+          2
+        ),
+        bedrock_ramp_up_enabled:
+          parsed.bedrock_protection?.ramp_up_enabled === true,
+        bedrock_ramp_up_start_unix:
+          parsed.bedrock_protection?.ramp_up_start_unix || 0,
+        bedrock_ramp_up_days: parsed.bedrock_protection?.ramp_up_days || 7,
+        bedrock_ramp_up_initial_percent:
+          parsed.bedrock_protection?.ramp_up_initial_percent || 5,
+        bedrock_retry_backoff_enabled:
+          parsed.bedrock_protection?.retry_backoff_enabled === true,
+        bedrock_retry_backoff_base_ms:
+          parsed.bedrock_protection?.retry_backoff_base_ms || 200,
+        bedrock_retry_backoff_max_ms:
+          parsed.bedrock_protection?.retry_backoff_max_ms || 2000,
+        bedrock_cooldown_enabled:
+          parsed.bedrock_protection?.throttling_cooldown_enabled === true,
+        bedrock_429_threshold:
+          parsed.bedrock_protection?.consecutive_429_threshold || 3,
+        bedrock_observation_window_seconds:
+          parsed.bedrock_protection?.observation_window_seconds || 60,
+        bedrock_minimum_429_span_seconds:
+          parsed.bedrock_protection?.minimum_429_span_seconds || 1,
+        bedrock_minimum_sample_size:
+          parsed.bedrock_protection?.minimum_sample_size || 20,
+        bedrock_throttling_ratio_percent:
+          parsed.bedrock_protection?.throttling_ratio_percent || 50,
+        bedrock_cooldown_seconds:
+          parsed.bedrock_protection?.cooldown_seconds || 900,
         pass_through_body_enabled: parsed.pass_through_body_enabled || false,
         responses_websocket_enabled:
           parsed.responses_websocket_enabled === true,
@@ -694,6 +881,33 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
   }
   if (formData.tls_insecure_skip_verify === true) {
     settingObj.tls_insecure_skip_verify = true
+  }
+
+  if (formData.type === 33) {
+    settingObj.bedrock_protection = {
+      usage_metrics_enabled: formData.bedrock_usage_metrics_enabled === true,
+      rate_limit_enabled: formData.bedrock_rate_limit_enabled === true,
+      rpm: formData.bedrock_rpm || 0,
+      tpm: formData.bedrock_tpm || 0,
+      model_rate_limit_enabled:
+        formData.bedrock_model_rate_limit_enabled === true,
+      model_limits: JSON.parse(formData.bedrock_model_limits || '{}'),
+      ramp_up_enabled: formData.bedrock_ramp_up_enabled === true,
+      ramp_up_start_unix: formData.bedrock_ramp_up_start_unix || 0,
+      ramp_up_days: formData.bedrock_ramp_up_days || 7,
+      ramp_up_initial_percent: formData.bedrock_ramp_up_initial_percent || 5,
+      retry_backoff_enabled: formData.bedrock_retry_backoff_enabled === true,
+      retry_backoff_base_ms: formData.bedrock_retry_backoff_base_ms || 200,
+      retry_backoff_max_ms: formData.bedrock_retry_backoff_max_ms || 2000,
+      throttling_cooldown_enabled: formData.bedrock_cooldown_enabled === true,
+      consecutive_429_threshold: formData.bedrock_429_threshold || 3,
+      observation_window_seconds:
+        formData.bedrock_observation_window_seconds || 60,
+      minimum_429_span_seconds: formData.bedrock_minimum_429_span_seconds || 1,
+      minimum_sample_size: formData.bedrock_minimum_sample_size || 20,
+      throttling_ratio_percent: formData.bedrock_throttling_ratio_percent || 50,
+      cooldown_seconds: formData.bedrock_cooldown_seconds || 900,
+    }
   }
 
   return JSON.stringify(settingObj)

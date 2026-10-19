@@ -31,6 +31,19 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if GetChannelConstraints(c).SuppressesRetry() {
 		return PolicyDecision{Action: "stop", Reason: "pinned_channel", Source: "channel_constraint"}
 	}
+	// Optional Bedrock protection must respect cancellation and the configured
+	// attempt budget even though its local capacity errors are channel errors.
+	if err.GetErrorCode() == types.ErrorCodeChannelBedrockRateLimited || err.GetErrorCode() == types.ErrorCodeChannelBedrockCoolingDown || err.GetErrorCode() == types.ErrorCodeBedrockThrottled {
+		if _, pinned, _ := GetChannelConstraints(c).ResolvedPin(); pinned {
+			return PolicyDecision{Action: "stop", Reason: "pinned_channel", Source: "channel_constraint"}
+		}
+		if types.IsSkipRetryError(err) || (c.Request != nil && c.Request.Context().Err() != nil) {
+			return PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}
+		}
+		if retryTimes <= 0 {
+			return PolicyDecision{Action: "stop", Reason: "attempt_budget_exhausted", Source: "global"}
+		}
+	}
 	if types.IsChannelError(err) {
 		return PolicyDecision{Action: "retry", Reason: "channel_error", Source: "system"}
 	}

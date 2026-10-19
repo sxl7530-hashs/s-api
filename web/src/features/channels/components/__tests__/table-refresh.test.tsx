@@ -91,7 +91,9 @@ afterEach(() => {
 
 async function renderChannelsPage(
   searchGate: () => Promise<void>,
-  fullPage = false
+  fullPage = false,
+  usageFails: boolean | (() => boolean) = false,
+  tpmUnavailable = false
 ) {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/channel/test/models/tasks') {
@@ -103,6 +105,24 @@ async function renderChannelsPage(
         data: {
           success: true,
           data: { items: [channel('prod')], total: 1, type_counts: {} },
+        },
+      }
+    }
+    if (url === '/api/channel/usage') {
+      if (typeof usageFails === 'function' ? usageFails() : usageFails) {
+        return { data: { success: false, message: 'metrics unavailable' } }
+      }
+      return {
+        data: {
+          success: true,
+          data: {
+            '3': {
+              rpm: 12,
+              tpm: 345,
+              available: true,
+              tpm_unavailable: tpmUnavailable,
+            },
+          },
         },
       }
     }
@@ -151,6 +171,11 @@ it('refetches the channel list with the current filters and marks Refresh busy w
     get.mock.calls.filter(([url]) => url === '/api/channel/search')
   const refresh = screen.getByRole('button', { name: 'Refresh' })
   expect(searchCalls()).toHaveLength(1)
+  await waitFor(() =>
+    expect(get.mock.calls.some(([url]) => url === '/api/channel/usage')).toBe(
+      true
+    )
+  )
   expect(refresh).toHaveAttribute('aria-busy', 'false')
 
   let release!: () => void
@@ -165,7 +190,119 @@ it('refetches the channel list with the current filters and marks Refresh busy w
   expect(refresh).toHaveAttribute('aria-busy', 'true')
   release()
   await waitFor(() => expect(refresh).toHaveAttribute('aria-busy', 'false'))
+  expect(get.mock.calls.some(([url]) => url === '/api/channel/usage')).toBe(
+    true
+  )
 })
+
+it('migrates legacy RPM visibility to one combined column and refreshes both metrics', async () => {
+  localStorage.setItem('channels:view-mode', 'table')
+  localStorage.setItem(
+    'channels:column-visibility',
+    JSON.stringify({ rpm: true, tpm: false })
+  )
+  const get = await renderChannelsPage(() => Promise.resolve())
+  const usageCalls = () =>
+    get.mock.calls.filter(([url]) => url === '/api/channel/usage')
+
+  await waitFor(() => expect(usageCalls()).toHaveLength(1))
+  expect(usageCalls()[0][1]?.params).toEqual({ ids: '3' })
+  expect(await screen.findByText('12')).toBeVisible()
+  expect(await screen.findByText('345')).toBeVisible()
+  expect(
+    screen.getAllByRole('columnheader', { name: /RPM \/ TPM/ })
+  ).toHaveLength(1)
+  expect((await screen.findAllByText('prod')).length).toBeGreaterThan(0)
+
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+  await waitFor(() => expect(usageCalls()).toHaveLength(2))
+})
+
+it('an explicitly hidden combined column overrides legacy visibility', async () => {
+  localStorage.setItem(
+    'channels:column-visibility',
+    JSON.stringify({ throughput: false, rpm: true, tpm: true })
+  )
+  const get = await renderChannelsPage(() => Promise.resolve())
+  expect((await screen.findAllByText('prod')).length).toBeGreaterThan(0)
+  expect(get.mock.calls.some(([url]) => url === '/api/channel/usage')).toBe(
+    false
+  )
+})
+
+it.each(['null', '[]', '"invalid"', '{broken', '{"throughput":"true"}'])(
+  'opens the channel list safely with invalid column preferences: %s',
+  async (stored) => {
+    localStorage.setItem('channels:column-visibility', stored)
+    const get = await renderChannelsPage(() => Promise.resolve())
+    expect(get.mock.calls.some(([url]) => url === '/api/channel/usage')).toBe(
+      true
+    )
+  }
+)
+
+it('preserves RPM and shows unavailable TPM when token estimation failed', async () => {
+  localStorage.setItem('channels:view-mode', 'table')
+  localStorage.setItem(
+    'channels:column-visibility',
+    JSON.stringify({ throughput: true })
+  )
+  await renderChannelsPage(() => Promise.resolve(), false, false, true)
+  expect(await screen.findByText('12')).toBeVisible()
+  expect(screen.queryByText('345')).not.toBeInTheDocument()
+  expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+})
+
+it('keeps the channel list visible when optional usage metrics fail', async () => {
+  localStorage.setItem(
+    'channels:column-visibility',
+    JSON.stringify({ rpm: true })
+  )
+  const get = await renderChannelsPage(() => Promise.resolve(), false, true)
+
+  await waitFor(() =>
+    expect(get.mock.calls.some(([url]) => url === '/api/channel/usage')).toBe(
+      true
+    )
+  )
+  expect((await screen.findAllByText('prod')).length).toBeGreaterThan(0)
+})
+
+it.each(['business', 'network'])(
+  'clears stale metrics after a %s failure and restores them after recovery',
+  async (failure) => {
+    localStorage.setItem('channels:view-mode', 'table')
+    localStorage.setItem(
+      'channels:column-visibility',
+      JSON.stringify({ throughput: true })
+    )
+    let unavailable = false
+    await renderChannelsPage(
+      () => Promise.resolve(),
+      false,
+      () => {
+        if (unavailable && failure === 'network') {
+          throw new Error('network unavailable')
+        }
+        return unavailable
+      }
+    )
+    expect(await screen.findByText('345')).toBeVisible()
+
+    unavailable = true
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() =>
+      expect(screen.queryByText('345')).not.toBeInTheDocument()
+    )
+    expect(screen.queryByText('12')).not.toBeInTheDocument()
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getAllByText('prod').length).toBeGreaterThan(0)
+
+    unavailable = false
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findByText('345')).toBeVisible()
+  }
+)
 
 it('opens model test history from the channel toolbar without taking space from the channel table', async () => {
   useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })

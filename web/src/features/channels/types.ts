@@ -72,6 +72,8 @@ export const channelSchema = z.object({
     multi_key_mode: 'random',
   }),
   settings: z.string().default('{}'), // other_settings JSON
+  rpm: z.number().optional(),
+  tpm: z.number().optional(),
 })
 
 export type Channel = z.infer<typeof channelSchema>
@@ -102,6 +104,42 @@ export interface ChannelSettings {
   http_protocol?: 'auto' | 'http1' | string
   http2_connection_shards?: number
   tls_insecure_skip_verify?: boolean
+  bedrock_protection?: BedrockProtectionSettings
+}
+
+export interface BedrockProtectionSettings {
+  model_rate_limit_enabled?: boolean
+  model_limits?: Record<string, { rpm?: number; tpm?: number }>
+  ramp_up_enabled?: boolean
+  ramp_up_start_unix?: number
+  ramp_up_days?: number
+  ramp_up_initial_percent?: number
+  retry_backoff_enabled?: boolean
+  retry_backoff_base_ms?: number
+  retry_backoff_max_ms?: number
+  usage_metrics_enabled?: boolean
+  rate_limit_enabled?: boolean
+  rpm?: number
+  tpm?: number
+  throttling_cooldown_enabled?: boolean
+  consecutive_429_threshold?: number
+  observation_window_seconds?: number
+  minimum_429_span_seconds?: number
+  minimum_sample_size?: number
+  throttling_ratio_percent?: number
+  cooldown_seconds?: number
+}
+
+export interface ChannelUsage {
+  rpm: number
+  tpm: number
+  available: boolean
+  tpm_unavailable?: boolean
+}
+
+export interface ChannelUsageResponse {
+  success: boolean
+  data: Record<string, ChannelUsage>
 }
 
 export interface ChannelOtherSettings {

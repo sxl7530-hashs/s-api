@@ -206,6 +206,7 @@ import {
   nextTaskPluginBaseUrl,
 } from '../../lib/task-plugin-base-url'
 import type { Channel } from '../../types'
+import { BedrockAdvancedSettings } from '../bedrock-advanced-settings'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelQuickOptions } from '../channel-quick-options'
 import { ChannelTypeLogo } from '../channel-type-badge'
@@ -292,9 +293,7 @@ const SENSITIVE_FORM_FIELDS = [
   'advanced_custom',
   'is_enterprise_account',
   'vertex_key_type',
-  'vertex_project_id',
   'aws_key_type',
-  'aws_api_type',
   'azure_responses_version',
   'force_format',
   'thinking_to_content',
@@ -3717,100 +3716,228 @@ export function ChannelMutateDrawer({
 
             {/* AWS (type 33) */}
             {currentType === 33 && (
-              <FormField
-                control={form.control}
-                name='aws_api_type'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('AWS API')}</FormLabel>
-                    <Select
-                      disabled={sensitiveLocked}
-                      items={[
-                        {
-                          value: 'invoke_model',
-                          label: t('InvokeModel (legacy)'),
-                        },
-                        {
-                          value: 'mantle',
-                          label: t('Mantle (Messages API)'),
-                        },
-                      ]}
-                      onValueChange={field.onChange}
-                      value={field.value ?? 'invoke_model'}
-                    >
+              <div className='space-y-4'>
+                <FormField
+                  control={form.control}
+                  name='aws_key_type'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('AWS Key Format')}</FormLabel>
+                      <Select
+                        disabled={sensitiveLocked}
+                        items={[
+                          {
+                            value: 'ak_sk',
+                            label: t('AccessKey / SecretAccessKey'),
+                          },
+                          {
+                            value: 'api_key',
+                            label: t('API Key'),
+                          },
+                        ]}
+                        onValueChange={field.onChange}
+                        value={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder={t('Select key format')} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent alignItemWithTrigger={false}>
+                          <SelectGroup>
+                            <SelectItem value='ak_sk'>
+                              {t('AccessKey / SecretAccessKey')}
+                            </SelectItem>
+                            <SelectItem value='api_key'>
+                              {t('API Key')}
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        {field.value === 'api_key'
+                          ? t('API Key mode: use APIKey|Region')
+                          : t(
+                              'AK/SK mode: use AccessKey|SecretAccessKey|Region'
+                            )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <Separator />
+                <FormField
+                  control={form.control}
+                  name='bedrock_usage_metrics_enabled'
+                  render={({ field }) => (
+                    <FormItem className={sideDrawerSwitchItemClassName()}>
+                      <div className='space-y-0.5'>
+                        <FormLabel>{t('Bedrock usage metrics')}</FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Collect per-channel RPM and estimated TPM for the optional channel table columns.'
+                          )}
+                        </FormDescription>
+                      </div>
                       <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
+                        <Switch
+                          disabled={sensitiveLocked}
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
                       </FormControl>
-                      <SelectContent alignItemWithTrigger={false}>
-                        <SelectGroup>
-                          <SelectItem value='invoke_model'>
-                            {t('InvokeModel (legacy)')}
-                          </SelectItem>
-                          <SelectItem value='mantle'>
-                            {t('Mantle (Messages API)')}
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>
-                      {t(
-                        'Use Mantle for supported Claude models and automatic prompt caching. Keep InvokeModel for older models and Amazon Nova.'
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='bedrock_rate_limit_enabled'
+                  render={({ field }) => (
+                    <FormItem className={sideDrawerSwitchItemClassName()}>
+                      <div className='space-y-0.5'>
+                        <FormLabel>{t('Bedrock rate protection')}</FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Limit each channel before sending requests to AWS. Redis failures allow traffic through.'
+                          )}
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          disabled={sensitiveLocked}
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                {form.watch('bedrock_rate_limit_enabled') && (
+                  <div className='grid grid-cols-2 gap-3'>
+                    <FormField
+                      control={form.control}
+                      name='bedrock_rpm'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('RPM limit')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              type='number'
+                              min={0}
+                              disabled={sensitiveLocked}
+                              {...field}
+                              onChange={(event) =>
+                                field.onChange(Number(event.target.value))
+                              }
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t('Zero means unlimited')}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
                       )}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
+                    />
+                    <FormField
+                      control={form.control}
+                      name='bedrock_tpm'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('TPM limit')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              type='number'
+                              min={0}
+                              disabled={sensitiveLocked}
+                              {...field}
+                              onChange={(event) =>
+                                field.onChange(Number(event.target.value))
+                              }
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t('Uses estimated request tokens')}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
                 )}
-              />
-            )}
-            {currentType === 33 && (
-              <FormField
-                control={form.control}
-                name='aws_key_type'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('AWS Key Format')}</FormLabel>
-                    <Select
-                      disabled={sensitiveLocked}
-                      items={[
-                        {
-                          value: 'ak_sk',
-                          label: t('AccessKey / SecretAccessKey'),
-                        },
-                        {
-                          value: 'api_key',
-                          label: t('API Key'),
-                        },
-                      ]}
-                      onValueChange={field.onChange}
-                      value={field.value}
-                    >
+                <FormField
+                  control={form.control}
+                  name='bedrock_cooldown_enabled'
+                  render={({ field }) => (
+                    <FormItem className={sideDrawerSwitchItemClassName()}>
+                      <div className='space-y-0.5'>
+                        <FormLabel>{t('Bedrock 429 cooldown')}</FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Temporarily bypass this channel after repeated AWS throttling responses.'
+                          )}
+                        </FormDescription>
+                      </div>
                       <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder={t('Select key format')} />
-                        </SelectTrigger>
+                        <Switch
+                          disabled={sensitiveLocked}
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
                       </FormControl>
-                      <SelectContent alignItemWithTrigger={false}>
-                        <SelectGroup>
-                          <SelectItem value='ak_sk'>
-                            {t('AccessKey / SecretAccessKey')}
-                          </SelectItem>
-                          <SelectItem value='api_key'>
-                            {t('API Key')}
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>
-                      {field.value === 'api_key'
-                        ? t('API Key mode: use APIKey|Region')
-                        : t('AK/SK mode: use AccessKey|SecretAccessKey|Region')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
+                    </FormItem>
+                  )}
+                />
+                {form.watch('bedrock_cooldown_enabled') && (
+                  <div className='grid grid-cols-2 gap-3'>
+                    {(
+                      [
+                        ['bedrock_429_threshold', '429 threshold'],
+                        [
+                          'bedrock_observation_window_seconds',
+                          'Observation window (seconds)',
+                        ],
+                        [
+                          'bedrock_minimum_429_span_seconds',
+                          'Minimum 429 span (seconds)',
+                        ],
+                        ['bedrock_minimum_sample_size', 'Minimum sample size'],
+                        [
+                          'bedrock_throttling_ratio_percent',
+                          '429 ratio threshold (%)',
+                        ],
+                        ['bedrock_cooldown_seconds', 'Cooldown (seconds)'],
+                      ] as const
+                    ).map(([name, label]) => (
+                      <FormField
+                        key={name}
+                        control={form.control}
+                        name={name}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t(label)}</FormLabel>
+                            <FormControl>
+                              <Input
+                                type='number'
+                                min={1}
+                                disabled={sensitiveLocked}
+                                {...field}
+                                onChange={(event) =>
+                                  field.onChange(Number(event.target.value))
+                                }
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    ))}
+                  </div>
                 )}
-              />
+                <BedrockAdvancedSettings
+                  form={form}
+                  disabled={sensitiveLocked || isSubmitting}
+                />
+              </div>
             )}
 
             {/* AI Proxy Library (type 21) */}
@@ -3968,29 +4095,6 @@ export function ChannelMutateDrawer({
                     </FormItem>
                   )}
                 />
-                {vertexKeyType === 'api_key' && (
-                  <FormField
-                    control={form.control}
-                    name='vertex_project_id'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('Vertex AI Project ID')}</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder={t('e.g., my-project-123')}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          {t(
-                            'Optional. Without it, Google picks the region; with it, requests go to the deployment region below.'
-                          )}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
                 {vertexKeyType === 'json' && (
                   <FormItem>
                     <FormLabel>{t('Service account JSON file(s)')}</FormLabel>

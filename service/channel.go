@@ -64,6 +64,10 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}
+	code := err.GetErrorCode()
+	if code == types.ErrorCodeChannelBedrockRateLimited || code == types.ErrorCodeChannelBedrockCoolingDown || code == types.ErrorCodeBedrockThrottled {
+		return false
+	}
 	if types.IsChannelError(err) {
 		return true
 	}

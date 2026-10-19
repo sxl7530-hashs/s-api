@@ -29,6 +29,7 @@ import {
 import { channelSchema } from '../../types'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
+  buildSettingJSON,
   channelFormSchema,
   transformChannelToFormDefaults,
   transformFormDataToCreatePayload,
@@ -101,6 +102,124 @@ describe('New API channel', () => {
     })
 
     expect(result.success).toBe(true)
+  })
+})
+
+describe('Bedrock protection channel settings', () => {
+  test('defaults every runtime switch to off', () => {
+    expect(CHANNEL_FORM_DEFAULT_VALUES).toMatchObject({
+      bedrock_usage_metrics_enabled: false,
+      bedrock_rate_limit_enabled: false,
+      bedrock_cooldown_enabled: false,
+      bedrock_model_rate_limit_enabled: false,
+      bedrock_ramp_up_enabled: false,
+      bedrock_retry_backoff_enabled: false,
+    })
+  })
+
+  test('round-trips Bedrock protection settings through the channel setting JSON', () => {
+    const setting = buildSettingJSON({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      type: 33,
+      bedrock_usage_metrics_enabled: true,
+      bedrock_rate_limit_enabled: true,
+      bedrock_rpm: 120,
+      bedrock_tpm: 24000,
+      bedrock_cooldown_enabled: true,
+      bedrock_429_threshold: 4,
+      bedrock_observation_window_seconds: 90,
+      bedrock_minimum_429_span_seconds: 3,
+      bedrock_minimum_sample_size: 30,
+      bedrock_throttling_ratio_percent: 60,
+      bedrock_cooldown_seconds: 600,
+      bedrock_model_rate_limit_enabled: true,
+      bedrock_model_limits: '{"opus":{"rpm":30,"tpm":12000}}',
+      bedrock_ramp_up_enabled: true,
+      bedrock_ramp_up_start_unix: 1800000000,
+      bedrock_ramp_up_days: 7,
+      bedrock_ramp_up_initial_percent: 5,
+      bedrock_retry_backoff_enabled: true,
+      bedrock_retry_backoff_base_ms: 100,
+      bedrock_retry_backoff_max_ms: 1000,
+    })
+    const defaults = transformChannelToFormDefaults(
+      channelSchema.parse({
+        id: 33,
+        name: 'Bedrock',
+        type: 33,
+        key: '',
+        status: 1,
+        models: 'claude',
+        group: 'default',
+        created_time: 0,
+        test_time: 0,
+        response_time: 0,
+        balance_updated_time: 0,
+        setting,
+        settings: '{}',
+        channel_info: {},
+      })
+    )
+
+    expect(defaults).toMatchObject({
+      bedrock_usage_metrics_enabled: true,
+      bedrock_rate_limit_enabled: true,
+      bedrock_rpm: 120,
+      bedrock_tpm: 24000,
+      bedrock_cooldown_enabled: true,
+      bedrock_429_threshold: 4,
+      bedrock_observation_window_seconds: 90,
+      bedrock_minimum_429_span_seconds: 3,
+      bedrock_minimum_sample_size: 30,
+      bedrock_throttling_ratio_percent: 60,
+      bedrock_cooldown_seconds: 600,
+      bedrock_model_rate_limit_enabled: true,
+      bedrock_model_limits: JSON.stringify(
+        { opus: { rpm: 30, tpm: 12000 } },
+        null,
+        2
+      ),
+      bedrock_ramp_up_enabled: true,
+      bedrock_ramp_up_start_unix: 1800000000,
+      bedrock_ramp_up_days: 7,
+      bedrock_ramp_up_initial_percent: 5,
+      bedrock_retry_backoff_enabled: true,
+      bedrock_retry_backoff_base_ms: 100,
+      bedrock_retry_backoff_max_ms: 1000,
+    })
+  })
+
+  test.each([
+    { bedrock_model_limits: '{"opus":{"rpm":-1}}' },
+    { bedrock_model_limits: '{"opus":{"tpm":1.5}}' },
+    { bedrock_model_limits: '{"opus":10}' },
+    { bedrock_ramp_up_days: 8 },
+    { bedrock_ramp_up_enabled: true },
+    { bedrock_retry_backoff_base_ms: 1000, bedrock_retry_backoff_max_ms: 100 },
+  ])('rejects invalid Bedrock configuration %j', (invalid) => {
+    expect(
+      channelFormSchema.safeParse({
+        ...CHANNEL_FORM_DEFAULT_VALUES,
+        type: 33,
+        name: 'Bedrock',
+        key: 'key',
+        ...invalid,
+      }).success
+    ).toBe(false)
+  })
+
+  test('does not save Bedrock protection settings for other channel types', () => {
+    const setting = JSON.parse(
+      buildSettingJSON({
+        ...CHANNEL_FORM_DEFAULT_VALUES,
+        type: 1,
+        bedrock_usage_metrics_enabled: true,
+        bedrock_rate_limit_enabled: true,
+        bedrock_cooldown_enabled: true,
+      })
+    )
+
+    expect(setting).not.toHaveProperty('bedrock_protection')
   })
 })
 

@@ -57,6 +57,8 @@ const (
 	ErrorCodeChannelHeaderOverrideInvalid ErrorCode = "channel:header_override_invalid"
 	ErrorCodeChannelModelMappedError      ErrorCode = "channel:model_mapped_error"
 	ErrorCodeChannelAwsClientError        ErrorCode = "channel:aws_client_error"
+	ErrorCodeChannelBedrockRateLimited    ErrorCode = "channel:bedrock_rate_limited"
+	ErrorCodeChannelBedrockCoolingDown    ErrorCode = "channel:bedrock_cooling_down"
 	ErrorCodeChannelInvalidKey            ErrorCode = "channel:invalid_key"
 	ErrorCodeChannelResponseTimeExceeded  ErrorCode = "channel:response_time_exceeded"
 
@@ -75,6 +77,7 @@ const (
 	ErrorCodeBadResponseBody        ErrorCode = "bad_response_body"
 	ErrorCodeEmptyResponse          ErrorCode = "empty_response"
 	ErrorCodeAwsInvokeError         ErrorCode = "aws_invoke_error"
+	ErrorCodeBedrockThrottled       ErrorCode = "channel:bedrock_throttled"
 	ErrorCodeModelNotFound          ErrorCode = "model_not_found"
 	ErrorCodePromptBlocked          ErrorCode = "prompt_blocked"
 

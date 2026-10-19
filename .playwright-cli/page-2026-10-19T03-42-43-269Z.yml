@@ -1,0 +1,275 @@
+- generic [ref=e2]:
+  - generic [ref=e316]:
+    - link "跳到主内容" [ref=e317] [cursor=pointer]:
+      - /url: "#content"
+    - banner [ref=e318]:
+      - generic [ref=e319]:
+        - button "Toggle Sidebar" [ref=e320] [cursor=pointer]
+        - generic [ref=e322]:
+          - link "返回主页" [ref=e323] [cursor=pointer]:
+            - /url: /
+            - img "徽标" [ref=e325]
+            - generic [ref=e326]: New API
+          - button "系统更新，当前版本：未知版本" [ref=e327] [cursor=pointer]:
+            - generic [ref=e328]: 未知版本
+            - status [ref=e329]
+        - generic [ref=e330]:
+          - navigation [ref=e332]:
+            - link "主页" [ref=e333] [cursor=pointer]:
+              - /url: /
+            - link "控制台" [ref=e334] [cursor=pointer]:
+              - /url: /dashboard
+            - link "模型广场" [ref=e335] [cursor=pointer]:
+              - /url: /pricing
+            - link "排行榜" [ref=e336] [cursor=pointer]:
+              - /url: /rankings
+            - link "文档" [ref=e337] [cursor=pointer]:
+              - /url: https://docs.newapi.pro
+            - link "关于" [ref=e338] [cursor=pointer]:
+              - /url: /about
+          - button "搜索" [ref=e339] [cursor=pointer]:
+            - generic:
+              - generic: ⌘
+              - text: K
+          - button "通知" [ref=e341] [cursor=pointer]
+          - button "更改语言" [ref=e342] [cursor=pointer]
+          - button "打开主题设置" [ref=e344] [cursor=pointer]
+          - button "M" [ref=e345] [cursor=pointer]
+    - generic [ref=e348]:
+      - generic [ref=e351]:
+        - generic [ref=e353]:
+          - generic [ref=e354]:
+            - generic [ref=e355]: 聊天
+            - list [ref=e356]:
+              - listitem [ref=e357]:
+                - link "游乐场" [ref=e358] [cursor=pointer]:
+                  - /url: /playground
+              - listitem [ref=e362]:
+                - button "聊天" [ref=e363] [cursor=pointer]
+          - generic [ref=e369]:
+            - generic [ref=e370]: 常规
+            - list [ref=e371]:
+              - listitem [ref=e372]:
+                - link "概览" [ref=e373] [cursor=pointer]:
+                  - /url: /dashboard/overview
+              - listitem [ref=e377]:
+                - link "数据看板" [ref=e378] [cursor=pointer]:
+                  - /url: /dashboard/models
+              - listitem [ref=e385]:
+                - link "API 密钥" [ref=e386] [cursor=pointer]:
+                  - /url: /keys
+              - listitem [ref=e392]:
+                - link "使用日志" [ref=e393] [cursor=pointer]:
+                  - /url: /usage-logs/common
+              - listitem [ref=e398]:
+                - link "审计日志" [ref=e399] [cursor=pointer]:
+                  - /url: /usage-logs/audit
+              - listitem [ref=e404]:
+                - link "任务日志" [ref=e405] [cursor=pointer]:
+                  - /url: /usage-logs/task
+          - generic [ref=e410]:
+            - generic [ref=e411]: 个人
+            - list [ref=e412]:
+              - listitem [ref=e413]:
+                - link "钱包" [ref=e414] [cursor=pointer]:
+                  - /url: /wallet
+              - listitem [ref=e419]:
+                - link "个人资料" [ref=e420] [cursor=pointer]:
+                  - /url: /profile
+              - listitem [ref=e425]:
+                - link "安全与访问" [ref=e426] [cursor=pointer]:
+                  - /url: /security
+          - generic [ref=e431]:
+            - generic [ref=e432]: 管理员
+            - list [ref=e433]:
+              - listitem [ref=e434]:
+                - link "渠道" [ref=e435] [cursor=pointer]:
+                  - /url: /channels
+              - listitem [ref=e443]:
+                - link "模型" [ref=e444] [cursor=pointer]:
+                  - /url: /models/metadata
+              - listitem [ref=e449]:
+                - link "用户" [ref=e450] [cursor=pointer]:
+                  - /url: /users
+              - listitem [ref=e457]:
+                - link "兑换码" [ref=e458] [cursor=pointer]:
+                  - /url: /redemption-codes
+              - listitem [ref=e462]:
+                - link "订阅" [ref=e463] [cursor=pointer]:
+                  - /url: /subscriptions
+              - listitem [ref=e467]:
+                - link "系统信息" [ref=e468] [cursor=pointer]:
+                  - /url: /system-info
+              - listitem [ref=e481]:
+                - link "任务插件" [ref=e482] [cursor=pointer]:
+                  - /url: /task-plugins
+              - listitem [ref=e490]:
+                - link "系统设置" [ref=e491] [cursor=pointer]:
+                  - /url: /system-settings/site
+        - button "Toggle Sidebar" [ref=e496]
+      - main [ref=e497]:
+        - main [ref=e830]:
+          - generic [ref=e832]:
+            - heading "渠道 重试设置" [level=2] [ref=e834]:
+              - generic [ref=e835]:
+                - generic [ref=e836]: 渠道
+                - link "重试设置" [ref=e837] [cursor=pointer]:
+                  - /url: /system-settings/request-policies/routing
+                  - generic [ref=e838]: "最大重试: 0"
+            - generic [ref=e839]:
+              - button "所选渠道全模型测试" [ref=e840] [cursor=pointer]
+              - generic [ref=e841]:
+                - generic [ref=e842]:
+                  - generic [ref=e846] [cursor=pointer]: 批量操作
+                  - switch "批量操作" [ref=e847]
+                  - checkbox [aria-hidden] [ref=e848]
+                - generic [ref=e849]:
+                  - generic [ref=e854] [cursor=pointer]: 标签模式
+                  - switch "标签模式" [ref=e855]
+                  - checkbox [aria-hidden] [ref=e856]
+                - generic [ref=e857]:
+                  - generic [ref=e860] [cursor=pointer]: 使用 ID 排序
+                  - switch "使用 ID 排序" [ref=e861]
+                  - checkbox [aria-hidden] [ref=e862]
+                - button "创建渠道" [ref=e864] [cursor=pointer]
+                - button [ref=e866] [cursor=pointer]
+          - generic [ref=e868]:
+            - generic [ref=e869]:
+              - textbox "按名称、ID 或密钥筛选..." [ref=e870]
+              - textbox "按模型筛选..." [ref=e871]
+              - button "状态" [ref=e872] [cursor=pointer]
+              - button "类型" [ref=e873] [cursor=pointer]
+              - button "分组" [ref=e874] [cursor=pointer]
+              - generic [ref=e875]:
+                - button "隐藏" [ref=e876] [cursor=pointer]
+                - button "刷新" [ref=e877] [cursor=pointer]
+                - group "视图模式" [ref=e878]:
+                  - button "卡片视图" [ref=e879] [cursor=pointer]
+                  - button "表格视图" [active] [pressed] [ref=e880] [cursor=pointer]
+                - button "查看" [ref=e881] [cursor=pointer]
+            - table [ref=e1040]:
+              - rowgroup [ref=e1053]:
+                - row [ref=e1054]:
+                  - columnheader [ref=e1055]:
+                    - button "ID" [ref=e1057] [cursor=pointer]
+                    - separator "调整列宽" [ref=e1059]
+                  - columnheader [ref=e1060]:
+                    - button "名称" [ref=e1062] [cursor=pointer]
+                    - separator "调整列宽" [ref=e1064]
+                  - columnheader "类型 调整列宽" [ref=e1065]:
+                    - generic [ref=e1066]: 类型
+                    - separator "调整列宽" [ref=e1067]
+                  - columnheader "状态 调整列宽" [ref=e1068]:
+                    - generic [ref=e1069]: 状态
+                    - separator "调整列宽" [ref=e1070]
+                  - columnheader "分组 调整列宽" [ref=e1071]:
+                    - generic [ref=e1072]: 分组
+                    - separator "调整列宽" [ref=e1073]
+                  - columnheader [ref=e1074]:
+                    - button "优先级" [ref=e1076] [cursor=pointer]
+                    - separator "调整列宽" [ref=e1078]
+                  - columnheader "权重 调整列宽" [ref=e1079]:
+                    - generic [ref=e1080]: 权重
+                    - separator "调整列宽" [ref=e1081]
+                  - columnheader [ref=e1082]:
+                    - button "已使用 / 剩余" [ref=e1084] [cursor=pointer]
+                    - separator "调整列宽" [ref=e1086]
+                  - columnheader [ref=e1087]:
+                    - button "响应" [ref=e1089] [cursor=pointer]
+                    - separator "调整列宽" [ref=e1091]
+                  - columnheader "上次测试 调整列宽" [ref=e1092]:
+                    - generic [ref=e1093]: 上次测试
+                    - separator "调整列宽" [ref=e1094]
+                  - columnheader "操作" [ref=e1095]
+              - rowgroup [ref=e1096]:
+                - row [ref=e1097]:
+                  - cell "901" [ref=e1098]
+                  - cell "Demo Bedrock Protected Local demo only" [ref=e1100]:
+                    - generic [ref=e1102]:
+                      - generic [ref=e1103]: Demo Bedrock Protected
+                      - generic [ref=e1106]: Local demo only
+                  - cell "AWS AWS" [ref=e1107]:
+                    - generic [ref=e1110]:
+                      - img "AWS" [ref=e1112]
+                      - generic "AWS" [ref=e1115]
+                  - cell "已启用" [ref=e1117]
+                  - cell "default" [ref=e1120]:
+                    - generic "default" [ref=e1123]
+                  - cell [ref=e1125]:
+                    - generic [ref=e1127]:
+                      - button "Decrement" [ref=e1128] [cursor=pointer]
+                      - button "0" [ref=e1130]
+                      - button "Increment" [ref=e1131] [cursor=pointer]
+                  - cell [ref=e1133]:
+                    - generic [ref=e1135]:
+                      - button "Decrement" [ref=e1136] [cursor=pointer]
+                      - button "10" [ref=e1138]
+                      - button "Increment" [ref=e1139] [cursor=pointer]
+                  - cell "$0 $0" [ref=e1141]:
+                    - generic [ref=e1142]:
+                      - generic "$0" [ref=e1143]
+                      - generic "$0" [ref=e1145] [cursor=pointer]
+                  - cell "未测试" [ref=e1147]
+                  - cell "-" [ref=e1150]
+                  - cell [ref=e1151]:
+                    - generic [ref=e1152]:
+                      - button "编辑" [ref=e1153] [cursor=pointer]
+                      - button "测试连接" [ref=e1154] [cursor=pointer]
+                      - button "禁用" [ref=e1155] [cursor=pointer]
+                      - button "打开菜单" [ref=e1156] [cursor=pointer]
+                - row [ref=e1158]:
+                  - cell "902" [ref=e1159]
+                  - cell "Demo Bedrock Defaults Off Original behavior demo" [ref=e1161]:
+                    - generic [ref=e1163]:
+                      - generic [ref=e1164]: Demo Bedrock Defaults Off
+                      - generic [ref=e1167]: Original behavior demo
+                  - cell "AWS AWS" [ref=e1168]:
+                    - generic [ref=e1171]:
+                      - img "AWS" [ref=e1173]
+                      - generic "AWS" [ref=e1176]
+                  - cell "已启用" [ref=e1178]
+                  - cell "default" [ref=e1181]:
+                    - generic "default" [ref=e1184]
+                  - cell [ref=e1186]:
+                    - generic [ref=e1188]:
+                      - button "Decrement" [ref=e1189] [cursor=pointer]
+                      - button "0" [ref=e1191]
+                      - button "Increment" [ref=e1192] [cursor=pointer]
+                  - cell [ref=e1194]:
+                    - generic [ref=e1196]:
+                      - button "Decrement" [ref=e1197] [cursor=pointer]
+                      - button "5" [ref=e1199]
+                      - button "Increment" [ref=e1200] [cursor=pointer]
+                  - cell "$0 $0" [ref=e1202]:
+                    - generic [ref=e1203]:
+                      - generic "$0" [ref=e1204]
+                      - generic "$0" [ref=e1206] [cursor=pointer]
+                  - cell "未测试" [ref=e1208]
+                  - cell "-" [ref=e1211]
+                  - cell [ref=e1212]:
+                    - generic [ref=e1213]:
+                      - button "编辑" [ref=e1214] [cursor=pointer]
+                      - button "测试连接" [ref=e1215] [cursor=pointer]
+                      - button "禁用" [ref=e1216] [cursor=pointer]
+                      - button "打开菜单" [ref=e1217] [cursor=pointer]
+          - generic [ref=e1024]:
+            - generic [ref=e1025]:
+              - generic [ref=e1026]: 总计：
+              - generic [ref=e1027]: "2"
+            - generic [ref=e1028]:
+              - paragraph [ref=e1029]: 每页行数
+              - combobox [ref=e1030] [cursor=pointer]:
+                - generic [ref=e1031]: "20"
+              - textbox [aria-hidden] [ref=e1032]: "20"
+            - generic [ref=e1033]:
+              - button "前往首页" [disabled]
+              - button "前往上一页" [disabled]
+              - button "前往第 1 页 1" [ref=e1035] [cursor=pointer]:
+                - generic [ref=e1036]: 前往第 1 页
+                - text: "1"
+              - button "前往下一页" [disabled]
+              - button "前往末页" [disabled]
+  - generic [ref=e815]:
+    - heading "Command Palette" [level=2] [ref=e816]
+    - paragraph [ref=e817]: Search for a command to run...
+  - region "Notifications alt+T"

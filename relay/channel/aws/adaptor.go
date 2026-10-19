@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -93,9 +92,6 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	if info.ChannelOtherSettings.AwsApiType == dto.AwsApiTypeMantle {
-		return mantleRequestURL(info)
-	}
 	if info.ChannelOtherSettings.AwsKeyType == dto.AwsKeyTypeApiKey {
 		awsModelId := getAwsModelID(info.UpstreamModelName)
 		a.ClientMode = ClientModeApiKey
@@ -157,31 +153,14 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
-	switch info.ChannelOtherSettings.AwsApiType {
-	case dto.AwsApiTypeMantle:
-		req, err := a.newMantleRequest(c, info, requestBody)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := channel.DoRequest(c, req, info)
-		if err != nil {
-			return nil, newAwsInvokeError(c.Request.Context(), err, "Mantle Messages")
-		}
-		return resp, nil
-	case "", dto.AwsApiTypeInvokeModel:
-		// Unconfigured channels retain the existing InvokeModel behavior.
-	default:
-		return nil, errors.New("invalid AWS API type")
-	}
-	if a.ClientMode == ClientModeApiKey {
-		return channel.DoApiRequest(a, c, info, requestBody)
-	} else {
-		return doAwsClientRequest(c, info, a, requestBody)
-	}
+	// The SDK supports both access keys and bearer API keys. Use its request
+	// and response pipeline for both so protection also covers API key channels.
+	a.ClientMode = ClientModeAKSK
+	return doAwsClientRequest(c, info, a, requestBody)
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
-	if info.ChannelOtherSettings.AwsApiType == dto.AwsApiTypeMantle || a.ClientMode == ClientModeApiKey {
+	if a.ClientMode == ClientModeApiKey {
 		claudeAdaptor := claude.Adaptor{}
 		usage, err = claudeAdaptor.DoResponse(c, resp, info)
 	} else {

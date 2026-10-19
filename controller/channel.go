@@ -284,6 +284,29 @@ func GetAllChannels(c *gin.Context) {
 	return
 }
 
+func GetChannelUsage(c *gin.Context) {
+	rawIDs := strings.Split(c.Query("ids"), ",")
+	if len(rawIDs) == 0 || len(rawIDs) > 200 {
+		common.ApiErrorT(c, "Invalid channel IDs")
+		return
+	}
+	ids := make([]int, 0, len(rawIDs))
+	seen := make(map[int]struct{}, len(rawIDs))
+	for _, rawID := range rawIDs {
+		id, err := strconv.Atoi(strings.TrimSpace(rawID))
+		if err != nil || id <= 0 {
+			common.ApiErrorT(c, "Invalid channel IDs")
+			return
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	common.ApiSuccess(c, service.GetBedrockUsage(ids))
+}
+
 func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, error) {
 	var headers http.Header
 	switch channel.Type {

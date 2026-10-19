@@ -55,7 +55,7 @@ export {
   DataTableViewModeToggle,
   type DataTableViewModeToggleProps,
 } from './toolbar/view-mode-toggle'
-export { useDataTable } from './hooks/use-data-table'
+export { useDataTable, readColumnVisibility } from './hooks/use-data-table'
 export {
   useDataTableViewMode,
   DATA_TABLE_VIEW_MODES,

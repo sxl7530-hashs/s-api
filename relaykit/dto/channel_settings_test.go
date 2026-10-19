@@ -723,6 +723,17 @@ func TestChannelSettingsValidateHTTPTransport(t *testing.T) {
 	err = (&ChannelSettings{HTTPProtocol: "http1", HTTP2ConnectionShards: 2}).ValidateHTTPTransport()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "http2_connection_shards")
+
+	require.NoError(t, (&ChannelSettings{BedrockProtection: &BedrockProtectionSettings{}}).ValidateHTTPTransport())
+	require.NoError(t, (&ChannelSettings{BedrockProtection: &BedrockProtectionSettings{UsageMetricsEnabled: true, RateLimitEnabled: true, RPM: 100, TPM: 10000, ThrottlingCooldownEnabled: true, Consecutive429Threshold: 3, ObservationWindowSeconds: 60, Minimum429SpanSeconds: 1, CooldownSeconds: 900}}).ValidateHTTPTransport())
+	err = (&ChannelSettings{BedrockProtection: &BedrockProtectionSettings{RPM: -1}}).ValidateHTTPTransport()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rpm/tpm")
+	err = (&ChannelSettings{BedrockProtection: &BedrockProtectionSettings{ObservationWindowSeconds: 5, Minimum429SpanSeconds: 6}}).ValidateHTTPTransport()
+	require.NoError(t, err, "disabled cooldown settings must not affect the channel")
+	err = (&ChannelSettings{BedrockProtection: &BedrockProtectionSettings{ThrottlingCooldownEnabled: true, ObservationWindowSeconds: 5, Minimum429SpanSeconds: 6}}).ValidateHTTPTransport()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cooldown")
 }
 
 func TestChannelOtherSettingsValidateToolLossPolicy(t *testing.T) {
@@ -735,4 +746,42 @@ func TestChannelOtherSettingsValidateToolLossPolicy(t *testing.T) {
 	err := (&ChannelOtherSettings{ToolLossPolicy: "drop"}).ValidateToolLossPolicy()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tool_loss_policy")
+}
+
+func TestBedrockProtectionAllowsOmittedOptionalRateLimits(t *testing.T) {
+	var settings ChannelSettings
+	require.NoError(t, json.Unmarshal([]byte(`{"bedrock_protection":{"usage_metrics_enabled":true}}`), &settings))
+	require.NotNil(t, settings.BedrockProtection)
+	assert.Zero(t, settings.BedrockProtection.RPM)
+	assert.Zero(t, settings.BedrockProtection.TPM)
+	require.NoError(t, settings.ValidateHTTPTransport())
+}
+
+func TestBedrockProtectionValidatesModelRampAndBackoff(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings BedrockProtectionSettings
+		valid    bool
+	}{
+		{"defaults off", BedrockProtectionSettings{}, true},
+		{"model override", BedrockProtectionSettings{ModelRateLimitEnabled: true, ModelLimits: map[string]BedrockModelLimit{"opus": {RPM: 10}}}, true},
+		{"invalid model tokens", BedrockProtectionSettings{ModelLimits: map[string]BedrockModelLimit{"opus": {TPM: -1}}}, false},
+		{"ambiguous model whitespace", BedrockProtectionSettings{ModelLimits: map[string]BedrockModelLimit{" opus": {RPM: 1}}}, false},
+		{"seven day ramp", BedrockProtectionSettings{RateLimitEnabled: true, RPM: 100, RampUpEnabled: true, RampUpStartUnix: 1800000000, RampUpDays: 7}, true},
+		{"eight days rejected", BedrockProtectionSettings{RampUpDays: 8}, false},
+		{"ramp without ceiling", BedrockProtectionSettings{RampUpEnabled: true, RampUpStartUnix: 1800000000}, false},
+		{"ramp without start", BedrockProtectionSettings{RateLimitEnabled: true, RPM: 100, RampUpEnabled: true}, false},
+		{"valid backoff", BedrockProtectionSettings{RetryBackoffEnabled: true, RetryBackoffBaseMS: 100, RetryBackoffMaxMS: 1000}, true},
+		{"inverted backoff", BedrockProtectionSettings{RetryBackoffBaseMS: 1000, RetryBackoffMaxMS: 100}, false},
+		{"unbounded backoff", BedrockProtectionSettings{RetryBackoffMaxMS: 10001}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&ChannelSettings{BedrockProtection: &tc.settings}).ValidateHTTPTransport()
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
 }

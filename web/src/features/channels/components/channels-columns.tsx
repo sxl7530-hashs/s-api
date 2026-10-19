@@ -38,6 +38,7 @@ import { ProviderBadge } from '@/components/provider-badge'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
 import { TruncatedText } from '@/components/truncated-text'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -52,7 +53,7 @@ import {
   formatQuotaWithCurrency,
   getCurrencyLabel,
 } from '@/lib/currency'
-import { formatTimestampToDate } from '@/lib/format'
+import { formatNumber, formatTimestampToDate } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import {
   createServerError,
@@ -1178,6 +1179,45 @@ export function useChannelsColumns(
         header: t('Used / Remaining'),
         cell: ({ row }) => <BalanceCell channel={row.original} />,
         size: 180,
+      },
+
+      // One configurable column keeps both throughput dimensions together.
+      {
+        id: 'throughput',
+        accessorFn: (row) => row.rpm,
+        header: t('RPM / TPM'),
+        meta: { mobileHidden: true },
+        cell: ({ row }) => {
+          const { rpm, tpm } = row.original
+          return (
+            <div className='flex min-w-[112px] flex-col gap-1 py-0.5 font-mono text-[11px] tabular-nums'>
+              <div className='flex items-center justify-between gap-3 rounded-md border border-sky-200/70 bg-sky-50/70 px-2 py-1 dark:border-sky-900/70 dark:bg-sky-950/30'>
+                <span className='font-sans text-[10px] font-semibold tracking-[0.08em] text-sky-700 dark:text-sky-300'>
+                  RPM
+                </span>
+                <Badge
+                  variant='outline'
+                  className='h-5 border-sky-200 bg-white/80 px-1.5 font-mono text-[11px] font-semibold text-sky-900 shadow-none dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-100'
+                >
+                  {rpm == null ? '—' : formatNumber(rpm, locale)}
+                </Badge>
+              </div>
+              <div className='flex items-center justify-between gap-3 rounded-md border border-violet-200/70 bg-violet-50/70 px-2 py-1 dark:border-violet-900/70 dark:bg-violet-950/30'>
+                <span className='font-sans text-[10px] font-semibold tracking-[0.08em] text-violet-700 dark:text-violet-300'>
+                  TPM
+                </span>
+                <Badge
+                  variant='outline'
+                  className='h-5 border-violet-200 bg-white/80 px-1.5 font-mono text-[11px] font-semibold text-violet-900 shadow-none dark:border-violet-800 dark:bg-violet-950/60 dark:text-violet-100'
+                >
+                  {tpm == null ? '—' : formatNumber(tpm, locale)}
+                </Badge>
+              </div>
+            </div>
+          )
+        },
+        size: 156,
+        enableSorting: false,
       },
 
       // Response Time column

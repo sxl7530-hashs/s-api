@@ -1,0 +1,266 @@
+- generic [ref=f1e2]:
+  - generic [ref=f1e39]:
+    - link "跳到主内容" [ref=f1e40] [cursor=pointer]:
+      - /url: "#content"
+    - banner [ref=f1e41]:
+      - generic [ref=f1e42]:
+        - button "Toggle Sidebar" [ref=f1e43] [cursor=pointer]
+        - generic [ref=f1e45]:
+          - link "返回主页" [ref=f1e46] [cursor=pointer]:
+            - /url: /
+            - img "徽标" [ref=f1e48]
+            - generic [ref=f1e49]: New API
+          - button "系统更新，当前版本：未知版本" [ref=f1e50] [cursor=pointer]:
+            - generic [ref=f1e51]: 未知版本
+            - status [ref=f1e52]
+        - generic [ref=f1e53]:
+          - navigation [ref=f1e55]:
+            - link "主页" [ref=f1e56] [cursor=pointer]:
+              - /url: /
+            - link "控制台" [ref=f1e57] [cursor=pointer]:
+              - /url: /dashboard
+            - link "模型广场" [ref=f1e58] [cursor=pointer]:
+              - /url: /pricing
+            - link "排行榜" [ref=f1e59] [cursor=pointer]:
+              - /url: /rankings
+            - link "文档" [ref=f1e60] [cursor=pointer]:
+              - /url: https://docs.newapi.pro
+            - link "关于" [ref=f1e61] [cursor=pointer]:
+              - /url: /about
+          - button "搜索" [ref=f1e62] [cursor=pointer]:
+            - generic:
+              - generic: ⌘
+              - text: K
+          - button "通知" [ref=f1e64] [cursor=pointer]
+          - button "更改语言" [ref=f1e65] [cursor=pointer]
+          - button "打开主题设置" [ref=f1e67] [cursor=pointer]
+          - button "M" [ref=f1e68] [cursor=pointer]
+    - generic [ref=f1e71]:
+      - generic [ref=f1e74]:
+        - generic [ref=f1e76]:
+          - generic [ref=f1e77]:
+            - generic [ref=f1e78]: 聊天
+            - list [ref=f1e79]:
+              - listitem [ref=f1e80]:
+                - link "游乐场" [ref=f1e81] [cursor=pointer]:
+                  - /url: /playground
+              - listitem [ref=f1e85]:
+                - button "聊天" [ref=f1e86] [cursor=pointer]
+          - generic [ref=f1e92]:
+            - generic [ref=f1e93]: 常规
+            - list [ref=f1e94]:
+              - listitem [ref=f1e95]:
+                - link "概览" [ref=f1e96] [cursor=pointer]:
+                  - /url: /dashboard/overview
+              - listitem [ref=f1e100]:
+                - link "数据看板" [ref=f1e101] [cursor=pointer]:
+                  - /url: /dashboard/models
+              - listitem [ref=f1e108]:
+                - link "API 密钥" [ref=f1e109] [cursor=pointer]:
+                  - /url: /keys
+              - listitem [ref=f1e115]:
+                - link "使用日志" [ref=f1e116] [cursor=pointer]:
+                  - /url: /usage-logs/common
+              - listitem [ref=f1e121]:
+                - link "审计日志" [ref=f1e122] [cursor=pointer]:
+                  - /url: /usage-logs/audit
+              - listitem [ref=f1e127]:
+                - link "任务日志" [ref=f1e128] [cursor=pointer]:
+                  - /url: /usage-logs/task
+          - generic [ref=f1e133]:
+            - generic [ref=f1e134]: 个人
+            - list [ref=f1e135]:
+              - listitem [ref=f1e136]:
+                - link "钱包" [ref=f1e137] [cursor=pointer]:
+                  - /url: /wallet
+              - listitem [ref=f1e142]:
+                - link "个人资料" [ref=f1e143] [cursor=pointer]:
+                  - /url: /profile
+              - listitem [ref=f1e148]:
+                - link "安全与访问" [ref=f1e149] [cursor=pointer]:
+                  - /url: /security
+          - generic [ref=f1e154]:
+            - generic [ref=f1e155]: 管理员
+            - list [ref=f1e156]:
+              - listitem [ref=f1e157]:
+                - link "渠道" [ref=f1e158] [cursor=pointer]:
+                  - /url: /channels
+              - listitem [ref=f1e166]:
+                - link "模型" [ref=f1e167] [cursor=pointer]:
+                  - /url: /models/metadata
+              - listitem [ref=f1e172]:
+                - link "用户" [ref=f1e173] [cursor=pointer]:
+                  - /url: /users
+              - listitem [ref=f1e180]:
+                - link "兑换码" [ref=f1e181] [cursor=pointer]:
+                  - /url: /redemption-codes
+              - listitem [ref=f1e185]:
+                - link "订阅" [ref=f1e186] [cursor=pointer]:
+                  - /url: /subscriptions
+              - listitem [ref=f1e190]:
+                - link "系统信息" [ref=f1e191] [cursor=pointer]:
+                  - /url: /system-info
+              - listitem [ref=f1e204]:
+                - link "任务插件" [ref=f1e205] [cursor=pointer]:
+                  - /url: /task-plugins
+              - listitem [ref=f1e213]:
+                - link "系统设置" [ref=f1e214] [cursor=pointer]:
+                  - /url: /system-settings/site
+        - button "Toggle Sidebar" [ref=f1e219]
+      - main [ref=f1e220]:
+        - main [ref=f1e222]:
+          - generic [ref=f1e224]:
+            - heading "渠道 重试设置" [level=2] [ref=f1e226]:
+              - generic [ref=f1e227]:
+                - generic [ref=f1e228]: 渠道
+                - link "重试设置" [ref=f1e229] [cursor=pointer]:
+                  - /url: /system-settings/request-policies/routing
+                  - generic [ref=f1e230]: "最大重试: 0"
+            - generic [ref=f1e231]:
+              - button "所选渠道全模型测试" [ref=f1e232] [cursor=pointer]
+              - generic [ref=f1e233]:
+                - generic [ref=f1e234]:
+                  - generic [ref=f1e238] [cursor=pointer]: 批量操作
+                  - switch "批量操作" [ref=f1e239]
+                  - checkbox [aria-hidden] [ref=f1e240]
+                - generic [ref=f1e241]:
+                  - generic [ref=f1e246] [cursor=pointer]: 标签模式
+                  - switch "标签模式" [ref=f1e247]
+                  - checkbox [aria-hidden] [ref=f1e248]
+                - generic [ref=f1e249]:
+                  - generic [ref=f1e252] [cursor=pointer]: 使用 ID 排序
+                  - switch "使用 ID 排序" [ref=f1e253]
+                  - checkbox [aria-hidden] [ref=f1e254]
+                - button "创建渠道" [ref=f1e256] [cursor=pointer]
+                - button [ref=f1e258] [cursor=pointer]
+          - generic [ref=f1e260]:
+            - generic [ref=f1e261]:
+              - textbox "按名称、ID 或密钥筛选..." [ref=f1e262]
+              - textbox "按模型筛选..." [ref=f1e263]
+              - button "状态" [ref=f1e264] [cursor=pointer]
+              - button "类型" [ref=f1e265] [cursor=pointer]
+              - button "分组" [ref=f1e266] [cursor=pointer]
+              - generic [ref=f1e267]:
+                - button "隐藏" [ref=f1e268] [cursor=pointer]
+                - button "刷新" [ref=f1e269] [cursor=pointer]
+                - group "视图模式" [ref=f1e270]:
+                  - button "卡片视图" [pressed] [ref=f1e271] [cursor=pointer]
+                  - button "表格视图" [ref=f1e272] [cursor=pointer]
+                - button "查看" [ref=f1e273] [cursor=pointer]
+            - generic [ref=f1e275]:
+              - generic [ref=f1e277]:
+                - generic [ref=f1e278]:
+                  - generic [ref=f1e283]:
+                    - img "AWS" [ref=f1e285]
+                    - generic "AWS" [ref=f1e288]
+                  - generic [ref=f1e291]:
+                    - button "测试连接" [ref=f1e292] [cursor=pointer]
+                    - button "测试渠道连接" [ref=f1e293] [cursor=pointer]
+                    - button "禁用" [ref=f1e294] [cursor=pointer]
+                    - button "打开菜单" [expanded] [ref=f1e295] [cursor=pointer]
+                    - menu "打开菜单" [active] [ref=f1e447]:
+                      - menuitem [ref=f1e448]
+                      - menuitem [ref=f1e450]
+                      - menuitem [ref=f1e452]
+                      - menuitem [ref=f1e454]
+                      - separator [ref=f1e456]
+                      - menuitem [ref=f1e457]
+                      - separator [ref=f1e459]
+                      - menuitem [ref=f1e460]
+                - generic [ref=f1e297]:
+                  - generic [ref=f1e298]:
+                    - generic [ref=f1e299]: "#901"
+                    - generic [ref=f1e301]:
+                      - generic [ref=f1e302]: Demo Bedrock Protected
+                      - generic [ref=f1e305]: Local demo only
+                  - generic [ref=f1e306]:
+                    - generic [ref=f1e307]: 优先级
+                    - generic [ref=f1e309]:
+                      - button "Decrement" [ref=f1e310] [cursor=pointer]
+                      - button "0" [ref=f1e312]
+                      - button "Increment" [ref=f1e313] [cursor=pointer]
+                  - generic [ref=f1e315]:
+                    - generic [ref=f1e316]: 权重
+                    - generic [ref=f1e318]:
+                      - button "Decrement" [ref=f1e319] [cursor=pointer]
+                      - button "10" [ref=f1e321]
+                      - button "Increment" [ref=f1e322] [cursor=pointer]
+                  - generic [ref=f1e324]:
+                    - generic [ref=f1e325]:
+                      - term [ref=f1e326]: 已使用 / 剩余
+                      - definition [ref=f1e327]:
+                        - generic [ref=f1e328]:
+                          - generic "0" [ref=f1e329]
+                          - generic "0" [ref=f1e331] [cursor=pointer]
+                    - generic [ref=f1e333]:
+                      - term [ref=f1e334]: 响应
+                      - definition [ref=f1e335]:
+                        - generic "未测试" [ref=f1e336]
+                    - generic [ref=f1e338]:
+                      - term [ref=f1e339]: 上次测试
+                      - definition [ref=f1e340]: "-"
+                - generic "default" [ref=f1e343]
+              - generic [ref=f1e346]:
+                - generic [ref=f1e347]:
+                  - generic [ref=f1e352]:
+                    - img "AWS" [ref=f1e354]
+                    - generic "AWS" [ref=f1e357]
+                  - generic [ref=f1e360]:
+                    - button "测试连接" [ref=f1e361] [cursor=pointer]
+                    - button "测试渠道连接" [ref=f1e362] [cursor=pointer]
+                    - button "禁用" [ref=f1e363] [cursor=pointer]
+                    - button "打开菜单" [ref=f1e364] [cursor=pointer]
+                - generic [ref=f1e366]:
+                  - generic [ref=f1e367]:
+                    - generic [ref=f1e368]: "#902"
+                    - generic [ref=f1e370]:
+                      - generic [ref=f1e371]: Demo Bedrock Defaults Off
+                      - generic [ref=f1e374]: Original behavior demo
+                  - generic [ref=f1e375]:
+                    - generic [ref=f1e376]: 优先级
+                    - generic [ref=f1e378]:
+                      - button "Decrement" [ref=f1e379] [cursor=pointer]
+                      - button "0" [ref=f1e381]
+                      - button "Increment" [ref=f1e382] [cursor=pointer]
+                  - generic [ref=f1e384]:
+                    - generic [ref=f1e385]: 权重
+                    - generic [ref=f1e387]:
+                      - button "Decrement" [ref=f1e388] [cursor=pointer]
+                      - button "5" [ref=f1e390]
+                      - button "Increment" [ref=f1e391] [cursor=pointer]
+                  - generic [ref=f1e393]:
+                    - generic [ref=f1e394]:
+                      - term [ref=f1e395]: 已使用 / 剩余
+                      - definition [ref=f1e396]:
+                        - generic [ref=f1e397]:
+                          - generic "0" [ref=f1e398]
+                          - generic "0" [ref=f1e400] [cursor=pointer]
+                    - generic [ref=f1e402]:
+                      - term [ref=f1e403]: 响应
+                      - definition [ref=f1e404]:
+                        - generic "未测试" [ref=f1e405]
+                    - generic [ref=f1e407]:
+                      - term [ref=f1e408]: 上次测试
+                      - definition [ref=f1e409]: "-"
+                - generic "default" [ref=f1e412]
+          - generic [ref=f1e416]:
+            - generic [ref=f1e417]:
+              - generic [ref=f1e418]: 总计：
+              - generic [ref=f1e419]: "2"
+            - generic [ref=f1e420]:
+              - paragraph [ref=f1e421]: 每页行数
+              - combobox [ref=f1e422] [cursor=pointer]:
+                - generic [ref=f1e423]: "20"
+              - textbox [aria-hidden] [ref=f1e424]: "20"
+            - generic [ref=f1e425]:
+              - button "前往首页" [disabled]
+              - button "前往上一页" [disabled]
+              - button "前往第 1 页 1" [ref=f1e427] [cursor=pointer]:
+                - generic [ref=f1e428]: 前往第 1 页
+                - text: "1"
+              - button "前往下一页" [disabled]
+              - button "前往末页" [disabled]
+  - generic [ref=f1e429]:
+    - heading "Command Palette" [level=2] [ref=f1e430]
+    - paragraph [ref=f1e431]: Search for a command to run...
+  - region "Notifications alt+T"

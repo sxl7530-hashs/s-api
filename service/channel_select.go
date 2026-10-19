@@ -42,12 +42,13 @@ func AppendTaskPluginIdentityFilter(c *gin.Context, pluginKey string) {
 }
 
 type RetryParam struct {
-	Ctx          *gin.Context
-	TokenGroup   string
-	ModelName    string
-	RequestPath  string
-	Retry        *int
-	resetNextTry bool
+	Ctx           *gin.Context
+	TokenGroup    string
+	ModelName     string
+	RequestPath   string
+	Retry         *int
+	resetNextTry  bool
+	capacitySkips int
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -59,6 +60,14 @@ func (p *RetryParam) GetRetry() int {
 
 func (p *RetryParam) SetRetry(retry int) {
 	p.Retry = &retry
+	p.capacitySkips = 0
+}
+
+// ExcludeCapacityRejectedChannel advances to another candidate without
+// advancing its priority tier. It does not grant any extra relay attempts.
+func (p *RetryParam) ExcludeCapacityRejectedChannel(channelID int) {
+	GetChannelConstraints(p.Ctx).AddFilter(dto.ChannelFilter{Kind: dto.FilterExcludedChannel, ExcludedChannelID: channelID})
+	p.capacitySkips++
 }
 
 func (p *RetryParam) IncreaseRetry() {
@@ -139,7 +148,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			autoGroup := autoGroups[i]
 			// Calculate priorityRetry for current group
 			// 计算当前分组的 priorityRetry
-			priorityRetry := param.GetRetry()
+			priorityRetry := max(0, param.GetRetry()-param.capacitySkips)
 			// If moved to a new group, reset priorityRetry and update startRetryIndex
 			// 如果切换到新分组，重置 priorityRetry 并更新 startRetryIndex
 			if i > startGroupIndex {
@@ -193,7 +202,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		channel, err = model.GetRandomSatisfiedChannel(
 			param.TokenGroup,
 			param.ModelName,
-			param.GetRetry(),
+			max(0, param.GetRetry()-param.capacitySkips),
 			filters,
 		)
 		if err != nil {

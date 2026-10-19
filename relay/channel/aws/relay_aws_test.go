@@ -3,13 +3,9 @@ package aws
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,22 +18,508 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/tokenkit"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream"
 	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/eventstreamapi"
-	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const awsTestModel = "anthropic.claude-3-5-sonnet-20240620-v1:0"
 
+func TestBedrockEstimationPreservesRequestCacheOwnership(t *testing.T) {
+	previousConfig := common.GetDiskCacheConfig()
+	previousMedia, previousNonStream := constant.GetMediaToken, constant.GetMediaTokenNotStream
+	common.SetDiskCacheConfig(common.DiskCacheConfig{Enabled: true, ThresholdMB: 0, MaxSizeMB: 100, Path: t.TempDir(), CriticalWatermarkPercent: 90})
+	constant.GetMediaToken, constant.GetMediaTokenNotStream = true, true
+	t.Cleanup(func() {
+		common.SetDiskCacheConfig(previousConfig)
+		constant.GetMediaToken, constant.GetMediaTokenNotStream = previousMedia, previousNonStream
+	})
+	const gif = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+	for _, tc := range []struct {
+		name    string
+		shared  bool
+		invalid bool
+		stream  bool
+		retry   bool
+	}{
+		{name: "new cache"},
+		{name: "stream new cache", stream: true},
+		{name: "shared cache", shared: true},
+		{name: "estimation failure", invalid: true},
+		{name: "failure with shared cache", shared: true, invalid: true},
+		{name: "retry with shared cache", shared: true, retry: true},
+		{name: "retry after estimation failure", shared: true, invalid: true, retry: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, "billing-model")
+			common.SetContextKey(c, constant.ContextKeyPromptTokens, 321)
+			t.Cleanup(func() {
+				service.CleanupFileSources(c)
+				count, _, err := common.GetDiskCacheInfo()
+				require.NoError(t, err)
+				assert.Zero(t, count, "request completion must clean estimation files even on failure")
+			})
+			var shared *relaytypes.CachedFileData
+			var unrelated *relaytypes.CachedFileData
+			if tc.shared {
+				var err error
+				shared, err = service.LoadFileSource(c, relaytypes.NewBase64FileSource(gif, "image/gif"))
+				require.NoError(t, err)
+				unrelated, err = service.LoadFileSource(c, relaytypes.NewBase64FileSource("b3JpZ2luYWw=", "text/plain"))
+				require.NoError(t, err)
+			}
+			content := fmt.Sprintf(`{"type":"image","source":{"type":"base64","media_type":"image/gif","data":%q}}`, gif)
+			if tc.invalid {
+				content += `,{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW52YWxpZA=="}}`
+			}
+			body := []byte(`{"max_tokens":128,"messages":[{"role":"user","content":[` + content + `]}]}`)
+			info := newAwsTestRelayInfo()
+			info.IsStream = tc.stream
+			a := &Adaptor{AwsReq: &bedrockruntime.InvokeModelInput{Body: body}}
+			if tc.stream {
+				a.AwsReq = &bedrockruntime.InvokeModelWithResponseStreamInput{Body: body}
+			}
+			attempts := 1
+			if tc.retry {
+				attempts = 2
+			}
+			for range attempts {
+				_, err := a.estimateProtectionTokens(c, info)
+				if tc.invalid {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+				}
+				assert.Equal(t, "billing-model", common.GetContextKeyString(c, constant.ContextKeyOriginalModel))
+				assert.Equal(t, 321, common.GetContextKeyInt(c, constant.ContextKeyPromptTokens))
+			}
+			if shared != nil {
+				data, err := shared.GetBase64Data()
+				require.NoError(t, err, "estimation must not close the original request's cache")
+				assert.Equal(t, gif, data)
+				data, err = unrelated.GetBase64Data()
+				require.NoError(t, err, "unrelated original cache must survive estimation")
+				assert.Equal(t, "b3JpZ2luYWw=", data)
+			}
+			_, err := service.LoadFileSource(c, relaytypes.NewBase64FileSource(gif, "image/gif"))
+			require.NoError(t, err, "the original request must still load media after estimation")
+		})
+	}
+}
+
+func TestBedrockOptionalEstimationDoesNotBlockRequests(t *testing.T) {
+	server := miniredis.RunT(t)
+	previousClient, previousEnabled := common.RDB, common.RedisEnabled
+	previousMedia, previousNonStream := constant.GetMediaToken, constant.GetMediaTokenNotStream
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = client, true
+	constant.GetMediaToken, constant.GetMediaTokenNotStream = true, true
+	t.Cleanup(func() {
+		require.NoError(t, client.Close())
+		common.RDB, common.RedisEnabled = previousClient, previousEnabled
+		constant.GetMediaToken, constant.GetMediaTokenNotStream = previousMedia, previousNonStream
+	})
+	for _, tc := range []struct {
+		name     string
+		settings dto.BedrockProtectionSettings
+		blocked  bool
+	}{
+		{"metrics", dto.BedrockProtectionSettings{UsageMetricsEnabled: true}, false},
+		{"metrics and RPM", dto.BedrockProtectionSettings{UsageMetricsEnabled: true, RateLimitEnabled: true, RPM: 1}, false},
+		{"RPM only", dto.BedrockProtectionSettings{RateLimitEnabled: true, RPM: 1}, false},
+		{"other model TPM", dto.BedrockProtectionSettings{ModelRateLimitEnabled: true, ModelLimits: map[string]dto.BedrockModelLimit{"other": {TPM: 100}}}, false},
+		{"channel TPM", dto.BedrockProtectionSettings{RateLimitEnabled: true, TPM: 1000}, true},
+		{"model TPM", dto.BedrockProtectionSettings{ModelRateLimitEnabled: true, ModelLimits: map[string]dto.BedrockModelLimit{awsTestModel: {TPM: 1000}}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server.FlushAll()
+			info := newAwsTestRelayInfo()
+			info.IsStream, info.ChannelId = false, 98
+			info.ChannelSetting.BedrockProtection = &tc.settings
+			calls := 0
+			a := &Adaptor{AwsClient: newAwsTestClient(awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+				calls++
+				// The upstream owns payload validation; optional metrics must not
+				// replace its response with a local image decoding failure.
+				return &http.Response{StatusCode: http.StatusBadRequest, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"message":"invalid image"}`)), Request: request}, nil
+			})), AwsReq: &bedrockruntime.InvokeModelInput{ModelId: aws.String(awsTestModel), Body: []byte(`{"max_tokens":128,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW52YWxpZA=="}}]}]}`)}}
+			c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+			_, estimateErr := a.estimateProtectionTokens(c, info)
+			require.Error(t, estimateErr)
+			protectionErr := bedrockProtectionError(c, info, a)
+			if tc.blocked {
+				require.NotNil(t, protectionErr)
+				assert.Equal(t, relaytypes.ErrorCodeBadRequestBody, protectionErr.GetErrorCode())
+				assert.Empty(t, server.Keys())
+				return
+			}
+			require.Nil(t, protectionErr)
+			_, err := a.AwsClient.InvokeModel(t.Context(), a.AwsReq.(*bedrockruntime.InvokeModelInput))
+			require.Error(t, err)
+			assert.Equal(t, 1, calls)
+			assert.Equal(t, "1", server.HGet("bedrock:usage:v2:{98}", "rpm"))
+			if tc.settings.RateLimitEnabled {
+				require.NotNil(t, bedrockProtectionError(c, info, a), "unknown TPM must not bypass RPM protection")
+			}
+		})
+	}
+}
+
+func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
+	server := miniredis.RunT(t)
+	previousClient, previousEnabled := common.RDB, common.RedisEnabled
+	redisClient := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = redisClient, true
+	t.Cleanup(func() {
+		require.NoError(t, redisClient.Close())
+		common.RDB, common.RedisEnabled = previousClient, previousEnabled
+	})
+	for _, key := range []string{"test-key|us-east-1", "access-key|secret-key|us-east-1"} {
+		for _, mode := range []string{"off", "metrics", "protection"} {
+			for _, stream := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/stream=%t", key, mode, stream), func(t *testing.T) {
+					server.FlushAll()
+					info := newAwsTestRelayInfo()
+					info.ApiKey, info.ChannelId, info.IsStream = key, 97, stream
+					info.UseRuntimeHeadersOverride = true
+					info.RuntimeHeadersOverride = map[string]any{
+						"X-Channel-Tag": "custom-value", "Authorization": "invalid", "X-Amz-Date": "invalid", "Host": "invalid",
+					}
+					if mode != "off" {
+						info.ChannelSetting.BedrockProtection = &dto.BedrockProtectionSettings{UsageMetricsEnabled: true, RateLimitEnabled: mode == "protection", RPM: 100}
+					}
+					c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+					a := &Adaptor{}
+					_, err := a.DoRequest(c, info, strings.NewReader(`{"max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`))
+					require.NoError(t, err)
+					tokens := 0
+					if mode != "off" {
+						tokens, err = a.estimateProtectionTokens(c, info)
+						require.NoError(t, err)
+					}
+					attempts := 0
+					a.AwsClient = bedrockruntime.New(a.AwsClient.Options(), func(options *bedrockruntime.Options) {
+						// Remove delay from the real SDK retry policy, keeping its
+						// default attempt budget and retryable-error decisions.
+						if mode != "protection" {
+							options.Retryer = retry.NewStandard(func(options *retry.StandardOptions) {
+								options.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
+							})
+						}
+						options.HTTPClient = awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+							attempts++
+							assert.Equal(t, "custom-value", request.Header.Get("X-Channel-Tag"))
+							assert.Equal(t, "bedrock-runtime.us-east-1.amazonaws.com", request.URL.Host)
+							if strings.HasPrefix(key, "test-key|") {
+								assert.Equal(t, "Bearer test-key", request.Header.Get("Authorization"))
+							} else {
+								assert.Contains(t, request.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential=access-key/")
+								assert.Contains(t, request.Header.Get("Authorization"), "x-channel-tag")
+								assert.NotEqual(t, "invalid", request.Header.Get("X-Amz-Date"))
+							}
+							return &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Content-Type": []string{"application/json"}, "X-Amzn-Errortype": []string{"ThrottlingException"}}, Body: io.NopCloser(strings.NewReader(`{"message":"throttled"}`)), Request: request}, nil
+						})
+					})
+					require.Nil(t, bedrockProtectionError(c, info, a))
+					if stream {
+						_, err = a.AwsClient.InvokeModelWithResponseStream(t.Context(), a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput))
+					} else {
+						_, err = a.AwsClient.InvokeModel(t.Context(), a.AwsReq.(*bedrockruntime.InvokeModelInput))
+					}
+					require.Error(t, err)
+					wantAttempts := 3
+					if mode == "protection" {
+						wantAttempts = 1
+					}
+					assert.Equal(t, wantAttempts, attempts)
+					if mode == "off" {
+						assert.Empty(t, server.Keys(), "disabled metrics must not write Redis")
+					} else {
+						assert.Equal(t, fmt.Sprint(attempts), server.HGet("bedrock:usage:v2:{97}", "rpm"))
+						assert.Equal(t, fmt.Sprint(attempts*tokens), server.HGet("bedrock:usage:v2:{97}", "tpm"))
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestAwsAPIKeyProtectionRejectsBeforeSendingAndRecordsThrottle(t *testing.T) {
+	server := miniredis.RunT(t)
+	previousClient, previousEnabled := common.RDB, common.RedisEnabled
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() {
+		require.NoError(t, client.Close())
+		common.RDB, common.RedisEnabled = previousClient, previousEnabled
+	})
+	service.InitHttpClient()
+	httpClient := service.GetHttpClient()
+	previousTransport := httpClient.Transport
+	t.Cleanup(func() { httpClient.Transport = previousTransport })
+	calls := 0
+	status := http.StatusOK
+	httpClient.Transport = awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		body, err := io.ReadAll(request.Body)
+		require.NoError(t, err)
+		assert.Contains(t, string(body), `"max_tokens":128`)
+		assert.Equal(t, "Bearer test-key", request.Header.Get("Authorization"))
+		assert.Equal(t, "bedrock-runtime.us-east-1.amazonaws.com", request.URL.Host)
+		responseBody := `{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`
+		if status == http.StatusTooManyRequests {
+			responseBody = `{"__type":"ThrottlingException","message":"slow down"}`
+		}
+		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(responseBody)), Request: request}, nil
+	})
+	info := newAwsTestRelayInfo()
+	info.IsStream, info.ChannelId = false, 96
+	info.ApiKey = "test-key|us-east-1"
+	info.ChannelOtherSettings.AwsKeyType = dto.AwsKeyTypeApiKey
+	settings := &dto.BedrockProtectionSettings{RateLimitEnabled: true, TPM: 127}
+	info.ChannelSetting.BedrockProtection = settings
+	adaptor := &Adaptor{ClientMode: ClientModeApiKey}
+	body := `{"max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`
+	c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+	_, err := adaptor.DoRequest(c, info, strings.NewReader(body))
+	require.NoError(t, err)
+	invokeErr, _ := awsHandler(c, info, adaptor)
+	require.NotNil(t, invokeErr)
+	wrapped := relaytypes.NewOpenAIError(invokeErr, relaytypes.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
+	assert.Equal(t, relaytypes.ErrorCodeChannelBedrockRateLimited, wrapped.GetErrorCode())
+	assert.Equal(t, http.StatusTooManyRequests, wrapped.StatusCode)
+	assert.Zero(t, calls)
+	settings.TPM = 1000
+	_, err = adaptor.DoRequest(c, info, strings.NewReader(body))
+	require.NoError(t, err)
+	_, invokeErr = adaptor.DoResponse(c, nil, info)
+	require.Nil(t, invokeErr)
+	assert.Equal(t, 1, calls)
+	settings.RateLimitEnabled, settings.ThrottlingCooldownEnabled = false, true
+	settings.MinimumSampleSize, settings.ThrottlingRatioPercent = 2, 100
+	status = http.StatusTooManyRequests
+	for range 2 {
+		_, err = adaptor.DoRequest(c, info, strings.NewReader(body))
+		require.NoError(t, err)
+		_, invokeErr = adaptor.DoResponse(c, nil, info)
+		require.NotNil(t, invokeErr)
+		assert.Equal(t, relaytypes.ErrorCodeBedrockThrottled, invokeErr.GetErrorCode())
+	}
+	require.True(t, service.IsBedrockCoolingDown(info.ChannelId, settings))
+	_, err = adaptor.DoRequest(c, info, strings.NewReader(body))
+	require.NoError(t, err)
+	_, invokeErr = adaptor.DoResponse(c, nil, info)
+	require.NotNil(t, invokeErr)
+	assert.Equal(t, relaytypes.ErrorCodeChannelBedrockCoolingDown, invokeErr.GetErrorCode())
+	assert.Equal(t, 3, calls, "cooling channels must not reach the transport")
+}
+
+func TestAwsProtectionUsesFinalPayloadWithoutChangingBillingEstimate(t *testing.T) {
+	server := miniredis.RunT(t)
+	previousClient, previousEnabled, previousCount := common.RDB, common.RedisEnabled, constant.CountToken
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() {
+		require.NoError(t, client.Close())
+		common.RDB, common.RedisEnabled, constant.CountToken = previousClient, previousEnabled, previousCount
+	})
+	for _, count := range []bool{false, true} {
+		for _, source := range []string{"model default", "parameter override"} {
+			t.Run(fmt.Sprintf("%s/local count=%t", source, count), func(t *testing.T) {
+				server.FlushAll()
+				constant.CountToken = count
+				info := newAwsTestRelayInfo()
+				info.IsStream = false
+				info.ChannelId = 91
+				info.SetEstimatePromptTokens(1)
+				c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+				common.SetContextKey(c, constant.ContextKeyOriginalModel, awsTestModel)
+				common.SetContextKey(c, constant.ContextKeyPromptTokens, 1)
+				request := &dto.ClaudeRequest{Model: awsTestModel, System: "final system prompt", Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}}}
+				adaptor := &Adaptor{}
+				_, err := adaptor.ConvertClaudeRequest(c, info, request)
+				require.NoError(t, err)
+				require.NotNil(t, request.MaxTokens)
+				body, err := common.Marshal(request)
+				require.NoError(t, err)
+				if source == "parameter override" {
+					info.ParamOverride = map[string]any{"max_tokens": 128}
+					body, err = relaycommon.ApplyParamOverrideWithRelayInfo(body, info)
+					require.NoError(t, err)
+					require.NoError(t, common.Unmarshal(body, request))
+				}
+				wantTokens := tokenkit.Count(awsTestModel, "final system prompt\nuser\nhello") + int(*request.MaxTokens)
+				settings := &dto.BedrockProtectionSettings{RateLimitEnabled: true, TPM: wantTokens - 1}
+				info.ChannelSetting.BedrockProtection = settings
+				invoked := false
+				adaptor.AwsReq = &bedrockruntime.InvokeModelInput{ModelId: aws.String(awsTestModel), Body: body}
+				adaptor.AwsClient = newAwsTestClient(awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+					invoked = true
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`)), Request: request}, nil
+				}))
+				handlerErr, _ := awsHandler(c, info, adaptor)
+				require.NotNil(t, handlerErr)
+				assert.Equal(t, relaytypes.ErrorCodeChannelBedrockRateLimited, handlerErr.GetErrorCode())
+				assert.False(t, invoked, "over-budget requests must not reach AWS")
+
+				settings.TPM = wantTokens
+				handlerErr, _ = awsHandler(c, info, adaptor)
+				require.Nil(t, handlerErr)
+				assert.True(t, invoked)
+				_, usage := service.ReserveBedrockUsage(info.ChannelId, 0, settings, info.UpstreamModelName)
+				assert.EqualValues(t, wantTokens, usage.TPM)
+				assert.Equal(t, 1, info.GetEstimatePromptTokens())
+				assert.Equal(t, 1, common.GetContextKeyInt(c, constant.ContextKeyPromptTokens))
+			})
+		}
+	}
+}
+
+func TestAwsProtectionCoversStreamNovaAndOversizedOverrides(t *testing.T) {
+	server := miniredis.RunT(t)
+	previousClient, previousEnabled := common.RDB, common.RedisEnabled
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() {
+		require.NoError(t, client.Close())
+		common.RDB, common.RedisEnabled = previousClient, previousEnabled
+	})
+	for _, tc := range []struct {
+		name   string
+		model  string
+		body   string
+		stream bool
+		limit  int
+		code   relaytypes.ErrorCode
+	}{
+		{"stream final output", awsTestModel, `{"messages":[{"role":"user","content":"hello"}],"max_tokens":128}`, true, 127, relaytypes.ErrorCodeChannelBedrockRateLimited},
+		{"Nova dynamic output", "amazon.nova-pro-v1:0", `{"schemaVersion":"messages-v1","messages":[{"role":"user","content":[{"text":"hello"}]}]}`, false, 4999, relaytypes.ErrorCodeChannelBedrockRateLimited},
+		{"Nova explicit output", "amazon.nova-pro-v1:0", `{"messages":[],"inferenceConfig":{"maxTokens":128}}`, false, 127, relaytypes.ErrorCodeChannelBedrockRateLimited},
+		{"oversized final override", awsTestModel, `{"max_tokens":18446744073709551615}`, false, 10000, relaytypes.ErrorCodeBadRequestBody},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server.FlushAll()
+			info := newAwsTestRelayInfo()
+			info.UpstreamModelName = tc.model
+			info.ChannelSetting.BedrockProtection = &dto.BedrockProtectionSettings{ModelRateLimitEnabled: true, ModelLimits: map[string]dto.BedrockModelLimit{tc.model: {TPM: tc.limit}}}
+			adaptor := &Adaptor{AwsReq: &bedrockruntime.InvokeModelInput{Body: []byte(tc.body)}}
+			if tc.stream {
+				adaptor.AwsReq = &bedrockruntime.InvokeModelWithResponseStreamInput{Body: []byte(tc.body)}
+			}
+			err := bedrockProtectionError(newAwsTestContext(httptest.NewRecorder(), t.Context()), info, adaptor)
+			require.NotNil(t, err)
+			assert.Equal(t, tc.code, err.GetErrorCode())
+		})
+	}
+}
+
+func TestAwsStreamFailureDoesNotEmitSuccessfulTerminalEvent(t *testing.T) {
+	server := miniredis.RunT(t)
+	previousClient, previousEnabled := common.RDB, common.RedisEnabled
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() {
+		require.NoError(t, client.Close())
+		common.RDB, common.RedisEnabled = previousClient, previousEnabled
+	})
+	for _, tc := range []struct {
+		name      string
+		partial   bool
+		throttled bool
+	}{{"initial throttle", false, true}, {"partial throttle", true, true}, {"truncated stream", true, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			server.FlushAll()
+			info := newAwsTestRelayInfo()
+			info.ChannelId = 81
+			info.ChannelSetting.BedrockProtection = &dto.BedrockProtectionSettings{
+				ThrottlingCooldownEnabled: true, MinimumSampleSize: 1, ThrottlingRatioPercent: 100,
+			}
+			awsClient := newAwsTestClient(awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+				var body bytes.Buffer
+				if tc.partial {
+					require.NoError(t, writeAwsStreamEvent(&body, `{"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","model":"claude-test","content":[],"usage":{"input_tokens":100,"output_tokens":1}}}`))
+					require.NoError(t, writeAwsStreamEvent(&body, `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`))
+				}
+				if tc.throttled {
+					require.NoError(t, eventstream.NewEncoder().Encode(&body, eventstream.Message{
+						Headers: eventstream.Headers{
+							{Name: eventstreamapi.MessageTypeHeader, Value: eventstream.StringValue(eventstreamapi.ExceptionMessageType)},
+							{Name: eventstreamapi.ExceptionTypeHeader, Value: eventstream.StringValue("throttlingException")},
+							{Name: eventstreamapi.ContentTypeHeader, Value: eventstream.StringValue("application/json")},
+						}, Payload: []byte(`{"message":"throttled"}`),
+					}))
+				}
+				return newAwsStreamResponse(request, io.NopCloser(bytes.NewReader(body.Bytes()))), nil
+			}))
+			recorder := httptest.NewRecorder()
+			handlerErr, usage := awsStreamHandler(newAwsTestContext(recorder, t.Context()), info, &Adaptor{AwsClient: awsClient, AwsReq: newAwsStreamInput()})
+			if tc.partial {
+				require.Nil(t, handlerErr, "partial output must not replay or refund observed usage")
+				require.NotNil(t, usage)
+				require.NotNil(t, usage.BillingUsage)
+				assert.Equal(t, 100, usage.BillingUsage.ClaudeUsage.InputTokens)
+				assert.Contains(t, recorder.Body.String(), "partial")
+			} else {
+				require.NotNil(t, handlerErr)
+				assert.Equal(t, relaytypes.ErrorCodeBedrockThrottled, handlerErr.GetErrorCode())
+				assert.Equal(t, http.StatusTooManyRequests, handlerErr.StatusCode)
+			}
+			assert.True(t, info.StreamStatus.HasErrors())
+			assert.Equal(t, string(relaycommon.ResponseOutcomeFailed), info.StreamStatus.ResponseOutcome())
+			assert.NotContains(t, recorder.Body.String(), "[DONE]")
+			assert.Equal(t, tc.throttled, service.IsBedrockCoolingDown(info.ChannelId, info.ChannelSetting.BedrockProtection))
+		})
+	}
+}
+
+func TestBedrockProtectionSendsOnlyOneSDKAttempt(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings dto.BedrockProtectionSettings
+	}{
+		{"channel limit", dto.BedrockProtectionSettings{RateLimitEnabled: true}},
+		{"model limit", dto.BedrockProtectionSettings{ModelRateLimitEnabled: true}},
+		{"cooldown", dto.BedrockProtectionSettings{ThrottlingCooldownEnabled: true}},
+		{"jitter", dto.BedrockProtectionSettings{RetryBackoffEnabled: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := newAwsTestRelayInfo()
+			info.ApiKey = "access-key|secret-key|us-east-1"
+			info.ChannelSetting.BedrockProtection = &tc.settings
+			client, err := newAwsClient(newAwsTestContext(httptest.NewRecorder(), t.Context()), info)
+			require.NoError(t, err)
+			attempts := 0
+			client = bedrockruntime.New(client.Options(), func(options *bedrockruntime.Options) {
+				options.HTTPClient = awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+					attempts++
+					return &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Content-Type": []string{"application/json"}, "X-Amzn-Errortype": []string{"ThrottlingException"}}, Body: io.NopCloser(strings.NewReader(`{"message":"throttled"}`)), Request: request}, nil
+				})
+			})
+			_, err = client.InvokeModel(t.Context(), newAwsInvokeModelInput())
+			require.Error(t, err)
+			assert.Equal(t, 1, attempts, "SDK retries must not bypass gateway reservations and cooldown")
+		})
+	}
+}
+
 type awsHTTPClientFunc func(*http.Request) (*http.Response, error)
 
 func (f awsHTTPClientFunc) Do(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func (f awsHTTPClientFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
 }
 
@@ -188,37 +670,6 @@ func TestDoAwsClientRequest_AppliesRuntimeHeaderOverrideToAnthropicBeta(t *testi
 	values, ok := anthropicBeta.([]any)
 	require.True(t, ok)
 	require.Equal(t, []any{"computer-use-2025-01-24"}, values)
-}
-
-func TestDoAwsClientRequest_ForwardsThinkingBlockBindingAndBetaList(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	ctx.Request.Header.Set("anthropic-beta", "fast-mode-2026-02-01, thinking-binding-controls-2026-08-01")
-
-	info := &relaycommon.RelayInfo{
-		OriginModelName: "claude-opus-5-5",
-		ChannelMeta: &relaycommon.ChannelMeta{
-			ApiKey:            "access-key|secret-key|us-east-1",
-			UpstreamModelName: "claude-opus-5-5",
-		},
-	}
-	requestBody := bytes.NewBufferString(`{"max_tokens":128,"messages":[{"role":"user","content":"hello"}],` +
-		`"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}}}`)
-	adaptor := &Adaptor{}
-
-	_, err := doAwsClientRequest(ctx, info, adaptor, requestBody)
-	require.NoError(t, err)
-	awsReq, ok := adaptor.AwsReq.(*bedrockruntime.InvokeModelInput)
-	require.True(t, ok)
-
-	var payload struct {
-		AnthropicBeta []string        `json:"anthropic_beta"`
-		Thinking      json.RawMessage `json:"thinking"`
-	}
-	require.NoError(t, common.Unmarshal(awsReq.Body, &payload))
-	assert.Equal(t, []string{"fast-mode-2026-02-01", "thinking-binding-controls-2026-08-01"}, payload.AnthropicBeta)
-	assert.JSONEq(t, `{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}}`, string(payload.Thinking))
 }
 
 func TestNewAwsInvokeContextInheritsParent(t *testing.T) {
@@ -488,423 +939,4 @@ func TestAwsStreamHandlerStopsAtClientCancellation(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("upstream producer did not observe the closed stream")
 	}
-}
-
-func newMantleTestInfo() *relaycommon.RelayInfo {
-	info := newAwsTestRelayInfo()
-	info.IsStream = false
-	info.RelayFormat = relaytypes.RelayFormatClaude
-	info.UpstreamModelName = "claude-opus-4-7"
-	info.ApiKey = "test-api-key|us-east-1"
-	info.ChannelOtherSettings.AwsApiType = dto.AwsApiTypeMantle
-	return info
-}
-
-func TestMantleRequestPreservesNativeFieldsAndSignsFinalPayload(t *testing.T) {
-	for _, key := range []string{"test-api-key|us-east-1", "access-key|secret-key|eu-west-1"} {
-		t.Run(strings.Split(key, "|")[0], func(t *testing.T) {
-			info := newMantleTestInfo()
-			info.ApiKey = key
-			info.UseRuntimeHeadersOverride = true
-			info.RuntimeHeadersOverride = map[string]any{"anthropic-beta": "test-beta", "X-Test": "override"}
-			info.ChannelSetting.PassThroughBodyEnabled = true
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			c := newAwsTestContext(httptest.NewRecorder(), ctx)
-			c.Request.Header.Set("Authorization", "Bearer client-secret")
-			c.Request.Header.Set("x-api-key", "client-secret")
-			a := &Adaptor{}
-			body := `{"model":"client-alias","stream":true,"max_tokens":128,"temperature":0,"cache_control":{"type":"ephemeral","ttl":"1h"},"messages":[{"role":"user","content":[{"type":"text","text":"hello","cache_control":{"type":"ephemeral"}}]}],"future_option":{"enabled":false},"anthropic_version":"bedrock-2023-05-31"}`
-			req, err := a.newMantleRequest(c, info, strings.NewReader(body))
-			require.NoError(t, err)
-			assert.Equal(t, "/anthropic/v1/messages", req.URL.Path)
-			assert.Equal(t, http.MethodPost, req.Method)
-			assert.Equal(t, "2023-06-01", req.Header.Get("anthropic-version"))
-			assert.Equal(t, "test-beta", req.Header.Get("anthropic-beta"))
-			assert.Equal(t, "override", req.Header.Get("X-Test"))
-			payload, err := io.ReadAll(req.Body)
-			require.NoError(t, err)
-			var data map[string]json.RawMessage
-			require.NoError(t, common.Unmarshal(payload, &data))
-			assert.JSONEq(t, `"anthropic.claude-opus-4-7"`, string(data["model"]))
-			assert.JSONEq(t, `{"type":"ephemeral","ttl":"1h"}`, string(data["cache_control"]))
-			assert.JSONEq(t, `[{"role":"user","content":[{"type":"text","text":"hello","cache_control":{"type":"ephemeral"}}]}]`, string(data["messages"]))
-			assert.JSONEq(t, `{"enabled":false}`, string(data["future_option"]))
-			assert.Equal(t, "0", string(data["temperature"]))
-			assert.Equal(t, "true", string(data["stream"]))
-			assert.NotContains(t, data, "anthropic_version")
-			replay, err := req.GetBody()
-			require.NoError(t, err)
-			defer replay.Close()
-			replayed, err := io.ReadAll(replay)
-			require.NoError(t, err)
-			assert.Equal(t, payload, replayed)
-			if strings.HasPrefix(key, "access-key|") {
-				assert.Empty(t, req.Header.Get("x-api-key"))
-				auth := req.Header.Get("Authorization")
-				assert.Contains(t, auth, "/eu-west-1/bedrock-mantle/aws4_request")
-				assert.NotContains(t, auth, "secret-key")
-				signedAt, err := time.Parse("20060102T150405Z", req.Header.Get("X-Amz-Date"))
-				require.NoError(t, err)
-				verification := req.Clone(ctx)
-				verification.Header.Del("Authorization")
-				hash := sha256.Sum256(payload)
-				err = v4.NewSigner().SignHTTP(ctx, aws.Credentials{AccessKeyID: "access-key", SecretAccessKey: "secret-key"}, verification, hex.EncodeToString(hash[:]), "bedrock-mantle", "eu-west-1", signedAt)
-				require.NoError(t, err)
-				assert.Equal(t, auth, verification.Header.Get("Authorization"))
-			} else {
-				assert.Equal(t, "test-api-key", req.Header.Get("x-api-key"))
-				assert.Empty(t, req.Header.Get("Authorization"))
-			}
-			cancel()
-			assert.ErrorIs(t, req.Context().Err(), context.Canceled)
-		})
-	}
-}
-
-func TestMantleEndpointAndCredentialValidation(t *testing.T) {
-	for _, test := range []struct {
-		name, key, base, want string
-		invalid               bool
-	}{
-		{name: "regional default", key: "key|us-west-2", want: "https://bedrock-mantle.us-west-2.api.aws/anthropic/v1/messages"},
-		{name: "proxy root", key: "ak|sk|us-east-1", base: "https://proxy.example/gateway/", want: "https://proxy.example/gateway/anthropic/v1/messages"},
-		{name: "anthropic root", key: "key|us-east-1", base: "https://proxy.example/anthropic/", want: "https://proxy.example/anthropic/v1/messages"},
-		{name: "version root", key: "key|us-east-1", base: "https://proxy.example/anthropic/v1", want: "https://proxy.example/anthropic/v1/messages"},
-		{name: "full endpoint", key: "key|us-east-1", base: "https://proxy.example/anthropic/v1/messages", want: "https://proxy.example/anthropic/v1/messages"},
-		{name: "missing region", key: "secret", invalid: true},
-		{name: "empty key", key: "|us-east-1", invalid: true},
-		{name: "empty secret", key: "ak||us-east-1", invalid: true},
-		{name: "injected host", key: "key|us-east-1.evil.example/", invalid: true},
-		{name: "plaintext URL", key: "key|us-east-1", base: "http://proxy.example", invalid: true},
-		{name: "URL credentials", key: "key|us-east-1", base: "https://user:secret@proxy.example", invalid: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			info := newMantleTestInfo()
-			info.ApiKey, info.ChannelBaseUrl = test.key, test.base
-			endpoint, err := (&Adaptor{}).GetRequestURL(info)
-			if test.invalid {
-				require.Error(t, err)
-				assert.NotContains(t, err.Error(), "secret")
-				assert.Empty(t, endpoint)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, test.want, endpoint)
-		})
-	}
-}
-
-func TestMantleHTTPResponsesPreserveCacheUsage(t *testing.T) {
-	originalTimeout := constant.StreamingTimeout
-	constant.StreamingTimeout = 30
-	t.Cleanup(func() { constant.StreamingTimeout = originalTimeout })
-	const usageJSON = `{"input_tokens":100,"output_tokens":23,"cache_read_input_tokens":1000,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_5m_input_tokens":20,"ephemeral_1h_input_tokens":30}}`
-	for _, stream := range []bool{false, true} {
-		for _, format := range []relaytypes.RelayFormat{relaytypes.RelayFormatClaude, relaytypes.RelayFormatOpenAI} {
-			t.Run(fmt.Sprintf("stream=%t/format=%s", stream, format), func(t *testing.T) {
-				server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if stream {
-						w.Header().Set("Content-Type", "text/event-stream")
-						fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_mantle\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"anthropic.claude-opus-4-7\",\"content\":[],\"usage\":%s}}\n\n", usageJSON)
-						fmt.Fprint(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n")
-						fmt.Fprint(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":23}}\n\n")
-						fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
-						return
-					}
-					w.Header().Set("Content-Type", "application/json")
-					fmt.Fprintf(w, `{"id":"msg_mantle","type":"message","role":"assistant","model":"anthropic.claude-opus-4-7","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":%s}`, usageJSON)
-				}))
-				defer server.Close()
-				original := http.DefaultClient
-				http.DefaultClient = server.Client()
-				defer func() { http.DefaultClient = original }()
-				info := newMantleTestInfo()
-				info.ChannelBaseUrl, info.IsStream, info.RelayFormat = server.URL, stream, format
-				recorder := httptest.NewRecorder()
-				c := newAwsTestContext(recorder, context.Background())
-				a := &Adaptor{}
-				a.Init(info)
-				var request dto.ClaudeRequest
-				require.NoError(t, common.UnmarshalJsonStr(`{"model":"claude-opus-4-7","max_tokens":128,"messages":[{"role":"user","content":"hello"}],"cache_control":{"type":"ephemeral"}}`, &request))
-				request.Stream = &stream
-				converted, err := a.ConvertClaudeRequest(c, info, &request)
-				require.NoError(t, err)
-				body, err := common.Marshal(converted)
-				require.NoError(t, err)
-				response, err := a.DoRequest(c, info, bytes.NewReader(body))
-				require.NoError(t, err)
-				httpResponse, ok := response.(*http.Response)
-				require.True(t, ok)
-				result, apiErr := a.DoResponse(c, httpResponse, info)
-				require.Nil(t, apiErr)
-				usage, ok := result.(*dto.Usage)
-				require.True(t, ok)
-				require.NotNil(t, usage.BillingUsage)
-				require.NotNil(t, usage.BillingUsage.ClaudeUsage)
-				claudeUsage := usage.BillingUsage.ClaudeUsage
-				assert.Equal(t, 100, claudeUsage.InputTokens)
-				assert.Equal(t, 23, claudeUsage.OutputTokens)
-				assert.Equal(t, 1000, claudeUsage.CacheReadInputTokens)
-				assert.Equal(t, 50, claudeUsage.CacheCreationInputTokens)
-				assert.Equal(t, 20, claudeUsage.GetCacheCreation5mTokens())
-				assert.Equal(t, 30, claudeUsage.GetCacheCreation1hTokens())
-				assert.Contains(t, recorder.Body.String(), "hello")
-				if stream && format == relaytypes.RelayFormatOpenAI {
-					assert.Contains(t, recorder.Body.String(), "[DONE]")
-				}
-			})
-		}
-	}
-}
-
-func TestMantleDoesNotFollowRedirectsOrFallbackOnAuthFailure(t *testing.T) {
-	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusUnauthorized, http.StatusTooManyRequests} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
-			calls := 0
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				w.Header().Set("Location", "/credential-leak")
-				w.WriteHeader(status)
-			}))
-			defer server.Close()
-			original := http.DefaultClient
-			http.DefaultClient = server.Client()
-			defer func() { http.DefaultClient = original }()
-			info := newMantleTestInfo()
-			info.ChannelBaseUrl = server.URL
-			c := newAwsTestContext(httptest.NewRecorder(), context.Background())
-			response, err := (&Adaptor{}).DoRequest(c, info, strings.NewReader(`{"messages":[]}`))
-			require.NoError(t, err)
-			httpResponse := response.(*http.Response)
-			defer httpResponse.Body.Close()
-			assert.Equal(t, status, httpResponse.StatusCode)
-			assert.Equal(t, 1, calls)
-		})
-	}
-}
-
-func TestAWSLegacyInterfaceRemainsDefault(t *testing.T) {
-	for _, mode := range []dto.AwsApiType{"", dto.AwsApiTypeInvokeModel} {
-		for _, stream := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/stream=%t", mode, stream), func(t *testing.T) {
-				info := newMantleTestInfo()
-				info.ChannelOtherSettings.AwsApiType = mode
-				info.IsStream = stream
-				info.UpstreamModelName = "claude-3-5-sonnet-20240620"
-				c := newAwsTestContext(httptest.NewRecorder(), context.Background())
-				a := &Adaptor{}
-				a.Init(info)
-				response, err := a.DoRequest(c, info, strings.NewReader(`{"max_tokens":128,"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}],"cache_control":{"type":"ephemeral"}}`))
-				require.NoError(t, err)
-				assert.Nil(t, response)
-				var body []byte
-				if stream {
-					input, ok := a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput)
-					require.True(t, ok)
-					body = input.Body
-					assert.Equal(t, "us."+awsTestModel, *input.ModelId)
-				} else {
-					input, ok := a.AwsReq.(*bedrockruntime.InvokeModelInput)
-					require.True(t, ok)
-					body = input.Body
-					assert.Equal(t, "us."+awsTestModel, *input.ModelId)
-				}
-				var payload map[string]json.RawMessage
-				require.NoError(t, common.Unmarshal(body, &payload))
-				assert.Equal(t, `"bedrock-2023-05-31"`, string(payload["anthropic_version"]))
-				assert.NotContains(t, payload, "cache_control")
-				assert.Contains(t, string(payload["messages"]), "cache_control")
-			})
-		}
-	}
-}
-
-func TestMantleRejectsInvalidRequestsAndPreservesExplicitModelIDs(t *testing.T) {
-	for _, test := range []struct {
-		name, model, body, wantModel string
-		invalid                      bool
-	}{
-		{name: "legacy Haiku alias", model: "claude-haiku-4-5-20251001", body: `{"messages":[]}`, wantModel: "anthropic.claude-haiku-4-5"},
-		{name: "short Haiku alias", model: "claude-haiku-4-5", body: `{"messages":[]}`, wantModel: "anthropic.claude-haiku-4-5"},
-		{name: "explicit Haiku model", model: "anthropic.claude-haiku-4-5", body: `{"messages":[]}`},
-		{name: "explicit Haiku inference profile", model: "us.anthropic.claude-haiku-4-5", body: `{"messages":[]}`},
-		{name: "explicit regional model", model: "us.anthropic.claude-opus-4-7", body: `{"messages":[]}`},
-		{name: "explicit model", model: "anthropic.claude-opus-4-7", body: `{"messages":[]}`},
-		{name: "Nova requires legacy", model: "nova-pro-v1:0", body: `{"messages":[]}`, invalid: true},
-		{name: "null body", model: "claude-opus-4-7", body: `null`, invalid: true},
-		{name: "malformed JSON", model: "claude-opus-4-7", body: `{`, invalid: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			info := newMantleTestInfo()
-			info.UpstreamModelName = test.model
-			c := newAwsTestContext(httptest.NewRecorder(), context.Background())
-			req, err := (&Adaptor{}).newMantleRequest(c, info, strings.NewReader(test.body))
-			if test.invalid {
-				require.Error(t, err)
-				assert.Nil(t, req)
-				return
-			}
-			require.NoError(t, err)
-			defer req.Body.Close()
-			var payload map[string]any
-			require.NoError(t, common.DecodeJson(req.Body, &payload))
-			wantModel := test.wantModel
-			if wantModel == "" {
-				wantModel = test.model
-			}
-			assert.Equal(t, wantModel, payload["model"])
-			assert.NotContains(t, payload, "cache_control")
-		})
-	}
-}
-
-func TestMantleSignatureMatchesWireHeaders(t *testing.T) {
-	for _, test := range []struct {
-		name          string
-		http2         bool
-		allHopHeaders bool
-	}{
-		{name: "HTTP2 keep-alive", http2: true},
-		{name: "HTTP1 hop-by-hop headers", allHopHeaders: true},
-		{name: "HTTP2 hop-by-hop headers", http2: true, allHopHeaders: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			type receivedRequest struct {
-				request *http.Request
-				body    []byte
-				err     error
-			}
-			received := make(chan receivedRequest, 1)
-			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				body, err := io.ReadAll(r.Body)
-				received <- receivedRequest{request: r.Clone(context.Background()), body: body, err: err}
-				w.WriteHeader(http.StatusOK)
-			}))
-			server.EnableHTTP2 = test.http2
-			server.StartTLS()
-			defer server.Close()
-			originalClient := http.DefaultClient
-			http.DefaultClient = server.Client()
-			defer func() { http.DefaultClient = originalClient }()
-
-			info := newMantleTestInfo()
-			info.ChannelBaseUrl = server.URL
-			info.ApiKey = "access-key|secret-key|us-east-1"
-			info.UseRuntimeHeadersOverride = true
-			info.RuntimeHeadersOverride = map[string]any{
-				"Connection":     "keep-alive",
-				"anthropic-beta": "test-beta",
-				"X-Test":         "end-to-end",
-			}
-			if test.allHopHeaders {
-				maps.Copy(info.RuntimeHeadersOverride, map[string]any{
-					"Connection":          "keep-alive, x-hop-token",
-					"X-Hop-Token":         "hop-only",
-					"Keep-Alive":          "timeout=5",
-					"Proxy-Connection":    "keep-alive",
-					"Proxy-Authenticate":  "Basic",
-					"Proxy-Authorization": "Basic test-proxy-token",
-					"Te":                  "trailers",
-					"Trailer":             "X-Checksum",
-					"Transfer-Encoding":   "chunked",
-					"Upgrade":             "websocket",
-				})
-			}
-			c := newAwsTestContext(httptest.NewRecorder(), context.Background())
-			response, err := (&Adaptor{}).DoRequest(c, info, strings.NewReader(`{"messages":[],"max_tokens":128,"cache_control":{"type":"ephemeral","ttl":"1h"}}`))
-			require.NoError(t, err)
-			httpResponse, ok := response.(*http.Response)
-			require.True(t, ok)
-			defer httpResponse.Body.Close()
-			wire := <-received
-			require.NoError(t, wire.err)
-			wantProtocol := 1
-			if test.http2 {
-				wantProtocol = 2
-			}
-			require.Equal(t, wantProtocol, wire.request.ProtoMajor)
-			for _, name := range []string{"Connection", "X-Hop-Token", "Keep-Alive", "Proxy-Connection", "Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade"} {
-				assert.Empty(t, wire.request.Header.Values(name), "%s must not reach the upstream", name)
-			}
-			assert.Equal(t, "test-beta", wire.request.Header.Get("anthropic-beta"))
-			assert.Equal(t, "end-to-end", wire.request.Header.Get("X-Test"))
-
-			// Recompute the signature from only the bytes and signed headers that
-			// reached the server, not from the pre-transport request object.
-			authorization := wire.request.Header.Get("Authorization")
-			_, signedHeaders, found := strings.Cut(authorization, "SignedHeaders=")
-			require.True(t, found)
-			signedHeaders, _, found = strings.Cut(signedHeaders, ",")
-			require.True(t, found)
-			verification := wire.request.Clone(context.Background())
-			verification.URL.Scheme = "https"
-			verification.URL.Host = wire.request.Host
-			verification.Header = make(http.Header)
-			for name := range strings.SplitSeq(signedHeaders, ";") {
-				if values, ok := wire.request.Header[http.CanonicalHeaderKey(name)]; ok {
-					verification.Header[http.CanonicalHeaderKey(name)] = values
-				}
-			}
-			signedAt, err := time.Parse("20060102T150405Z", wire.request.Header.Get("X-Amz-Date"))
-			require.NoError(t, err)
-			hash := sha256.Sum256(wire.body)
-			err = v4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: "access-key", SecretAccessKey: "secret-key"}, verification, hex.EncodeToString(hash[:]), "bedrock-mantle", "us-east-1", signedAt)
-			require.NoError(t, err)
-			assert.Equal(t, authorization, verification.Header.Get("Authorization"))
-		})
-	}
-}
-
-func TestAWSLegacyHaikuMappingPreservesVersionAndRegion(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mode   dto.AwsApiType
-		stream bool
-		key    string
-	}{
-		{name: "default API key", key: "test-api-key|us-east-1"},
-		{name: "default API key stream", stream: true, key: "test-api-key|us-east-1"},
-		{name: "default AK/SK", key: "access-key|secret-key|us-east-1"},
-		{name: "default AK/SK stream", stream: true, key: "access-key|secret-key|us-east-1"},
-		{name: "explicit API key", mode: dto.AwsApiTypeInvokeModel, key: "test-api-key|us-east-1"},
-		{name: "explicit API key stream", mode: dto.AwsApiTypeInvokeModel, stream: true, key: "test-api-key|us-east-1"},
-		{name: "explicit AK/SK", mode: dto.AwsApiTypeInvokeModel, key: "access-key|secret-key|us-east-1"},
-		{name: "explicit AK/SK stream", mode: dto.AwsApiTypeInvokeModel, stream: true, key: "access-key|secret-key|us-east-1"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			info := newMantleTestInfo()
-			info.ChannelOtherSettings.AwsApiType = test.mode
-			info.ApiKey, info.IsStream = test.key, test.stream
-			info.UpstreamModelName = "claude-haiku-4-5-20251001"
-			c := newAwsTestContext(httptest.NewRecorder(), context.Background())
-			a := &Adaptor{}
-			a.Init(info)
-			response, err := a.DoRequest(c, info, strings.NewReader(`{"messages":[{"role":"user","content":"hello"}],"max_tokens":128}`))
-			require.NoError(t, err)
-			assert.Nil(t, response)
-			const wantModel = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-			if test.stream {
-				request, ok := a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput)
-				require.True(t, ok)
-				assert.Equal(t, wantModel, *request.ModelId)
-			} else {
-				request, ok := a.AwsReq.(*bedrockruntime.InvokeModelInput)
-				require.True(t, ok)
-				assert.Equal(t, wantModel, *request.ModelId)
-			}
-		})
-	}
-}
-
-func TestMantleCanceledRequestSkipsRetry(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	c := newAwsTestContext(httptest.NewRecorder(), ctx)
-	response, err := (&Adaptor{}).DoRequest(c, newMantleTestInfo(), strings.NewReader(`{"messages":[]}`))
-	require.Error(t, err)
-	assert.Nil(t, response)
-	var apiError *relaytypes.NewAPIError
-	require.ErrorAs(t, err, &apiError)
-	assert.True(t, relaytypes.IsSkipRetryError(apiError))
 }

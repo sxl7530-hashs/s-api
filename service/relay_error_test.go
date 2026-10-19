@@ -57,6 +57,32 @@ func TestShouldRetryRelayErrorHonorsChannelPinOnChannelError(t *testing.T) {
 	}
 }
 
+func TestBedrockProtectionErrorsRetryWithoutDisablingChannel(t *testing.T) {
+	previousAutoDisable := common.AutomaticDisableChannelEnabled
+	common.AutomaticDisableChannelEnabled = true
+	t.Cleanup(func() { common.AutomaticDisableChannelEnabled = previousAutoDisable })
+	for _, code := range []types.ErrorCode{
+		types.ErrorCodeChannelBedrockRateLimited,
+		types.ErrorCodeChannelBedrockCoolingDown,
+		types.ErrorCodeBedrockThrottled,
+	} {
+		t.Run(string(code), func(t *testing.T) {
+			err := types.NewErrorWithStatusCode(errors.New("bedrock protection"), code, http.StatusTooManyRequests)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			assert.True(t, ShouldRetryRelayError(c, err, 1))
+			assert.False(t, ShouldRetryRelayError(c, err, 0), "Bedrock protection respects the attempt budget")
+			nonRetryable := types.NewErrorWithStatusCode(errors.New("cancelled upstream"), code, http.StatusTooManyRequests, types.ErrOptionWithSkipRetry())
+			assert.False(t, ShouldRetryRelayError(c, nonRetryable, 1))
+			assert.False(t, ShouldDisableChannel(err))
+			GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: 7, RetryMode: dto.PinRetrySameChannel})
+			assert.False(t, ShouldRetryRelayError(c, err, 1), "capacity rejection must respect pinned routing")
+		})
+	}
+
+	normal := types.NewError(errors.New("channel failed"), types.ErrorCodeChannelNoAvailableKey)
+	assert.True(t, ShouldDisableChannel(normal))
+}
+
 func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	previousDB, previousType := model.DB, common.MainDatabaseType()
 	previousCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled

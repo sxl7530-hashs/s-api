@@ -301,6 +301,9 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 		claudeInfo.Usage.UsageSemantic = "anthropic"
 	}
 	relayconvert.FinalizeClaudeStreamBillingUsage(claudeInfo)
+	if info.StreamStatus != nil && (info.StreamStatus.HasErrors() || info.StreamStatus.ResponseOutcome() == string(relaycommon.ResponseOutcomeCancelled)) {
+		return
+	}
 
 	if info.RelayFormat == types.RelayFormatClaude {
 		//
