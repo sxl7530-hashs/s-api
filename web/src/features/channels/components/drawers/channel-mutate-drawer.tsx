@@ -3719,6 +3719,41 @@ export function ChannelMutateDrawer({
               <div className='space-y-4'>
                 <FormField
                   control={form.control}
+                  name='aws_api_type'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('AWS API')}</FormLabel>
+                      <Select
+                        disabled={sensitiveLocked}
+                        items={[
+                          { value: 'invoke_model', label: t('InvokeModel (legacy)') },
+                          { value: 'mantle', label: t('Mantle (Messages API)') },
+                        ]}
+                        onValueChange={field.onChange}
+                        value={field.value ?? 'invoke_model'}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent alignItemWithTrigger={false}>
+                          <SelectGroup>
+                            <SelectItem value='invoke_model'>{t('InvokeModel (legacy)')}</SelectItem>
+                            <SelectItem value='mantle'>{t('Mantle (Messages API)')}</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        {t('Use Mantle for supported Claude models and automatic prompt caching. Keep InvokeModel for older models and Amazon Nova.')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <Separator />
+                <FormField
+                  control={form.control}
                   name='aws_key_type'
                   render={({ field }) => (
                     <FormItem>

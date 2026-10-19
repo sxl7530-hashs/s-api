@@ -186,6 +186,9 @@ function renderMath(source: string, displayMode: boolean): string {
   return katex.renderToString(normalizeMathSource(source), {
     displayMode,
     output: 'htmlAndMathml',
+    // Keep this explicit so polluted Object.prototype properties cannot enable
+    // KaTeX's optional HTML trust features.
+    trust: false,
     throwOnError: false,
   })
 }
