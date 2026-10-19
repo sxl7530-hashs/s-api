@@ -13,7 +13,7 @@ func Monitor() {
 	defer ticker.Stop()
 	for {
 		<-ticker.C
-		if GetSystemStatus().ProcessCPUUsage > 80 {
+		if GetSystemStatus().CPUUsage > 80 {
 			SysLog("gateway cpu usage too high, capturing cpu profile")
 			// write pprof file
 			if err := os.MkdirAll("./pprof", 0o755); err != nil {
