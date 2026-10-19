@@ -1,5 +1,0 @@
-[      19ms] [INFO] [rsbuild] WebSocket connecting... @ http://localhost:5173/static/js/vendors-node_modules_katex_dist_katex_min_css-node_modules_lobehub_icons_es_CherryStudio_inde-60e04e.js:134344
-[      21ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/static/js/lib-react.js:28005
-[      30ms] [LOG] i18next: languageChanged zhCN @ http://localhost:5173/static/js/vendors-node_modules_katex_dist_katex_min_css-node_modules_lobehub_icons_es_CherryStudio_inde-60e04e.js:200140
-[      30ms] [LOG] i18next: initialized {debug: true, initAsync: true, ns: Array(1), defaultNS: Array(1), fallbackLng: Array(1)} @ http://localhost:5173/static/js/vendors-node_modules_katex_dist_katex_min_css-node_modules_lobehub_icons_es_CherryStudio_inde-60e04e.js:200140
-[      89ms] [INFO] [rsbuild] WebSocket connected. @ http://localhost:5173/static/js/vendors-node_modules_katex_dist_katex_min_css-node_modules_lobehub_icons_es_CherryStudio_inde-60e04e.js:134344
