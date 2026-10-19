@@ -24,6 +24,7 @@ import type {
   SortingState,
   Row,
   ColumnDef,
+  VisibilityState,
 } from '@tanstack/react-table'
 import { Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useState, useMemo, useEffect } from 'react'
@@ -37,6 +38,7 @@ import {
   useDebouncedColumnFilter,
   useDataTable,
   useDataTableViewMode,
+  readColumnVisibility,
 } from '@/components/data-table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -52,7 +54,7 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getChannels, searchChannels, getGroups } from '../api'
+import { getChannelUsage, getChannels, searchChannels, getGroups } from '../api'
 import {
   DEFAULT_PAGE_SIZE,
   CHANNEL_STATUS,
@@ -114,6 +116,11 @@ export function ChannelsTable() {
     priorityActionContainer,
   } = useChannels()
   const isMobile = useMediaQuery('(max-width: 640px)')
+
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() => {
+    const persisted = readColumnVisibility(CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY)
+    return { models: false, tag: false, ...persisted, throughput: persisted.throughput ?? true }
+  })
 
   const idSort = sorting[0]?.id === 'id'
 
@@ -307,16 +314,36 @@ export function ChannelsTable() {
     placeholderData: (previousData) => previousData,
   })
 
-  // Apply tag aggregation if tag mode is enabled
-  const channels = useMemo(() => {
-    const rawChannels = data?.data?.items || []
+  const rawChannels = useMemo(() => data?.data?.items || [], [data])
+  const channelIDs = useMemo(
+    () => rawChannels.map((channel) => channel.id).sort((a, b) => a - b),
+    [rawChannels]
+  )
+  const usageVisible = columnVisibility.throughput === true
+  const { data: usageResponse, isError: isUsageError, isFetching: isUsageFetching, refetch: refetchUsage } = useQuery({
+    queryKey: ['channels', 'usage', channelIDs],
+    queryFn: async () => requireServerSuccess(await getChannelUsage(channelIDs)),
+    enabled: usageVisible && channelIDs.length > 0,
+    staleTime: 10_000,
+    retry: false,
+    meta: { errorToast: false },
+  })
 
-    if (enableTagMode && rawChannels.length > 0) {
-      return aggregateChannelsByTag(rawChannels)
+  // Apply usage values and tag aggregation without blocking the channel list.
+  const channels = useMemo(() => {
+    const usage = isUsageError ? {} : usageResponse?.data || {}
+    const rows = rawChannels.map((channel) => {
+      const current = usage[String(channel.id)]
+      if (!current?.available) return { ...channel, rpm: undefined, tpm: undefined }
+      return { ...channel, rpm: current.rpm, tpm: current.tpm_unavailable ? undefined : current.tpm }
+    })
+
+    if (enableTagMode && rows.length > 0) {
+      return aggregateChannelsByTag(rows)
     }
 
-    return rawChannels
-  }, [data, enableTagMode])
+    return rows
+  }, [enableTagMode, rawChannels, usageResponse, isUsageError])
 
   const totalCount = data?.data?.total || 0
   const typeCounts = data?.data?.type_counts
@@ -406,6 +433,8 @@ export function ChannelsTable() {
     data: priorityOrder.items,
     columns,
     totalCount,
+    columnVisibility,
+    onColumnVisibilityChange: setColumnVisibility,
     sorting,
     initialColumnVisibility: {
       models: false,
@@ -614,16 +643,21 @@ export function ChannelsTable() {
                       <Button
                         variant='ghost'
                         size='icon'
-                        onClick={() => void refetch()}
+                        onClick={() => {
+                          void refetch()
+                          if (usageVisible) void refetchUsage()
+                        }}
                         aria-label={t('Refresh')}
-                        aria-busy={isFetching}
+                        aria-busy={isFetching || isUsageFetching}
                         className='text-muted-foreground hover:text-foreground size-8'
                       />
                     }
                   >
                     <RefreshCw
                       aria-hidden
-                      className={cn(isFetching && 'animate-spin')}
+                      className={cn(
+                        (isFetching || isUsageFetching) && 'animate-spin'
+                      )}
                     />
                   </TooltipTrigger>
                   <TooltipContent>{t('Refresh')}</TooltipContent>
