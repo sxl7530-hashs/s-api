@@ -1,11 +1,11 @@
 {
-  "Always keep this space free": "Always keep this space free",
-  "Auto-size cache from disk capacity": "Auto-size cache from disk capacity",
-  "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
   "Doubao": "Doubao",
-  "Maximum disk usage for cache (%)": "Maximum disk usage for cache (%)",
-  "Minimum free disk space (MB)": "Minimum free disk space (MB)",
   "Responses WebSocket": "Responses WebSocket",
   "SGLang": "SGLang",
-  "Zhipu GLM": "Zhipu GLM"
+  "Zhipu GLM": "Zhipu GLM",
+  "Auto-size cache from disk capacity": "Auto-size cache from disk capacity",
+  "Maximum disk usage for cache (%)": "Maximum disk usage for cache (%)",
+  "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
+  "Minimum free disk space (MB)": "Minimum free disk space (MB)",
+  "Always keep this space free": "Always keep this space free"
 }

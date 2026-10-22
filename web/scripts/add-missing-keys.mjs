@@ -437,6 +437,82 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': 'Ưu tiên đĩa cho yêu cầu không biết độ dài',
   },
 }
+
+const bedrockUiKeys = {
+  en: {
+    'Bedrock rate protection': 'Bedrock rate protection',
+    'Limit each channel before sending requests to AWS. Redis failures allow traffic through.': 'Limit each channel before sending requests to AWS. Redis failures allow traffic through.',
+    'RPM limit': 'RPM limit',
+    'TPM limit': 'TPM limit',
+    'Zero means unlimited': 'Zero means unlimited',
+    'Bedrock 429 cooldown': 'Bedrock 429 cooldown',
+    'Temporarily bypass this channel after repeated AWS throttling responses.': 'Temporarily bypass this channel after repeated AWS throttling responses.',
+    '429 threshold': '429 threshold',
+    'Observation window (seconds)': 'Observation window (seconds)',
+    'Minimum 429 span (seconds)': 'Minimum 429 span (seconds)',
+    'Cooldown (seconds)': 'Cooldown (seconds)',
+  },
+  zh: {
+    'Bedrock rate protection': 'Bedrock 渠道限流',
+    'Limit each channel before sending requests to AWS. Redis failures allow traffic through.': '请求发送到 AWS 前限制每个渠道的流量。Redis 异常时允许请求继续通过。',
+    'RPM limit': 'RPM 上限',
+    'TPM limit': 'TPM 上限',
+    'Zero means unlimited': '0 表示不限制',
+    'Bedrock 429 cooldown': 'Bedrock 429 冷却',
+    'Temporarily bypass this channel after repeated AWS throttling responses.': 'AWS 多次返回限流后，临时跳过此渠道。',
+    '429 threshold': '429 次数阈值',
+    'Observation window (seconds)': '观察窗口（秒）',
+    'Minimum 429 span (seconds)': '429 最小时间跨度（秒）',
+    'Cooldown (seconds)': '冷却时间（秒）',
+  },
+  'zh-TW': {
+    'Bedrock rate protection': 'Bedrock 渠道限流',
+    'Limit each channel before sending requests to AWS. Redis failures allow traffic through.': '請求傳送到 AWS 前限制每個渠道的流量。Redis 異常時允許請求繼續通過。',
+    'RPM limit': 'RPM 上限',
+    'TPM limit': 'TPM 上限',
+    'Zero means unlimited': '0 表示不限制',
+    'Bedrock 429 cooldown': 'Bedrock 429 冷卻',
+    'Temporarily bypass this channel after repeated AWS throttling responses.': 'AWS 多次回傳限流後，暫時略過此渠道。',
+    '429 threshold': '429 次數閾值',
+    'Observation window (seconds)': '觀察視窗（秒）',
+    'Minimum 429 span (seconds)': '429 最小時間跨度（秒）',
+    'Cooldown (seconds)': '冷卻時間（秒）',
+  },
+  fr: {
+    'Bedrock rate protection': 'Protection de débit Bedrock',
+    'Limit each channel before sending requests to AWS. Redis failures allow traffic through.': 'Limite chaque canal avant l’envoi des requêtes à AWS. Les erreurs Redis laissent passer le trafic.',
+    'RPM limit': 'Limite RPM', 'TPM limit': 'Limite TPM', 'Zero means unlimited': '0 signifie illimité',
+    'Bedrock 429 cooldown': 'Refroidissement Bedrock 429',
+    'Temporarily bypass this channel after repeated AWS throttling responses.': 'Ignore temporairement ce canal après plusieurs réponses de limitation AWS.',
+    '429 threshold': 'Seuil 429', 'Observation window (seconds)': 'Fenêtre d’observation (secondes)', 'Minimum 429 span (seconds)': 'Intervalle minimal des 429 (secondes)', 'Cooldown (seconds)': 'Refroidissement (secondes)',
+  },
+  ja: {
+    'Bedrock rate protection': 'Bedrock レート保護',
+    'Limit each channel before sending requests to AWS. Redis failures allow traffic through.': 'AWS へのリクエスト送信前に各チャネルを制限します。Redis 障害時は通信を許可します。',
+    'RPM limit': 'RPM 上限', 'TPM limit': 'TPM 上限', 'Zero means unlimited': '0 は無制限',
+    'Bedrock 429 cooldown': 'Bedrock 429 クールダウン',
+    'Temporarily bypass this channel after repeated AWS throttling responses.': 'AWS のスロットリング応答が続いた場合、このチャネルを一時的に除外します。',
+    '429 threshold': '429 閾値', 'Observation window (seconds)': '観測ウィンドウ（秒）', 'Minimum 429 span (seconds)': '429 最小間隔（秒）', 'Cooldown (seconds)': 'クールダウン（秒）',
+  },
+  ru: {
+    'Bedrock rate protection': 'Защита скорости Bedrock',
+    'Limit each channel before sending requests to AWS. Redis failures allow traffic through.': 'Ограничивать каждый канал перед отправкой запросов в AWS. При ошибках Redis трафик пропускается.',
+    'RPM limit': 'Лимит RPM', 'TPM limit': 'Лимит TPM', 'Zero means unlimited': '0 означает без ограничений',
+    'Bedrock 429 cooldown': 'Пауза Bedrock 429',
+    'Temporarily bypass this channel after repeated AWS throttling responses.': 'Временно исключать канал после повторных ответов AWS о превышении лимита.',
+    '429 threshold': 'Порог 429', 'Observation window (seconds)': 'Окно наблюдения (секунды)', 'Minimum 429 span (seconds)': 'Минимальный интервал 429 (секунды)', 'Cooldown (seconds)': 'Пауза (секунды)',
+  },
+  vi: {
+    'Bedrock rate protection': 'Bảo vệ tốc độ Bedrock',
+    'Limit each channel before sending requests to AWS. Redis failures allow traffic through.': 'Giới hạn từng kênh trước khi gửi yêu cầu đến AWS. Khi Redis lỗi, lưu lượng vẫn được cho phép.',
+    'RPM limit': 'Giới hạn RPM', 'TPM limit': 'Giới hạn TPM', 'Zero means unlimited': '0 là không giới hạn',
+    'Bedrock 429 cooldown': 'Thời gian nghỉ Bedrock 429',
+    'Temporarily bypass this channel after repeated AWS throttling responses.': 'Tạm bỏ qua kênh này sau nhiều phản hồi giới hạn tốc độ từ AWS.',
+    '429 threshold': 'Ngưỡng 429', 'Observation window (seconds)': 'Cửa sổ quan sát (giây)', 'Minimum 429 span (seconds)': 'Khoảng 429 tối thiểu (giây)', 'Cooldown (seconds)': 'Thời gian nghỉ (giây)',
+  },
+}
+for (const locale of Object.keys(newKeys)) Object.assign(newKeys[locale], bedrockUiKeys[locale])
+
 for (const locale of Object.keys(newKeys)) {
   const file = path.join(dir, `${locale}.json`)
   const data = JSON.parse(await fs.readFile(file, 'utf8'))
