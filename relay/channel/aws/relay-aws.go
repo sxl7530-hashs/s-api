@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -370,7 +371,8 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 		if err != nil {
 			return nil, errors.Wrap(err, "get request body bytes fail")
 		}
-		var data map[string]any
+		// Nested values keep the client's bytes and key order.
+		var data map[string]json.RawMessage
 		if err := common.Unmarshal(body, &data); err != nil {
 			return nil, errors.Wrap(err, "pass-through unmarshal request body fail")
 		}

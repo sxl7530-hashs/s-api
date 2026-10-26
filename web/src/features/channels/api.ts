@@ -189,10 +189,12 @@ export async function getChannelCostRatioHistory(
 export async function getChannelOps(
   autoBan?: boolean
 ): Promise<ChannelOpsResponse> {
-  const res = await api.get('/api/channel/ops', {
-    ...channelActionConfig(),
-    params: autoBan === undefined ? undefined : { auto_ban: autoBan },
-  })
+  const res = await api.get(
+    '/api/channel/ops',
+    channelActionConfig({
+      params: autoBan === undefined ? undefined : { auto_ban: autoBan },
+    })
+  )
   return res.data
 }
 
