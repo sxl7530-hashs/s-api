@@ -1,6 +1,7 @@
 package dto
 
 type UserSetting struct {
+	AwsDirectPassthrough             bool    `json:"aws_direct_passthrough,omitempty"`               // Disable AWS passthrough compatibility for this user
 	NotifyType                       string  `json:"notify_type,omitempty"`                          // QuotaWarningType 额度预警类型
 	QuotaWarningThreshold            float64 `json:"quota_warning_threshold,omitempty"`              // QuotaWarningThreshold 额度预警阈值
 	QuotaWarningEnabled              *bool   `json:"quota_warning_enabled,omitempty"`                // 是否接收余额不足提醒，未设置时接收

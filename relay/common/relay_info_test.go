@@ -12,10 +12,38 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAwsPassthroughCompatibilitySwitchesAndChannelRetry(t *testing.T) {
+	settings := model_setting.GetGlobalSettings()
+	previous := *settings
+	t.Cleanup(func() { *settings = previous })
+	for _, enabled := range []bool{false, true} {
+		for _, globalPassthrough := range []bool{false, true} {
+			for _, channelPassthrough := range []bool{false, true} {
+				for _, direct := range []bool{false, true} {
+					settings.AwsPassthroughCompatibilityEnabled = enabled
+					settings.PassThroughRequestEnabled = globalPassthrough
+					ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+					common.SetContextKey(ctx, constant.ContextKeyChannelSetting, dto.ChannelSettings{PassThroughBodyEnabled: channelPassthrough})
+					info := &RelayInfo{UserSetting: dto.UserSetting{AwsDirectPassthrough: direct}}
+					for _, channelType := range []int{constant.ChannelTypeAws, constant.ChannelTypeOpenAI, constant.ChannelTypeAws} {
+						common.SetContextKey(ctx, constant.ContextKeyChannelType, channelType)
+						info.AwsCompatibilityConverted = true
+						info.InitChannelMeta(ctx)
+						want := channelType == constant.ChannelTypeAws && enabled && (globalPassthrough || channelPassthrough) && !direct
+						assert.Equal(t, want, info.AwsPassthroughCompatibility, "enabled=%v global=%v channel=%v direct=%v type=%d", enabled, globalPassthrough, channelPassthrough, direct, channelType)
+						assert.False(t, info.AwsCompatibilityConverted)
+					}
+				}
+			}
+		}
+	}
+}
 
 func TestRelayInfoGetFinalRequestRelayFormatPrefersExplicitFinal(t *testing.T) {
 	info := &RelayInfo{

@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -9,9 +10,13 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 func setupUserUpdateTestState(t *testing.T) {
@@ -233,6 +238,87 @@ func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 	assert.Equal(t, 270, got.UsedQuota)
 	assert.Equal(t, 4, got.RequestCount)
 	assert.Equal(t, "zh", got.GetSetting().Language)
+}
+
+func TestUserDirectPassthroughPolicySurvivesSelfSettingUpdate(t *testing.T) {
+	setupUserUpdateTestState(t)
+	user := User{Id: 3, Username: "aws-policy-user", Password: "password", Status: common.UserStatusEnabled, Group: "default"}
+	require.NoError(t, DB.Create(&user).Error)
+	policy := true
+	managed, err := GetUserById(user.Id, false)
+	require.NoError(t, err)
+	managed.AwsDirectPassthrough = &policy
+	require.NoError(t, managed.Edit(false))
+
+	require.NoError(t, UpdateUserSetting(user.Id, dto.UserSetting{Language: "en"}))
+	stored, err := GetUserById(user.Id, false)
+	require.NoError(t, err)
+	assert.True(t, stored.GetSetting().AwsDirectPassthrough)
+	assert.Equal(t, "en", stored.GetSetting().Language)
+}
+
+func TestAwsUserPolicyDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var driver gorm.Dialector
+			switch dialect {
+			case "sqlite":
+				driver = sqlite.Open(":memory:")
+			case "mysql":
+				if os.Getenv("TEST_MYSQL_DSN") == "" {
+					t.Skip("TEST_MYSQL_DSN not configured")
+				}
+				driver = mysql.Open(os.Getenv("TEST_MYSQL_DSN"))
+			case "postgres":
+				if os.Getenv("TEST_POSTGRES_DSN") == "" {
+					t.Skip("TEST_POSTGRES_DSN not configured")
+				}
+				driver = postgres.Open(os.Getenv("TEST_POSTGRES_DSN"))
+			}
+			db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: "aws_policy_test_"}})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(1)
+			previousDB, previousType, previousRedis := DB, common.MainDatabaseType(), common.RedisEnabled
+			DB, common.RedisEnabled = db, false
+			common.SetMainDatabaseType(common.DatabaseType(dialect))
+			initCol()
+			t.Cleanup(func() {
+				assert.NoError(t, db.Migrator().DropTable(&User{}))
+				DB, common.RedisEnabled = previousDB, previousRedis
+				common.SetMainDatabaseType(previousType)
+				initCol()
+				assert.NoError(t, sqlDB.Close())
+			})
+			require.NoError(t, db.AutoMigrate(&User{}))
+			user := User{Username: "aws-matrix", Password: "hash", Group: "default", AuthVersion: 1, Setting: `{"language":"zh","record_ip_log":true}`}
+			require.NoError(t, db.Create(&user).Error)
+			assert.False(t, user.GetSetting().AwsDirectPassthrough)
+			for _, enabled := range []bool{true, false} {
+				user.AwsDirectPassthrough = &enabled
+				require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return user.EditWithTx(tx, false) }))
+				assert.Equal(t, enabled, user.GetSetting().AwsDirectPassthrough)
+				assert.True(t, user.GetSetting().RecordIpLog)
+				assert.Equal(t, "zh", user.GetSetting().Language)
+				// A stale self-service update cannot alter the administrator policy.
+				require.NoError(t, UpdateUserSetting(user.Id, dto.UserSetting{Language: "zh", RecordIpLog: true, AwsDirectPassthrough: !enabled}))
+				require.NoError(t, db.First(&user, user.Id).Error)
+				assert.Equal(t, enabled, user.GetSetting().AwsDirectPassthrough)
+				user.AwsDirectPassthrough = nil
+				user.DisplayName = "ordinary edit"
+				require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return user.EditWithTx(tx, false) }))
+				assert.Equal(t, enabled, user.GetSetting().AwsDirectPassthrough)
+			}
+			var version string
+			query := "SELECT version()"
+			if dialect == "sqlite" {
+				query = "SELECT sqlite_version()"
+			}
+			require.NoError(t, db.Raw(query).Scan(&version).Error)
+			t.Logf("database version: %s", version)
+		})
+	}
 }
 
 func TestEnsureEmailAvailableRejectsExistingEmailCaseInsensitive(t *testing.T) {

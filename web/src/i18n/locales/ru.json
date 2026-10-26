@@ -7447,6 +7447,10 @@
     "Batch mappings": "Пакетное сопоставление",
     "One mapping per line: original name => display name": "Одна запись на строку: исходное имя => отображаемое имя",
     "Example: sara => Supplier 1": "Пример: sara => Поставщик 1",
-    "Complete both names or remove the incomplete row.": "Заполните оба имени или удалите незаполненную строку."
+    "Complete both names or remove the incomplete row.": "Заполните оба имени или удалите незаполненную строку.",
+    "AWS Bedrock Passthrough Compatibility": "Совместимость passthrough AWS Bedrock",
+    "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "Преобразовывать поддерживаемые запросы клиентов при включённом passthrough AWS. Пользователи с прямым passthrough AWS обходят совместимость. По умолчанию выключено.",
+    "AWS Direct Passthrough": "Прямой passthrough AWS",
+    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Обходить глобальную совместимость passthrough AWS для этого пользователя. Действует только при включённом passthrough запросов. По умолчанию выключено."
   }
 }

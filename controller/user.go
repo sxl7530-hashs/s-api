@@ -401,6 +401,8 @@ func GetUser(c *gin.Context) {
 		return
 	}
 	user.AdminPermissions = authz.Capabilities(user.Id, user.Role)
+	awsDirectPassthrough := user.GetSetting().AwsDirectPassthrough
+	user.AwsDirectPassthrough = &awsDirectPassthrough
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

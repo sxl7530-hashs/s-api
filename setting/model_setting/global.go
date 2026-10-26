@@ -36,8 +36,9 @@ func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channe
 }
 
 type GlobalSettings struct {
-	PassThroughRequestEnabled bool     `json:"pass_through_request_enabled"`
-	ThinkingModelBlacklist    []string `json:"thinking_model_blacklist"`
+	PassThroughRequestEnabled          bool     `json:"pass_through_request_enabled"`
+	AwsPassthroughCompatibilityEnabled bool     `json:"aws_passthrough_compatibility_enabled"`
+	ThinkingModelBlacklist             []string `json:"thinking_model_blacklist"`
 	// EffortTailModelIDs lists real model IDs that sit inside the GPT/o-series
 	// family whitelist but whose names already end in an effort word.
 	EffortTailModelIDs               []string                         `json:"effort_tail_model_ids"`
@@ -46,7 +47,8 @@ type GlobalSettings struct {
 
 // 默认配置
 var defaultOpenaiSettings = GlobalSettings{
-	PassThroughRequestEnabled: false,
+	PassThroughRequestEnabled:          false,
+	AwsPassthroughCompatibilityEnabled: false,
 	ThinkingModelBlacklist: []string{
 		"moonshotai/kimi-k2-thinking",
 		"kimi-k2-thinking",

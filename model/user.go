@@ -112,6 +112,7 @@ type User struct {
 	LastLoginAt          int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
 	AuthVersion          int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
 	AdminPermissions     map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
+	AwsDirectPassthrough *bool                      `json:"aws_direct_passthrough,omitempty" gorm:"-:all"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -186,12 +187,23 @@ func UpdateUserSetting(userId int, setting dto.UserSetting) error {
 	if userId == 0 {
 		return common.NewMessage("ID is empty!")
 	}
-	settingBytes, err := common.Marshal(setting)
+	var settingValue string
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var current User
+		if err := lockForUpdate(tx).Select("id", "setting").First(&current, userId).Error; err != nil {
+			return err
+		}
+		// Self-service preference updates cannot overwrite administrator policy,
+		// including an update based on a stale copy of the settings JSON.
+		setting.AwsDirectPassthrough = current.GetSetting().AwsDirectPassthrough
+		settingBytes, err := common.Marshal(setting)
+		if err != nil {
+			return err
+		}
+		settingValue = string(settingBytes)
+		return tx.Model(&User{}).Where("id = ?", userId).Update("setting", settingValue).Error
+	})
 	if err != nil {
-		return err
-	}
-	settingValue := string(settingBytes)
-	if err = DB.Model(&User{}).Where("id = ?", userId).Update("setting", settingValue).Error; err != nil {
 		return err
 	}
 	return updateUserSettingCache(userId, settingValue)
@@ -888,8 +900,17 @@ func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
 	}
 
 	current := User{}
-	if err = tx.First(&current, user.Id).Error; err != nil {
+	if err = lockForUpdate(tx).First(&current, user.Id).Error; err != nil {
 		return err
+	}
+	if newUser.AwsDirectPassthrough != nil {
+		setting := current.GetSetting()
+		setting.AwsDirectPassthrough = *newUser.AwsDirectPassthrough
+		settingBytes, marshalErr := common.Marshal(setting)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		updates["setting"] = string(settingBytes)
 	}
 	authChanged := (updatePassword && current.Password != newUser.Password) || current.Group != newUser.Group
 	if authChanged {

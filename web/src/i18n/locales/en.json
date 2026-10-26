@@ -7447,6 +7447,10 @@
     "Batch mappings": "Batch mappings",
     "One mapping per line: original name => display name": "One mapping per line: original name => display name",
     "Example: sara => Supplier 1": "Example: sara => Supplier 1",
-    "Complete both names or remove the incomplete row.": "Complete both names or remove the incomplete row."
+    "Complete both names or remove the incomplete row.": "Complete both names or remove the incomplete row.",
+    "AWS Bedrock Passthrough Compatibility": "AWS Bedrock Passthrough Compatibility",
+    "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.",
+    "AWS Direct Passthrough": "AWS Direct Passthrough",
+    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default."
   }
 }

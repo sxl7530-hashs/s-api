@@ -3,6 +3,7 @@ package aws
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +35,80 @@ import (
 )
 
 const awsTestModel = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+
+func TestAwsPassthroughCompatibilityPreservesNativeFieldsAndMappedOperation(t *testing.T) {
+	const input = `{"model":"client-alias","stream":true,"max_tokens":128,"temperature":0,"messages":[{"role":"user","content":[{"type":"text","text":"hello","cache_control":{"type":"ephemeral","future":false},"future":9007199254740993}]}],"future":{"zero":0,"enabled":false,"nullable":null},"anthropic_beta":["existing"]}`
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+			c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+			c.Request.Header.Set("anthropic-beta", "existing, extra")
+			info := newAwsTestRelayInfo()
+			info.ApiKey = "access-key|secret-key|us-east-1"
+			info.IsStream = stream
+			info.AwsPassthroughCompatibility = true
+			for range 2 { // Retry uses a fresh reader and the same mapped model.
+				a := &Adaptor{}
+				_, err := doAwsClientRequest(c, info, a, strings.NewReader(input))
+				require.NoError(t, err)
+				var body []byte
+				var modelID string
+				switch request := a.AwsReq.(type) {
+				case *bedrockruntime.InvokeModelInput:
+					require.False(t, stream)
+					body, modelID = request.Body, aws.ToString(request.ModelId)
+				case *bedrockruntime.InvokeModelWithResponseStreamInput:
+					require.True(t, stream)
+					body, modelID = request.Body, aws.ToString(request.ModelId)
+				default:
+					t.Fatalf("unexpected operation %T", a.AwsReq)
+				}
+				assert.Equal(t, "us."+awsTestModel, modelID)
+				var payload map[string]json.RawMessage
+				require.NoError(t, common.Unmarshal(body, &payload))
+				assert.NotContains(t, payload, "model")
+				assert.NotContains(t, payload, "stream")
+				assert.JSONEq(t, `{"zero":0,"enabled":false,"nullable":null}`, string(payload["future"]))
+				assert.Contains(t, string(payload["messages"]), "9007199254740993")
+				assert.JSONEq(t, `["existing","extra"]`, string(payload["anthropic_beta"]))
+				assert.Equal(t, `"bedrock-2023-05-31"`, string(payload["anthropic_version"]))
+				assert.Equal(t, "0", string(payload["temperature"]))
+			}
+		})
+	}
+}
+
+func TestAwsCompatibilityNeverRestoresUnconvertedMessages(t *testing.T) {
+	c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+	c.Request.Body = io.NopCloser(strings.NewReader(`{"messages":[{"role":"user","content":"original"}],"max_tokens":999,"anthropic_beta":["extension"],"metadata":{"user_id":"example"}}`))
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := newAwsTestRelayInfo()
+	info.AwsCompatibilityConverted = true
+	body, err := prepareAwsCompatibilityBody(c, info, strings.NewReader(`{"max_tokens":128,"messages":[{"role":"user","content":"converted"}]}`), http.Header{}, false)
+	require.NoError(t, err)
+	var payload map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal(body, &payload))
+	assert.Equal(t, "128", string(payload["max_tokens"]))
+	assert.Contains(t, string(payload["messages"]), "converted")
+	assert.NotContains(t, string(payload["messages"]), "original")
+	assert.JSONEq(t, `["extension"]`, string(payload["anthropic_beta"]))
+	assert.JSONEq(t, `{"user_id":"example"}`, string(payload["metadata"]))
+}
+
+func TestAwsCompatibilityInvalidBodiesReturnNonRetryable400(t *testing.T) {
+	for _, input := range []string{`null`, `[]`, `{"messages":[],"max_tokens":-1}`, `{"messages":[],"max_tokens":18446744073709551615}`, `{"messages":[],"max_tokens":1,"anthropic_beta":"invalid"}`} {
+		t.Run(input, func(t *testing.T) {
+			c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+			info := newAwsTestRelayInfo()
+			info.ApiKey = "access-key|secret-key|us-east-1"
+			info.AwsPassthroughCompatibility = true
+			_, err := doAwsClientRequest(c, info, &Adaptor{}, strings.NewReader(input))
+			var apiErr *relaytypes.NewAPIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+			assert.True(t, relaytypes.IsSkipRetryError(apiErr))
+		})
+	}
+}
 
 func TestBedrockEstimationPreservesRequestCacheOwnership(t *testing.T) {
 	previousConfig := common.GetDiskCacheConfig()
@@ -186,20 +261,25 @@ func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
 		common.RDB, common.RedisEnabled = previousClient, previousEnabled
 	})
 	for _, key := range []string{"test-key|us-east-1", "access-key|secret-key|us-east-1"} {
-		for _, mode := range []string{"off", "metrics", "protection"} {
+		for _, mode := range []string{"off", "metrics", "protection", "compatibility"} {
 			for _, stream := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/stream=%t", key, mode, stream), func(t *testing.T) {
 					server.FlushAll()
 					info := newAwsTestRelayInfo()
 					info.ApiKey, info.ChannelId, info.IsStream = key, 97, stream
+					info.AwsPassthroughCompatibility = mode == "compatibility"
 					info.UseRuntimeHeadersOverride = true
 					info.RuntimeHeadersOverride = map[string]any{
 						"X-Channel-Tag": "custom-value", "Authorization": "invalid", "X-Amz-Date": "invalid", "Host": "invalid",
+						"x-amzn-bedrock-trace": "DISABLED",
 					}
 					if mode != "off" {
 						info.ChannelSetting.BedrockProtection = &dto.BedrockProtectionSettings{UsageMetricsEnabled: true, RateLimitEnabled: mode == "protection", RPM: 100}
 					}
 					c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+					c.Request.Header.Set("X-Amzn-Bedrock-Trace", "ENABLED")
+					c.Request.Header.Set("X-Amzn-Bedrock-GuardrailIdentifier", "test-guardrail")
+					c.Request.Header.Set("X-Client-Secret", "must-not-forward")
 					a := &Adaptor{}
 					_, err := a.DoRequest(c, info, strings.NewReader(`{"max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`))
 					require.NoError(t, err)
@@ -220,6 +300,13 @@ func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
 						options.HTTPClient = awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
 							attempts++
 							assert.Equal(t, "custom-value", request.Header.Get("X-Channel-Tag"))
+							assert.Equal(t, "DISABLED", request.Header.Get("X-Amzn-Bedrock-Trace"))
+							assert.Empty(t, request.Header.Get("X-Client-Secret"))
+							if mode == "compatibility" {
+								assert.Equal(t, "test-guardrail", request.Header.Get("X-Amzn-Bedrock-GuardrailIdentifier"))
+							} else {
+								assert.Empty(t, request.Header.Get("X-Amzn-Bedrock-GuardrailIdentifier"))
+							}
 							assert.Equal(t, "bedrock-runtime.us-east-1.amazonaws.com", request.URL.Host)
 							if strings.HasPrefix(key, "test-key|") {
 								assert.Equal(t, "Bearer test-key", request.Header.Get("Authorization"))

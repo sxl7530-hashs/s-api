@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -122,6 +123,34 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if isNovaModel(request.Model) {
 		novaReq := convertToNovaRequest(request)
 		a.IsNova = true
+		if info.AwsPassthroughCompatibility {
+			if len(request.Tools) > 0 || request.ToolChoice != nil || len(request.Functions) > 0 {
+				return nil, errors.New("Nova compatibility currently supports text requests only")
+			}
+			for _, message := range request.Messages {
+				if !message.IsStringContent() || len(message.ToolCalls) > 0 {
+					return nil, errors.New("Nova compatibility currently supports text messages only")
+				}
+			}
+			// The legacy DTO omits explicit zeroes. Use optional pointer fields
+			// only in compatibility mode to preserve the existing off path.
+			maxTokens := request.MaxTokens
+			if request.MaxCompletionTokens != nil {
+				maxTokens = request.MaxCompletionTokens
+			}
+			config := struct {
+				MaxTokens     *uint    `json:"maxTokens,omitempty"`
+				Temperature   *float64 `json:"temperature,omitempty"`
+				TopP          *float64 `json:"topP,omitempty"`
+				TopK          *int     `json:"topK,omitempty"`
+				StopSequences []string `json:"stopSequences,omitempty"`
+			}{maxTokens, request.Temperature, request.TopP, request.TopK, parseStopSequences(request.Stop)}
+			encoded, err := common.Marshal(config)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"schemaVersion": novaReq.SchemaVersion, "messages": novaReq.Messages, "inferenceConfig": common.RawMessage(encoded)}, nil
+		}
 		return novaReq, nil
 	}
 

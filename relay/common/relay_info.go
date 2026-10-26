@@ -119,12 +119,14 @@ type RelayInfo struct {
 	ReasoningEffort    string
 	// ReasoningConversion is the suffix-derived reasoning intent attached
 	// after model mapping. Converters read it via ReasoningState().
-	ReasoningConversion *dto.ReasoningConversionState
-	UserSetting         dto.UserSetting
-	UserEmail           string
-	UserQuota           int
-	RelayFormat         types.RelayFormat
-	SendResponseCount   int
+	ReasoningConversion         *dto.ReasoningConversionState
+	UserSetting                 dto.UserSetting
+	AwsCompatibilityConverted   bool
+	AwsPassthroughCompatibility bool
+	UserEmail                   string
+	UserQuota                   int
+	RelayFormat                 types.RelayFormat
+	SendResponseCount           int
 	// ClaudeToChatStreamState / ChatToGeminiStreamState hold per-attempt
 	// stream converters. InitChannelMeta nils them so a retry cannot resume a
 	// dirty converter (advanced tool index / finalized).
@@ -328,6 +330,10 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	}
 
 	info.ChannelMeta = channelMeta
+	info.AwsCompatibilityConverted = false
+	info.AwsPassthroughCompatibility = channelType == constant.ChannelTypeAws &&
+		(model_setting.GetGlobalSettings().PassThroughRequestEnabled || channelMeta.ChannelSetting.PassThroughBodyEnabled) &&
+		model_setting.GetGlobalSettings().AwsPassthroughCompatibilityEnabled && !info.UserSetting.AwsDirectPassthrough
 
 	// Channel identity feeds the converter options snapshot (e.g.
 	// OpenRouterDialect); drop the cache so a cross-channel retry rebuilds it.

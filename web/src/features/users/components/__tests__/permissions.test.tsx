@@ -43,7 +43,11 @@ const label = "View other accounts' audit logs"
 const description =
   'View audit records from user and admin roles. Root records are always excluded.'
 
-function renderPermissions(viewerRole: number, allowed?: boolean) {
+function renderPermissions(
+  viewerRole: number,
+  allowed?: boolean,
+  awsDirectPassthrough?: boolean
+) {
   useAuthStore
     .getState()
     .auth.setUser({ id: 1, username: 'operator', role: viewerRole })
@@ -92,6 +96,7 @@ function renderPermissions(viewerRole: number, allowed?: boolean) {
         success: true,
         data: {
           ...target,
+          aws_direct_passthrough: awsDirectPassthrough,
           admin_permissions:
             allowed === undefined ? {} : { audit: { read: allowed } },
         },
@@ -120,6 +125,30 @@ afterEach(() => {
   vi.restoreAllMocks()
   useAuthStore.getState().auth.reset()
 })
+
+it.each([undefined, true])(
+  'loads and saves the AWS direct passthrough policy (previous=%s)',
+  async (direct) => {
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    renderPermissions(100, undefined, direct)
+    await screen.findByDisplayValue('Managed admin')
+    const toggle = screen.getByRole('switch', { name: 'AWS Direct Passthrough' })
+    await waitFor(() =>
+      expect(toggle).toHaveAttribute('aria-checked', String(!!direct))
+    )
+    await userEvent.click(toggle)
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith(
+        '/api/user/',
+        expect.objectContaining({ id: 2, aws_direct_passthrough: !direct }),
+        {}
+      )
+    )
+  }
+)
 
 it.each([undefined, true])(
   'root can save an audit grant or revocation after step-up verification (previous=%s)',

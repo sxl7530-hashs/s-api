@@ -513,6 +513,52 @@ const bedrockUiKeys = {
 }
 for (const locale of Object.keys(newKeys)) Object.assign(newKeys[locale], bedrockUiKeys[locale])
 
+const awsCompatibilityKeys = {
+  en: {
+    'AWS Bedrock Passthrough Compatibility': 'AWS Bedrock Passthrough Compatibility',
+    'Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.': 'Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.',
+    'AWS Direct Passthrough': 'AWS Direct Passthrough',
+    'Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.': 'Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.',
+  },
+  zh: {
+    'AWS Bedrock Passthrough Compatibility': 'AWS Bedrock 透传兼容',
+    'Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.': '开启 AWS 透传时转换支持的客户端请求。启用 AWS 直接透传的用户将跳过兼容处理。默认关闭。',
+    'AWS Direct Passthrough': 'AWS 直接透传',
+    'Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.': '为此用户跳过全局 AWS 透传兼容处理。仅在启用请求透传时生效。默认关闭。',
+  },
+  'zh-TW': {
+    'AWS Bedrock Passthrough Compatibility': 'AWS Bedrock 透傳相容',
+    'Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.': '啟用 AWS 透傳時轉換支援的用戶端請求。啟用 AWS 直接透傳的使用者會略過相容處理。預設關閉。',
+    'AWS Direct Passthrough': 'AWS 直接透傳',
+    'Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.': '讓此使用者略過全域 AWS 透傳相容處理。僅在啟用請求透傳時生效。預設關閉。',
+  },
+  fr: {
+    'AWS Bedrock Passthrough Compatibility': 'Compatibilité de passthrough AWS Bedrock',
+    'Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.': 'Convertit les requêtes prises en charge lorsque le passthrough AWS est activé. Les utilisateurs en passthrough direct AWS ignorent cette compatibilité. Désactivé par défaut.',
+    'AWS Direct Passthrough': 'Passthrough direct AWS',
+    'Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.': 'Ignore la compatibilité globale du passthrough AWS pour cet utilisateur. S’applique uniquement lorsque le passthrough est activé. Désactivé par défaut.',
+  },
+  ja: {
+    'AWS Bedrock Passthrough Compatibility': 'AWS Bedrock パススルー互換',
+    'Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.': 'AWS パススルー有効時に対応するクライアントリクエストを変換します。AWS 直接パススルーのユーザーは互換処理を省略します。既定では無効です。',
+    'AWS Direct Passthrough': 'AWS 直接パススルー',
+    'Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.': 'このユーザーのみグローバル AWS パススルー互換を省略します。リクエストパススルー有効時のみ適用されます。既定では無効です。',
+  },
+  ru: {
+    'AWS Bedrock Passthrough Compatibility': 'Совместимость passthrough AWS Bedrock',
+    'Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.': 'Преобразовывать поддерживаемые запросы клиентов при включённом passthrough AWS. Пользователи с прямым passthrough AWS обходят совместимость. По умолчанию выключено.',
+    'AWS Direct Passthrough': 'Прямой passthrough AWS',
+    'Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.': 'Обходить глобальную совместимость passthrough AWS для этого пользователя. Действует только при включённом passthrough запросов. По умолчанию выключено.',
+  },
+  vi: {
+    'AWS Bedrock Passthrough Compatibility': 'Tương thích passthrough AWS Bedrock',
+    'Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.': 'Chuyển đổi các yêu cầu được hỗ trợ khi bật passthrough AWS. Người dùng passthrough trực tiếp AWS sẽ bỏ qua chế độ tương thích. Tắt theo mặc định.',
+    'AWS Direct Passthrough': 'Passthrough trực tiếp AWS',
+    'Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.': 'Bỏ qua tương thích passthrough AWS toàn cục cho người dùng này. Chỉ áp dụng khi bật passthrough yêu cầu. Tắt theo mặc định.',
+  },
+}
+for (const locale of Object.keys(newKeys)) Object.assign(newKeys[locale], awsCompatibilityKeys[locale])
+
 for (const locale of Object.keys(newKeys)) {
   const file = path.join(dir, `${locale}.json`)
   const data = JSON.parse(await fs.readFile(file, 'utf8'))

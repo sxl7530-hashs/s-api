@@ -89,6 +89,7 @@ const jsonString = z.string().refine((value) => {
 
 const schema = z.object({
   global: z.object({
+    aws_passthrough_compatibility_enabled: z.boolean(),
     pass_through_request_enabled: z.boolean(),
     thinking_model_blacklist: jsonString,
     chat_completions_to_responses_policy: jsonString,
@@ -103,6 +104,7 @@ type GlobalModelSettingsFormValues = z.output<typeof schema>
 type GlobalModelSettingsFormInput = z.input<typeof schema>
 
 type FlatGlobalModelSettings = {
+  'global.aws_passthrough_compatibility_enabled': boolean
   'global.pass_through_request_enabled': boolean
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
@@ -113,6 +115,8 @@ type FlatGlobalModelSettings = {
 const flattenGlobalValues = (
   values: GlobalModelSettingsFormValues
 ): FlatGlobalModelSettings => ({
+  'global.aws_passthrough_compatibility_enabled':
+    values.global.aws_passthrough_compatibility_enabled,
   'global.pass_through_request_enabled':
     values.global.pass_through_request_enabled,
   'global.thinking_model_blacklist': normalizeJsonText(
@@ -204,6 +208,24 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
                     checked={field.value}
                     onCheckedChange={field.onChange}
                   />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.aws_passthrough_compatibility_enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('AWS Bedrock Passthrough Compatibility')}</FormLabel>
+                  <FormDescription>
+                    {t('Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.')}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch checked={field.value} onCheckedChange={field.onChange} />
                 </FormControl>
               </SettingsSwitchItem>
             )}

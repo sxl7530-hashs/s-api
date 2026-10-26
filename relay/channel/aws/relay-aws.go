@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -292,6 +293,20 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 	if err != nil {
 		return nil, err
 	}
+	if info.AwsPassthroughCompatibility {
+		// Forward only Bedrock operation controls, never client credentials or
+		// transport headers. Explicit administrator overrides take precedence.
+		forwarded := make(map[string]string)
+		for _, key := range []string{"X-Amzn-Bedrock-GuardrailIdentifier", "X-Amzn-Bedrock-GuardrailVersion", "X-Amzn-Bedrock-Trace", "X-Amzn-Bedrock-PerformanceConfig-Latency", "X-Amzn-Bedrock-Request-Metadata"} {
+			if value := c.GetHeader(key); value != "" {
+				forwarded[http.CanonicalHeaderKey(key)] = value
+			}
+		}
+		for key, value := range headerOverride {
+			forwarded[http.CanonicalHeaderKey(key)] = value
+		}
+		headerOverride = forwarded
+	}
 	for key, value := range headerOverride {
 		requestHeader.Set(key, value)
 	}
@@ -306,6 +321,18 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 	}
 
 	if isNovaModel(awsModelId) {
+		if info.AwsPassthroughCompatibility {
+			if info.IsStream {
+				return nil, types.NewErrorWithStatusCode(errors.New("Nova streaming is not supported by this adaptor"), types.ErrorCodeBadRequestBody, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			body, bodyErr := prepareAwsCompatibilityBody(c, info, requestBody, requestHeader, true)
+			if bodyErr != nil {
+				return nil, types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeBadRequestBody, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			a.IsNova = true
+			a.AwsReq = &bedrockruntime.InvokeModelInput{ModelId: aws.String(awsModelId), Accept: aws.String("application/json"), ContentType: aws.String("application/json"), Body: body}
+			return nil, nil
+		}
 		var novaReq *NovaRequest
 		err = common.DecodeJson(requestBody, &novaReq)
 		if err != nil {
@@ -327,6 +354,18 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 		a.AwsReq = awsReq
 		return nil, nil
 	} else {
+		if info.AwsPassthroughCompatibility {
+			body, bodyErr := prepareAwsCompatibilityBody(c, info, requestBody, requestHeader, false)
+			if bodyErr != nil {
+				return nil, types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeBadRequestBody, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			if info.IsStream {
+				a.AwsReq = &bedrockruntime.InvokeModelWithResponseStreamInput{ModelId: aws.String(awsModelId), Accept: aws.String("application/json"), ContentType: aws.String("application/json"), Body: body}
+			} else {
+				a.AwsReq = &bedrockruntime.InvokeModelInput{ModelId: aws.String(awsModelId), Accept: aws.String("application/json"), ContentType: aws.String("application/json"), Body: body}
+			}
+			return nil, nil
+		}
 		awsClaudeReq, err := formatRequest(requestBody, requestHeader)
 		if err != nil {
 			return nil, types.NewError(errors.Wrap(err, "format aws request fail"), types.ErrorCodeBadRequestBody)
@@ -358,6 +397,150 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 			return nil, nil
 		}
 	}
+}
+
+// prepareAwsCompatibilityBody patches only envelope fields. RawMessage preserves
+// unknown nested provider fields and numeric precision on native Claude requests.
+// OpenAI requests arrive already converted and must never be replaced by ingress JSON.
+func prepareAwsCompatibilityBody(c *gin.Context, info *relaycommon.RelayInfo, body io.Reader, headers http.Header, nova bool) ([]byte, error) {
+	var data map[string]json.RawMessage
+	if err := common.DecodeJson(body, &data); err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return nil, errors.New("expected JSON object request body")
+	}
+	delete(data, "model")
+	delete(data, "stream")
+	if info.AwsCompatibilityConverted && !nova {
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return nil, err
+		}
+		original, err := storage.Bytes()
+		if err != nil {
+			return nil, err
+		}
+		var extensions map[string]json.RawMessage
+		if err := common.Unmarshal(original, &extensions); err != nil {
+			return nil, err
+		}
+		// These are native provider controls with no OpenAI equivalent. Never
+		// merge messages, model, output limits or converted sampling fields.
+		for _, key := range []string{"anthropic_beta", "context_management", "output_config", "metadata"} {
+			if _, exists := data[key]; !exists && len(extensions[key]) > 0 {
+				data[key] = extensions[key]
+			}
+		}
+	}
+	if nova {
+		var config struct {
+			MaxTokens *uint `json:"maxTokens"`
+		}
+		if raw, exists := data["inferenceConfig"]; exists {
+			if err := common.Unmarshal(raw, &config); err != nil {
+				return nil, err
+			}
+		}
+		if helper.ExceedsMaxTokensLimit(config.MaxTokens) {
+			return nil, errors.New("maxTokens is invalid")
+		}
+		var schema string
+		if err := common.Unmarshal(data["schemaVersion"], &schema); err != nil || schema != "messages-v1" {
+			return nil, errors.New("Nova requires messages-v1 request format")
+		}
+	} else {
+		data["anthropic_version"] = json.RawMessage(`"bedrock-2023-05-31"`)
+		var req dto.ClaudeRequest
+		encoded, err := common.Marshal(data)
+		if err != nil {
+			return nil, err
+		}
+		if err := common.Unmarshal(encoded, &req); err != nil {
+			return nil, err
+		}
+		if helper.ExceedsMaxTokensLimit(req.MaxTokens, req.MaxTokensToSample) {
+			return nil, errors.New("max_tokens is invalid")
+		}
+		// Bedrock does not accept URL image sources. Patch only those sources
+		// through the shared media loader, retaining all other block fields.
+		var messages []map[string]json.RawMessage
+		if err := common.Unmarshal(data["messages"], &messages); err != nil {
+			return nil, err
+		}
+		for _, message := range messages {
+			raw := message["content"]
+			if common.GetJsonType(raw) != "array" {
+				continue
+			}
+			var blocks []map[string]json.RawMessage
+			if err := common.Unmarshal(raw, &blocks); err != nil {
+				return nil, err
+			}
+			changed := false
+			for _, block := range blocks {
+				var kind string
+				if err := common.Unmarshal(block["type"], &kind); err != nil || kind != "image" {
+					continue
+				}
+				var source struct {
+					Type string `json:"type"`
+					URL  string `json:"url"`
+				}
+				if err := common.Unmarshal(block["source"], &source); err != nil || source.Type != "url" {
+					continue
+				}
+				base64Data, mimeType, err := service.GetBase64Data(c, types.NewURLFileSource(source.URL), "formatting image for Claude")
+				if err != nil {
+					return nil, err
+				}
+				block["source"], err = common.Marshal(map[string]string{"type": "base64", "media_type": mimeType, "data": base64Data})
+				if err != nil {
+					return nil, err
+				}
+				changed = true
+			}
+			if changed {
+				message["content"], err = common.Marshal(blocks)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		data["messages"], err = common.Marshal(messages)
+		if err != nil {
+			return nil, err
+		}
+		if req.MaxTokens == nil {
+			maxTokens := uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(info.UpstreamModelName))
+			if helper.ExceedsMaxTokensLimit(&maxTokens) {
+				return nil, errors.New("max_tokens is invalid")
+			}
+			data["max_tokens"], err = common.Marshal(maxTokens)
+			if err != nil {
+				return nil, err
+			}
+		}
+		var betas []string
+		if raw, exists := data["anthropic_beta"]; exists {
+			if err := common.Unmarshal(raw, &betas); err != nil {
+				return nil, err
+			}
+		}
+		for beta := range strings.SplitSeq(headers.Get("anthropic-beta"), ",") {
+			beta = strings.TrimSpace(beta)
+			if beta != "" && !slices.Contains(betas, beta) {
+				betas = append(betas, beta)
+			}
+		}
+		if len(betas) > 0 {
+			data["anthropic_beta"], err = common.Marshal(betas)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return common.Marshal(data)
 }
 
 // buildAwsRequestBody prepares the payload for AWS requests, applying passthrough rules when enabled.
@@ -571,6 +754,9 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 
 	if err := common.Unmarshal(awsResp.Body, &novaResp); err != nil {
 		return types.NewError(errors.Wrap(err, "unmarshal nova response"), types.ErrorCodeBadResponseBody), nil
+	}
+	if len(novaResp.Output.Message.Content) == 0 {
+		return types.NewError(errors.New("Nova response contains no message content"), types.ErrorCodeBadResponseBody), nil
 	}
 
 	// 构造OpenAI格式响应

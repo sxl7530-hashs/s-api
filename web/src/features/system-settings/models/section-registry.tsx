@@ -42,6 +42,8 @@ const MODELS_SECTIONS = [
       <GlobalSettingsCard
         defaultValues={{
           global: {
+            aws_passthrough_compatibility_enabled:
+              settings['global.aws_passthrough_compatibility_enabled'] ?? false,
             pass_through_request_enabled:
               settings['global.pass_through_request_enabled'],
             thinking_model_blacklist: formatJsonForEditor(

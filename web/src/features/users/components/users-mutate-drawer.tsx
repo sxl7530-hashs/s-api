@@ -63,6 +63,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
+import { SettingsSwitchField } from '@/features/system-settings/components/settings-form-layout'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
@@ -325,6 +326,22 @@ export function UsersMutateDrawer({
                     </FormItem>
                   )}
                 />
+
+                {isUpdate && (
+                  <FormField
+                    control={form.control}
+                    name='aws_direct_passthrough'
+                    render={({ field }) => (
+                      <SettingsSwitchField
+                        controlId='aws-direct-passthrough'
+                        checked={field.value ?? false}
+                        onCheckedChange={field.onChange}
+                        label={t('AWS Direct Passthrough')}
+                        description={t('Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.')}
+                      />
+                    )}
+                  />
+                )}
 
                 {!isUpdate && (
                   <FormField

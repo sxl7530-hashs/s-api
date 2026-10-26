@@ -7447,6 +7447,10 @@
     "Batch mappings": "批量映射",
     "One mapping per line: original name => display name": "每行一条映射：原名称 => 展示名称",
     "Example: sara => Supplier 1": "示例：sara => 供应商1",
-    "Complete both names or remove the incomplete row.": "请填写完整的原名称和显示名称，或删除未完成的行。"
+    "Complete both names or remove the incomplete row.": "请填写完整的原名称和显示名称，或删除未完成的行。",
+    "AWS Bedrock Passthrough Compatibility": "AWS Bedrock 透传兼容",
+    "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "开启 AWS 透传时转换支持的客户端请求。启用 AWS 直接透传的用户将跳过兼容处理。默认关闭。",
+    "AWS Direct Passthrough": "AWS 直接透传",
+    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "为此用户跳过全局 AWS 透传兼容处理。仅在启用请求透传时生效。默认关闭。"
   }
 }
