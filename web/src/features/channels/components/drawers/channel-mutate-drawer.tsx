@@ -105,6 +105,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { SecureVerificationDialog } from '@/features/auth/secure-verification'
+import { useChannelNameDisplay } from '@/features/channels/hooks/use-channel-name-display'
+import { getDisplayedChannelName } from '@/features/channels/lib/channel-name-display'
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
@@ -457,6 +459,8 @@ export function ChannelMutateDrawer({
     useState(false)
   const [clipboardConnectionInfo, setClipboardConnectionInfo] =
     useState<ChannelConnectionInfo | null>(null)
+  const [channelNameFocused, setChannelNameFocused] = useState(false)
+  const { settings: channelNameDisplaySettings } = useChannelNameDisplay()
 
   const isEditing = Boolean(currentRow)
   const requestedSide = isEditing ? 'left' : 'right'
@@ -2590,7 +2594,23 @@ export function ChannelMutateDrawer({
               <FormItem>
                 <FormLabel required>{t('Name')}</FormLabel>
                 <FormControl>
-                  <Input placeholder={t(FIELD_PLACEHOLDERS.NAME)} {...field} />
+                  <Input
+                    placeholder={t(FIELD_PLACEHOLDERS.NAME)}
+                    {...field}
+                    value={
+                      channelNameFocused
+                        ? field.value
+                        : getDisplayedChannelName(
+                            field.value,
+                            channelNameDisplaySettings
+                          )
+                    }
+                    onFocus={() => setChannelNameFocused(true)}
+                    onBlur={() => {
+                      setChannelNameFocused(false)
+                      field.onBlur()
+                    }}
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -4506,7 +4526,7 @@ export function ChannelMutateDrawer({
             )}
 
             {/* General base_url for other types */}
-            {![3, 8, 22, 36, 45].includes(currentType) && (
+            {![3, 8, 22, 33, 36, 45].includes(currentType) && (
               <FormField
                 control={form.control}
                 name='base_url'

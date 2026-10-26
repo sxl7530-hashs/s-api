@@ -69,6 +69,7 @@ import {
   CHANNEL_TYPE_SGLANG,
   MODEL_FETCHABLE_TYPES,
 } from '../constants'
+import { useChannelNameDisplay } from '../hooks/use-channel-name-display'
 import {
   formatRelativeTime,
   formatResponseTime,
@@ -87,6 +88,7 @@ import {
   isTagAggregateRow,
   type TagRow,
 } from '../lib'
+import { getDisplayedChannelName } from '../lib/channel-name-display'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
@@ -626,6 +628,7 @@ export function useChannelsColumns(
 ): ColumnDef<Channel>[] {
   const { t, i18n } = useTranslation()
   const { sensitiveVisible } = useChannels()
+  const { settings: channelNameSettings } = useChannelNameDisplay()
   const enableSelection = options.enableSelection ?? true
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   // The column definitions only depend on the translation function, the active
@@ -692,6 +695,7 @@ export function useChannelsColumns(
         cell: ({ row }) => {
           const isTagRow = isTagAggregateRow(row.original)
           const name = row.getValue('name') as string
+          const displayName = getDisplayedChannelName(name, channelNameSettings)
           const channel = row.original
 
           // Tag row with expand/collapse
@@ -736,7 +740,7 @@ export function useChannelsColumns(
               <div className='flex max-w-full min-w-0 flex-col gap-1'>
                 <div className='flex max-w-full min-w-0 items-center gap-1.5'>
                   <TruncatedText
-                    text={sensitiveVisible ? name : SENSITIVE_MASK}
+                    text={sensitiveVisible ? displayName : SENSITIVE_MASK}
                     className='font-medium'
                     maxWidth='max-w-full'
                   />
@@ -1302,6 +1306,6 @@ export function useChannelsColumns(
         meta: { pinned: 'right' as const },
       },
     ],
-    [enableSelection, t, locale, sensitiveVisible]
+    [enableSelection, t, locale, sensitiveVisible, channelNameSettings]
   )
 }

@@ -66,6 +66,7 @@ import {
   handleUpdateAllBalances,
 } from '../lib'
 import type { ChannelSortBy } from '../types'
+import { ChannelNameDisplayDialog } from './channel-name-display-dialog'
 import { ChannelSortControl } from './channel-priority-controls'
 import { useChannels } from './channels-provider'
 
@@ -89,6 +90,7 @@ export function ChannelsPrimaryButtons() {
   const queryClient = useQueryClient()
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [showConsistencyDialog, setShowConsistencyDialog] = useState(false)
+  const [showNameMappingDialog, setShowNameMappingDialog] = useState(false)
   const [isRepairingConsistency, setIsRepairingConsistency] = useState(false)
   const currentUser = useAuthStore((s) => s.auth.user)
   const canEditSensitive = hasPermission(
@@ -235,6 +237,20 @@ export function ChannelsPrimaryButtons() {
             <DropdownMenuSeparator />
 
             <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault()
+                setShowNameMappingDialog(true)
+              }}
+            >
+              {t('Channel name display mapping')}
+              <DropdownMenuShortcut>
+                <Settings2 className='h-4 w-4' />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+
+            <DropdownMenuSeparator />
+
+            <DropdownMenuItem
               onClick={() => upstream.detectAllUpdates()}
               disabled={upstream.detectAllLoading}
             >
@@ -304,6 +320,11 @@ export function ChannelsPrimaryButtons() {
           })
           setShowDeleteDialog(false)
         }}
+      />
+
+      <ChannelNameDisplayDialog
+        open={showNameMappingDialog}
+        onOpenChange={setShowNameMappingDialog}
       />
 
       <ConfirmDialog

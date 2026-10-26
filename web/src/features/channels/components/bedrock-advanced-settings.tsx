@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -21,7 +22,11 @@ import { useTranslation } from 'react-i18next'
 
 import { DateTimePicker } from '@/components/datetime-picker'
 import { sideDrawerSwitchItemClassName } from '@/components/drawer-layout'
-import { JsonEditor } from '@/components/json-editor'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import {
   FormControl,
   FormDescription,
@@ -34,18 +39,21 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 
 import type { ChannelFormValues } from '../lib/channel-form'
+import { parseModelsString } from '../lib/model-mapping-validation'
+import { BedrockModelLimitsEditor } from './bedrock-model-limits-editor'
 
 export function BedrockAdvancedSettings(props: {
   form: UseFormReturn<ChannelFormValues>
   disabled: boolean
 }) {
   const { t } = useTranslation()
-  const [modelEnabled, rampEnabled, backoffEnabled] = useWatch({
+  const [modelEnabled, rampEnabled, backoffEnabled, models] = useWatch({
     control: props.form.control,
     name: [
       'bedrock_model_rate_limit_enabled',
       'bedrock_ramp_up_enabled',
       'bedrock_retry_backoff_enabled',
+      'models',
     ],
   })
 
@@ -112,6 +120,47 @@ export function BedrockAdvancedSettings(props: {
         />
       ))}
 
+      <Collapsible defaultOpen={false}>
+        <CollapsibleTrigger
+          render={
+            <button
+              type='button'
+              className='border-border/60 hover:bg-muted/40 flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm font-medium transition-colors'
+            />
+          }
+        >
+          {t('API URL')}
+          <ChevronDown
+            className='text-muted-foreground size-4 transition-transform group-aria-expanded:rotate-180'
+            aria-hidden='true'
+          />
+        </CollapsibleTrigger>
+        <CollapsibleContent className='border-border/60 mt-2 rounded-md border px-3 py-3'>
+          <FormField
+            control={props.form.control}
+            name='base_url'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('API URL')}</FormLabel>
+                <FormControl>
+                  <Input
+                    placeholder={t('Leave empty to use default')}
+                    disabled={props.disabled}
+                    {...field}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </CollapsibleContent>
+      </Collapsible>
+
       {modelEnabled && (
         <FormField
           control={props.form.control}
@@ -120,15 +169,11 @@ export function BedrockAdvancedSettings(props: {
             <FormItem>
               <FormLabel>{t('Model limits')}</FormLabel>
               <FormControl>
-                <JsonEditor
+                <BedrockModelLimitsEditor
                   value={field.value || '{}'}
+                  models={parseModelsString(models || '')}
                   onChange={field.onChange}
                   disabled={props.disabled}
-                  valueType='any'
-                  keyLabel={t('Model')}
-                  valueLabel={t('RPM / TPM')}
-                  template={{ 'claude-opus-4-6': { rpm: 30, tpm: 60000 } }}
-                  valuePlaceholder='{"rpm":30,"tpm":60000}'
                 />
               </FormControl>
               <FormMessage />

@@ -7440,6 +7440,13 @@
     "429 threshold": "429 次數閾值",
     "Observation window (seconds)": "觀察視窗（秒）",
     "Minimum 429 span (seconds)": "429 最小時間跨度（秒）",
-    "Cooldown (seconds)": "冷卻時間（秒）"
+    "Cooldown (seconds)": "冷卻時間（秒）",
+    "Channel name display mapping": "渠道名稱顯示映射",
+    "Change channel names only in the channel list and usage logs. Stored channel names and forms remain unchanged.": "僅在渠道列表和使用記錄中替換渠道名稱的顯示內容，不會修改已儲存的渠道名稱或表單內容。",
+    "Enable display mapping": "啟用顯示映射",
+    "Batch mappings": "批次映射",
+    "One mapping per line: original name => display name": "每行一筆映射：原名稱 => 顯示名稱",
+    "Example: sara => Supplier 1": "範例：sara => 供應商1",
+    "Complete both names or remove the incomplete row.": "請填寫完整的原名稱和顯示名稱，或刪除未完成的資料列。"
   }
 }

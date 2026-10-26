@@ -7440,6 +7440,13 @@
     "429 threshold": "429 threshold",
     "Observation window (seconds)": "Observation window (seconds)",
     "Minimum 429 span (seconds)": "Minimum 429 span (seconds)",
-    "Cooldown (seconds)": "Cooldown (seconds)"
+    "Cooldown (seconds)": "Cooldown (seconds)",
+    "Channel name display mapping": "Channel name display mapping",
+    "Change channel names only in the channel list and usage logs. Stored channel names and forms remain unchanged.": "Change channel names only in the channel list and usage logs. Stored channel names and forms remain unchanged.",
+    "Enable display mapping": "Enable display mapping",
+    "Batch mappings": "Batch mappings",
+    "One mapping per line: original name => display name": "One mapping per line: original name => display name",
+    "Example: sara => Supplier 1": "Example: sara => Supplier 1",
+    "Complete both names or remove the incomplete row.": "Complete both names or remove the incomplete row."
   }
 }

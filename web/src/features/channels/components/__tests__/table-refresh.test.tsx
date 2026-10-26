@@ -34,6 +34,7 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { Channels } from '../../index'
+import { CHANNEL_NAME_DISPLAY_STORAGE_KEY } from '../../lib/channel-name-display'
 import type { Channel } from '../../types'
 import { ChannelsProvider } from '../channels-provider'
 import { ChannelsTable } from '../channels-table'
@@ -93,7 +94,8 @@ async function renderChannelsPage(
   searchGate: () => Promise<void>,
   fullPage = false,
   usageFails: boolean | (() => boolean) = false,
-  tpmUnavailable = false
+  tpmUnavailable = false,
+  expectedChannelName = 'prod'
 ) {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/channel/test/models/tasks') {
@@ -160,7 +162,9 @@ async function renderChannelsPage(
       </QueryClientProvider>
     </I18nextProvider>
   )
-  expect((await screen.findAllByText('prod')).length).toBeGreaterThan(0)
+  expect(
+    (await screen.findAllByText(expectedChannelName)).length
+  ).toBeGreaterThan(0)
   return get
 }
 
@@ -193,6 +197,25 @@ it('refetches the channel list with the current filters and marks Refresh busy w
   expect(get.mock.calls.some(([url]) => url === '/api/channel/usage')).toBe(
     true
   )
+})
+
+it('shows the configured alias in the channel list without changing channel data', async () => {
+  localStorage.setItem('channels:view-mode', 'table')
+  localStorage.setItem(
+    CHANNEL_NAME_DISPLAY_STORAGE_KEY,
+    JSON.stringify({ enabled: true, mappings: { prod: 'Supplier 1' } })
+  )
+
+  await renderChannelsPage(
+    () => Promise.resolve(),
+    false,
+    false,
+    false,
+    'Supplier 1'
+  )
+
+  expect(await screen.findByText('Supplier 1')).toBeVisible()
+  expect(screen.queryByText('prod')).not.toBeInTheDocument()
 })
 
 it('migrates legacy RPM visibility to one combined column and refreshes both metrics', async () => {

@@ -7440,6 +7440,13 @@
     "429 threshold": "Seuil 429",
     "Observation window (seconds)": "Fenêtre d’observation (secondes)",
     "Minimum 429 span (seconds)": "Intervalle minimal des 429 (secondes)",
-    "Cooldown (seconds)": "Refroidissement (secondes)"
+    "Cooldown (seconds)": "Refroidissement (secondes)",
+    "Channel name display mapping": "Correspondance des noms de canaux",
+    "Change channel names only in the channel list and usage logs. Stored channel names and forms remain unchanged.": "Remplace les noms uniquement dans la liste des canaux et les journaux. Les noms enregistrés et les formulaires restent inchangés.",
+    "Enable display mapping": "Activer la correspondance",
+    "Batch mappings": "Correspondances groupées",
+    "One mapping per line: original name => display name": "Une correspondance par ligne : nom d’origine => nom affiché",
+    "Example: sara => Supplier 1": "Exemple : sara => Fournisseur 1",
+    "Complete both names or remove the incomplete row.": "Renseignez les deux noms ou supprimez la ligne incomplète."
   }
 }

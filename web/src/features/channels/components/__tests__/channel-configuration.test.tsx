@@ -47,6 +47,7 @@ import {
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VLLM,
 } from '../../constants'
+import { CHANNEL_NAME_DISPLAY_STORAGE_KEY } from '../../lib/channel-name-display'
 import { channelSchema, type Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelsProvider } from '../channels-provider'
@@ -256,6 +257,27 @@ test('changing built-in providers updates server-provided URL placeholders witho
     'placeholder',
     'Leave empty to use default'
   )
+})
+
+test('AWS API URL is a collapsed setting below Bedrock protection controls', async () => {
+  editingChannel.type = 33
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+
+  const modelProtection = await screen.findByText('Bedrock model rate limits')
+  const apiUrl = screen.getByRole('button', { name: 'API URL' })
+  const authentication = screen.getByRole('heading', {
+    name: 'Authentication',
+  })
+
+  expect(
+    modelProtection.compareDocumentPosition(apiUrl) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy()
+  expect(
+    apiUrl.compareDocumentPosition(authentication) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy()
+  expect(apiUrl).toHaveAttribute('aria-expanded', 'false')
 })
 
 test.each([
@@ -1411,6 +1433,33 @@ test('editing opens the shared configuration and omits an unchanged key on updat
     )
   )
   expect(put.mock.calls[0]?.[1]).not.toHaveProperty('key')
+})
+
+test('channel name mapping is displayed in the edit field but saves the original name', async () => {
+  const originalName = 'AWS-sara-20261023-dfhiowehufej'
+  editingChannel = { ...editingChannel, name: originalName }
+  localStorage.setItem(
+    CHANNEL_NAME_DISPLAY_STORAGE_KEY,
+    JSON.stringify({ enabled: true, mappings: { sara: '供应商1' } })
+  )
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+
+  const nameInput = await screen.findByRole('textbox', { name: 'Name *' })
+  await waitFor(() =>
+    expect(nameInput).toHaveValue('AWS-供应商1-20261023-dfhiowehufej')
+  )
+  await user.click(nameInput)
+  expect(nameInput).toHaveValue(originalName)
+  await user.tab()
+  expect(nameInput).toHaveValue('AWS-供应商1-20261023-dfhiowehufej')
+
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  expect(put.mock.calls[0]?.[1]).toMatchObject({ id: 42, name: originalName })
 })
 
 test('editing legacy channels retains the full provider list and saves the original type', async () => {

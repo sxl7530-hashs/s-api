@@ -7440,6 +7440,13 @@
     "429 threshold": "Порог 429",
     "Observation window (seconds)": "Окно наблюдения (секунды)",
     "Minimum 429 span (seconds)": "Минимальный интервал 429 (секунды)",
-    "Cooldown (seconds)": "Пауза (секунды)"
+    "Cooldown (seconds)": "Пауза (секунды)",
+    "Channel name display mapping": "Сопоставление отображаемых имён каналов",
+    "Change channel names only in the channel list and usage logs. Stored channel names and forms remain unchanged.": "Заменяет имена только в списке каналов и журналах. Сохранённые имена и содержимое форм не меняются.",
+    "Enable display mapping": "Включить подмену отображения",
+    "Batch mappings": "Пакетное сопоставление",
+    "One mapping per line: original name => display name": "Одна запись на строку: исходное имя => отображаемое имя",
+    "Example: sara => Supplier 1": "Пример: sara => Поставщик 1",
+    "Complete both names or remove the incomplete row.": "Заполните оба имени или удалите незаполненную строку."
   }
 }

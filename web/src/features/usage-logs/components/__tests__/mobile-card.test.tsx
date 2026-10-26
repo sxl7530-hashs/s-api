@@ -26,6 +26,8 @@ import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 
+import { CHANNEL_NAME_DISPLAY_STORAGE_KEY } from '@/features/channels/lib/channel-name-display'
+
 import { usageLogSchema, type UsageLog } from '../../data/schema'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
 import { UsageLogsMobileList } from '../usage-logs-mobile-card'
@@ -148,6 +150,18 @@ it('opens long channel text on tap and copies the complete value', async () => {
   expect(
     screen.getByRole('button', { name: `Channel: ${longName} #372` })
   ).toHaveFocus()
+})
+
+it('shows a mapped channel name in usage logs when display mapping is enabled', async () => {
+  localStorage.setItem(
+    CHANNEL_NAME_DISPLAY_STORAGE_KEY,
+    JSON.stringify({ enabled: true, mappings: { [longName]: 'Supplier 1' } })
+  )
+  renderLogs()
+
+  expect(
+    screen.getByRole('button', { name: 'Channel: Supplier 1 #372' })
+  ).toBeVisible()
 })
 
 it.each([false, true])(

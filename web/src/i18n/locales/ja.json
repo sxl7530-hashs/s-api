@@ -7440,6 +7440,13 @@
     "429 threshold": "429 閾値",
     "Observation window (seconds)": "観測ウィンドウ（秒）",
     "Minimum 429 span (seconds)": "429 最小間隔（秒）",
-    "Cooldown (seconds)": "クールダウン（秒）"
+    "Cooldown (seconds)": "クールダウン（秒）",
+    "Channel name display mapping": "チャネル名の表示マッピング",
+    "Change channel names only in the channel list and usage logs. Stored channel names and forms remain unchanged.": "チャネル一覧と利用ログでの表示名のみを置き換えます。保存されたチャネル名とフォームの内容は変更されません。",
+    "Enable display mapping": "表示マッピングを有効にする",
+    "Batch mappings": "一括マッピング",
+    "One mapping per line: original name => display name": "1行に1件：元の名前 => 表示名",
+    "Example: sara => Supplier 1": "例：sara => 仕入先1",
+    "Complete both names or remove the incomplete row.": "元の名前と表示名を入力するか、未入力の行を削除してください。"
   }
 }

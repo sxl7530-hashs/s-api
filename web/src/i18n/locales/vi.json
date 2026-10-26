@@ -7440,6 +7440,13 @@
     "429 threshold": "Ngưỡng 429",
     "Observation window (seconds)": "Cửa sổ quan sát (giây)",
     "Minimum 429 span (seconds)": "Khoảng 429 tối thiểu (giây)",
-    "Cooldown (seconds)": "Thời gian nghỉ (giây)"
+    "Cooldown (seconds)": "Thời gian nghỉ (giây)",
+    "Channel name display mapping": "Ánh xạ tên kênh hiển thị",
+    "Change channel names only in the channel list and usage logs. Stored channel names and forms remain unchanged.": "Chỉ thay tên hiển thị trong danh sách kênh và nhật ký sử dụng. Tên đã lưu và nội dung biểu mẫu không thay đổi.",
+    "Enable display mapping": "Bật ánh xạ hiển thị",
+    "Batch mappings": "Ánh xạ hàng loạt",
+    "One mapping per line: original name => display name": "Mỗi dòng một ánh xạ: tên gốc => tên hiển thị",
+    "Example: sara => Supplier 1": "Ví dụ: sara => Nhà cung cấp 1",
+    "Complete both names or remove the incomplete row.": "Nhập đủ hai tên hoặc xóa hàng chưa hoàn tất."
   }
 }

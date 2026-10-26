@@ -56,6 +56,8 @@ import { Dialog } from '@/components/dialog'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { useChannelNameDisplay } from '@/features/channels/hooks/use-channel-name-display'
+import { getDisplayedChannelName } from '@/features/channels/lib/channel-name-display'
 import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-pricing-breakdown'
 import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 import { BILLING_PRICING_VARS } from '@/features/pricing/lib/billing-expr'
@@ -519,6 +521,7 @@ interface DetailsDialogProps {
 
 export function DetailsDialog(props: DetailsDialogProps) {
   const { t } = useTranslation()
+  const { settings: channelNameSettings } = useChannelNameDisplay()
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const other = parseLogOther(props.log.other)
   const typeConfig = getLogTypeConfig(props.log.type)
@@ -721,7 +724,12 @@ export function DetailsDialog(props: DetailsDialogProps) {
                   {props.log.channel_name && (
                     <span className='text-muted-foreground'>
                       {' '}
-                      ({props.log.channel_name})
+                      (
+                      {getDisplayedChannelName(
+                        props.log.channel_name,
+                        channelNameSettings
+                      )}
+                      )
                     </span>
                   )}
                 </span>

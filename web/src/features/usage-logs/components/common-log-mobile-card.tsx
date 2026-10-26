@@ -27,6 +27,8 @@ import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { useChannelNameDisplay } from '@/features/channels/hooks/use-channel-name-display'
+import { getDisplayedChannelName } from '@/features/channels/lib/channel-name-display'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import dayjs from '@/lib/dayjs'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
@@ -64,6 +66,7 @@ export function CommonLogMobileCard<TData>(props: {
 }) {
   const { t } = useTranslation()
   const context = useUsageLogsContext()
+  const { settings: channelNameSettings } = useChannelNameDisplay()
   const [selectedField, setSelectedField] = useState<FieldName | null>(null)
   const log = props.log
   const other = parseLogOther(log.other)
@@ -100,7 +103,12 @@ export function CommonLogMobileCard<TData>(props: {
     },
     channel: {
       label: t('Channel'),
-      value: [log.channel_name, `#${log.channel}`].filter(Boolean).join(' '),
+      value: [
+        getDisplayedChannelName(log.channel_name, channelNameSettings),
+        `#${log.channel}`,
+      ]
+        .filter(Boolean)
+        .join(' '),
       visible: displayable && props.cells.has('channel'),
       sensitive: true,
     },

@@ -35,6 +35,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useChannelNameDisplay } from '@/features/channels/hooks/use-channel-name-display'
+import { getDisplayedChannelName } from '@/features/channels/lib/channel-name-display'
 import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 import {
   normalizeTierLabel,
@@ -354,6 +356,7 @@ export function useCommonLogsColumns(
   showBillingSource = false
 ): ColumnDef<UsageLog>[] {
   const { t } = useTranslation()
+  const { settings: channelNameSettings } = useChannelNameDisplay()
   const currency = useSystemConfigStore((state) => state.config.currency)
   return useMemo(() => {
     const columns: ColumnDef<UsageLog>[] = [
@@ -416,11 +419,15 @@ export function useCommonLogsColumns(
             const channelChain = hasRetryChain
               ? useChannel.join(' → ')
               : undefined
-            const channelDisplay = log.channel_name
-              ? `${log.channel_name} #${log.channel}`
+            const displayChannelName = getDisplayedChannelName(
+              log.channel_name,
+              channelNameSettings
+            )
+            const channelDisplay = displayChannelName
+              ? `${displayChannelName} #${log.channel}`
               : `#${log.channel}`
             const channelIdDisplay = `#${log.channel}`
-            const channelName = sensitiveVisible ? log.channel_name : '••••'
+            const channelName = sensitiveVisible ? displayChannelName : '••••'
             const multiKeyIndex = other?.admin_info?.multi_key_index
             const showMultiKeyIndex =
               other?.admin_info?.is_multi_key === true &&
@@ -508,7 +515,7 @@ export function useCommonLogsColumns(
                         </button>
                       )}
                     </div>
-                    {log.channel_name && (
+                    {displayChannelName && (
                       <span className='text-muted-foreground/70 truncate [font-family:var(--font-body)] !text-xs'>
                         {channelName}
                       </span>
@@ -902,5 +909,5 @@ export function useCommonLogsColumns(
     return columns
     // Log formatters read currency settings from the store.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [t, isAdmin, isRoot, showBillingSource, currency])
+  }, [t, isAdmin, isRoot, showBillingSource, currency, channelNameSettings])
 }
