@@ -133,13 +133,25 @@ func (headers bedrockChannelHeaders) HandleBuild(ctx context.Context, input midd
 		return middleware.BuildOutput{}, middleware.Metadata{}, errors.New("unexpected Bedrock HTTP request type")
 	}
 	for key, value := range headers {
-		switch strings.ToLower(key) {
-		case "authorization", "host", "x-amz-date", "x-amz-security-token", "x-amz-content-sha256", "content-length", "transfer-encoding":
+		if isAwsManagedOrForwardingHeader(key) {
 			continue
 		}
 		request.Header.Set(key, value)
 	}
 	return next.HandleBuild(ctx, input)
+}
+
+func isAwsManagedOrForwardingHeader(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if strings.HasPrefix(key, "x-forwarded-") {
+		return true
+	}
+	switch key {
+	case "authorization", "host", "x-amz-date", "x-amz-security-token", "x-amz-content-sha256", "content-length", "transfer-encoding", "x-real-ip", "forwarded":
+		return true
+	default:
+		return false
+	}
 }
 
 // estimateProtectionTokens uses the actual outgoing body, after conversion,
@@ -308,6 +320,9 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 		headerOverride = forwarded
 	}
 	for key, value := range headerOverride {
+		if isAwsManagedOrForwardingHeader(key) {
+			continue
+		}
 		requestHeader.Set(key, value)
 	}
 	if len(headerOverride) > 0 {

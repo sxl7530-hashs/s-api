@@ -271,6 +271,7 @@ func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
 					info.UseRuntimeHeadersOverride = true
 					info.RuntimeHeadersOverride = map[string]any{
 						"X-Channel-Tag": "custom-value", "Authorization": "invalid", "X-Amz-Date": "invalid", "Host": "invalid",
+						"X-Forwarded-For": "10.0.0.1", "X-Forwarded-Proto": "https", "X-Real-IP": "10.0.0.1", "Forwarded": "for=10.0.0.1",
 						"x-amzn-bedrock-trace": "DISABLED",
 					}
 					if mode != "off" {
@@ -301,6 +302,10 @@ func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
 							attempts++
 							assert.Equal(t, "custom-value", request.Header.Get("X-Channel-Tag"))
 							assert.Equal(t, "DISABLED", request.Header.Get("X-Amzn-Bedrock-Trace"))
+							assert.Empty(t, request.Header.Get("X-Forwarded-For"))
+							assert.Empty(t, request.Header.Get("X-Forwarded-Proto"))
+							assert.Empty(t, request.Header.Get("X-Real-IP"))
+							assert.Empty(t, request.Header.Get("Forwarded"))
 							assert.Empty(t, request.Header.Get("X-Client-Secret"))
 							if mode == "compatibility" {
 								assert.Equal(t, "test-guardrail", request.Header.Get("X-Amzn-Bedrock-GuardrailIdentifier"))
