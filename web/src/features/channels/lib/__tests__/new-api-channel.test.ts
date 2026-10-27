@@ -108,7 +108,6 @@ describe('New API channel', () => {
 describe('Bedrock protection channel settings', () => {
   test('defaults every runtime switch to off', () => {
     expect(CHANNEL_FORM_DEFAULT_VALUES).toMatchObject({
-      bedrock_usage_metrics_enabled: false,
       bedrock_rate_limit_enabled: false,
       bedrock_cooldown_enabled: false,
       bedrock_model_rate_limit_enabled: false,
@@ -121,7 +120,6 @@ describe('Bedrock protection channel settings', () => {
     const setting = buildSettingJSON({
       ...CHANNEL_FORM_DEFAULT_VALUES,
       type: 33,
-      bedrock_usage_metrics_enabled: true,
       bedrock_rate_limit_enabled: true,
       bedrock_rpm: 120,
       bedrock_tpm: 24000,
@@ -162,7 +160,6 @@ describe('Bedrock protection channel settings', () => {
     )
 
     expect(defaults).toMatchObject({
-      bedrock_usage_metrics_enabled: true,
       bedrock_rate_limit_enabled: true,
       bedrock_rpm: 120,
       bedrock_tpm: 24000,
@@ -213,7 +210,6 @@ describe('Bedrock protection channel settings', () => {
       buildSettingJSON({
         ...CHANNEL_FORM_DEFAULT_VALUES,
         type: 1,
-        bedrock_usage_metrics_enabled: true,
         bedrock_rate_limit_enabled: true,
         bedrock_cooldown_enabled: true,
       })

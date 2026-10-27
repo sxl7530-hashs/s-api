@@ -7380,8 +7380,6 @@
     "bedrock ramp-up requires a start time and channel rate limits": "Tăng tải Bedrock cần thời điểm bắt đầu và giới hạn kênh",
     "invalid bedrock retry backoff settings": "Cấu hình trì hoãn Bedrock không hợp lệ",
     "429 ratio threshold (%)": "Ngưỡng tỷ lệ 429 (%)",
-    "Bedrock usage metrics": "Chỉ số sử dụng Bedrock",
-    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "Thu thập RPM và TPM ước tính theo từng kênh cho các cột tùy chọn trong bảng.",
     "Minimum sample size": "Cỡ mẫu tối thiểu",
     "Uses estimated request tokens": "Dùng số token yêu cầu ước tính",
     "Selected channel model test": "Kiểm tra mô hình của kênh đã chọn",
@@ -7451,6 +7449,11 @@
     "AWS Bedrock Passthrough Compatibility": "Tương thích passthrough AWS Bedrock",
     "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "Chuyển đổi các yêu cầu được hỗ trợ khi bật passthrough AWS. Người dùng passthrough trực tiếp AWS sẽ bỏ qua chế độ tương thích. Tắt theo mặc định.",
     "AWS Direct Passthrough": "Passthrough trực tiếp AWS",
-    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Bỏ qua tương thích passthrough AWS toàn cục cho người dùng này. Chỉ áp dụng khi bật passthrough yêu cầu. Tắt theo mặc định."
+    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Bỏ qua tương thích passthrough AWS toàn cục cho người dùng này. Chỉ áp dụng khi bật passthrough yêu cầu. Tắt theo mặc định.",
+    "AWS model quotas": "Hạn ngạch mô hình AWS",
+    "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "Đọc hạn ngạch RPM và TPM AWS qua proxy của kênh này mà không thay đổi dữ liệu.",
+    "Please fill in the channel proxy before querying AWS quotas": "Vui lòng điền proxy của kênh trước khi truy vấn hạn ngạch AWS",
+    "Failed to query AWS quotas": "Không thể truy vấn hạn ngạch AWS",
+    "AWS region": "Khu vực AWS"
   }
 }

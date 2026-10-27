@@ -7380,8 +7380,6 @@
     "bedrock ramp-up requires a start time and channel rate limits": "La montée en charge Bedrock exige un début et des limites de canal",
     "invalid bedrock retry backoff settings": "Attente de relance Bedrock invalide",
     "429 ratio threshold (%)": "Seuil de proportion 429 (%)",
-    "Bedrock usage metrics": "Mesures d’utilisation Bedrock",
-    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "Collecte les RPM et TPM estimés par canal pour les colonnes facultatives du tableau.",
     "Minimum sample size": "Taille minimale de l’échantillon",
     "Uses estimated request tokens": "Utilise une estimation des jetons de la requête",
     "Selected channel model test": "Test des modèles des canaux sélectionnés",
@@ -7451,6 +7449,11 @@
     "AWS Bedrock Passthrough Compatibility": "Compatibilité de passthrough AWS Bedrock",
     "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "Convertit les requêtes prises en charge lorsque le passthrough AWS est activé. Les utilisateurs en passthrough direct AWS ignorent cette compatibilité. Désactivé par défaut.",
     "AWS Direct Passthrough": "Passthrough direct AWS",
-    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Ignore la compatibilité globale du passthrough AWS pour cet utilisateur. S’applique uniquement lorsque le passthrough est activé. Désactivé par défaut."
+    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Ignore la compatibilité globale du passthrough AWS pour cet utilisateur. S’applique uniquement lorsque le passthrough est activé. Désactivé par défaut.",
+    "AWS model quotas": "Quotas des modèles AWS",
+    "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "Interroge en lecture seule les quotas RPM et TPM AWS via le proxy de ce canal.",
+    "Please fill in the channel proxy before querying AWS quotas": "Veuillez renseigner le proxy du canal avant d’interroger les quotas AWS",
+    "Failed to query AWS quotas": "Échec de la consultation des quotas AWS",
+    "AWS region": "Région AWS"
   }
 }

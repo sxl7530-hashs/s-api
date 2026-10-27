@@ -32,6 +32,7 @@ import type {
   ChannelTestResponse,
   ChannelCostRatioHistory,
   ChannelUsageResponse,
+  BedrockQuotaResponse,
   CopyChannelParams,
   CopyChannelResponse,
   FetchModelsResponse,
@@ -150,6 +151,16 @@ export async function getChannelUsage(
   const res = await api.get('/api/channel/usage', {
     params: { ids: channelIds.join(',') },
     disableDuplicate: true,
+  })
+  return res.data
+}
+
+export async function getBedrockQuotas(
+  channelId: number
+): Promise<BedrockQuotaResponse> {
+  const res = await api.get(`/api/channel/${channelId}/bedrock/quotas`, {
+    disableDuplicate: true,
+    timeout: 60_000,
   })
   return res.data
 }

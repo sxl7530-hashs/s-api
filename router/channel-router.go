@@ -64,6 +64,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/models_enabled", permission: authz.ChannelRead, handler: controller.EnabledListModels},
 	{method: http.MethodGet, path: "/ops", permission: authz.ChannelRead, handler: controller.GetChannelOps},
 	{method: http.MethodGet, path: "/usage", permission: authz.ChannelRead, handler: controller.GetChannelUsage},
+	{method: http.MethodGet, path: "/:id/bedrock/quotas", permission: authz.ChannelOperate, handler: controller.GetBedrockQuotas},
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},
 	{method: http.MethodGet, path: "/:id/cost_ratio_history", permission: authz.ChannelRead, handler: controller.GetChannelCostRatioHistory},
 	{method: http.MethodGet, path: "/test", permission: authz.ChannelOperate, handler: controller.TestAllChannels},

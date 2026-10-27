@@ -259,25 +259,18 @@ test('changing built-in providers updates server-provided URL placeholders witho
   )
 })
 
-test('AWS API URL is a collapsed setting below Bedrock protection controls', async () => {
+test('AWS API URL is shown in the connection section above Bedrock protection', async () => {
   editingChannel.type = 33
   render(<ConfigurationHarness currentRow={editingChannel} />)
 
-  const modelProtection = await screen.findByText('Bedrock model rate limits')
-  const apiUrl = screen.getByRole('button', { name: 'API URL' })
-  const authentication = screen.getByRole('heading', {
-    name: 'Authentication',
-  })
-
+  const apiUrl = await screen.findByRole('textbox', { name: 'API URL' })
+  const protectionLabel = await screen.findByText('Bedrock rate protection')
+  expect(apiUrl).toBeInTheDocument()
   expect(
-    modelProtection.compareDocumentPosition(apiUrl) &
+    apiUrl.compareDocumentPosition(protectionLabel) &
       Node.DOCUMENT_POSITION_FOLLOWING
   ).toBeTruthy()
-  expect(
-    apiUrl.compareDocumentPosition(authentication) &
-      Node.DOCUMENT_POSITION_FOLLOWING
-  ).toBeTruthy()
-  expect(apiUrl).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByText('Bedrock usage metrics')).not.toBeInTheDocument()
 })
 
 test.each([

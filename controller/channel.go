@@ -307,6 +307,25 @@ func GetChannelUsage(c *gin.Context) {
 	common.ApiSuccess(c, service.GetBedrockUsage(ids))
 }
 
+func GetBedrockQuotas(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiErrorT(c, "Invalid channel ID")
+		return
+	}
+	channel, err := model.GetChannelById(id, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result, err := service.GetBedrockModelQuotas(c.Request.Context(), channel)
+	if err != nil {
+		common.ApiErrorT(c, "Failed to query AWS quotas: {{error}}", map[string]any{"error": err.Error()})
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
 func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, error) {
 	var headers http.Header
 	switch channel.Type {

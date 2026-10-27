@@ -300,7 +300,6 @@ export const channelFormSchema = z
     http_protocol: z.enum(['auto', 'http1']).optional(),
     http2_connection_shards: z.number().int().optional(),
     tls_insecure_skip_verify: z.boolean().optional(),
-    bedrock_usage_metrics_enabled: z.boolean().optional(),
     bedrock_rate_limit_enabled: z.boolean().optional(),
     bedrock_rpm: z.number().int().min(0).max(10_000_000).optional(),
     bedrock_tpm: z.number().int().min(0).max(1_000_000_000).optional(),
@@ -571,7 +570,6 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   http_protocol: HTTP_PROTOCOL_AUTO,
   http2_connection_shards: 1,
   tls_insecure_skip_verify: false,
-  bedrock_usage_metrics_enabled: false,
   bedrock_rate_limit_enabled: false,
   bedrock_rpm: 0,
   bedrock_tpm: 0,
@@ -638,7 +636,6 @@ export function transformChannelToFormDefaults(
     http_protocol: HTTP_PROTOCOL_AUTO as 'auto' | 'http1',
     http2_connection_shards: 1,
     tls_insecure_skip_verify: false,
-    bedrock_usage_metrics_enabled: false,
     bedrock_rate_limit_enabled: false,
     bedrock_rpm: 0,
     bedrock_tpm: 0,
@@ -680,8 +677,6 @@ export function transformChannelToFormDefaults(
         http_protocol: protocol,
         http2_connection_shards: protocol === HTTP_PROTOCOL_HTTP1 ? 1 : shards,
         tls_insecure_skip_verify: parsed.tls_insecure_skip_verify === true,
-        bedrock_usage_metrics_enabled:
-          parsed.bedrock_protection?.usage_metrics_enabled === true,
         bedrock_rate_limit_enabled:
           parsed.bedrock_protection?.rate_limit_enabled === true,
         bedrock_rpm: parsed.bedrock_protection?.rpm || 0,
@@ -883,7 +878,6 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
 
   if (formData.type === 33) {
     settingObj.bedrock_protection = {
-      usage_metrics_enabled: formData.bedrock_usage_metrics_enabled === true,
       rate_limit_enabled: formData.bedrock_rate_limit_enabled === true,
       rpm: formData.bedrock_rpm || 0,
       tpm: formData.bedrock_tpm || 0,

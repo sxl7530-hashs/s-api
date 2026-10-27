@@ -7380,8 +7380,6 @@
     "bedrock ramp-up requires a start time and channel rate limits": "Bedrock 段階的増量には開始日時とチャネル制限が必要です",
     "invalid bedrock retry backoff settings": "Bedrock 再試行待機設定が無効です",
     "429 ratio threshold (%)": "429 比率しきい値（%）",
-    "Bedrock usage metrics": "Bedrock 使用量メトリクス",
-    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "任意表示のチャネル表列向けに、チャネルごとの RPM と推定 TPM を収集します。",
     "Minimum sample size": "最小サンプル数",
     "Uses estimated request tokens": "推定リクエストトークンを使用",
     "Selected channel model test": "選択したチャネルの全モデルテスト",
@@ -7451,6 +7449,11 @@
     "AWS Bedrock Passthrough Compatibility": "AWS Bedrock パススルー互換",
     "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "AWS パススルー有効時に対応するクライアントリクエストを変換します。AWS 直接パススルーのユーザーは互換処理を省略します。既定では無効です。",
     "AWS Direct Passthrough": "AWS 直接パススルー",
-    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "このユーザーのみグローバル AWS パススルー互換を省略します。リクエストパススルー有効時のみ適用されます。既定では無効です。"
+    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "このユーザーのみグローバル AWS パススルー互換を省略します。リクエストパススルー有効時のみ適用されます。既定では無効です。",
+    "AWS model quotas": "AWS モデルクォータ",
+    "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "このチャネルのプロキシ経由で AWS Service Quotas の RPM と TPM を読み取り専用で取得します。",
+    "Please fill in the channel proxy before querying AWS quotas": "AWS クォータを照会する前にチャネルのプロキシを入力してください",
+    "Failed to query AWS quotas": "AWS クォータの照会に失敗しました",
+    "AWS region": "AWS リージョン"
   }
 }

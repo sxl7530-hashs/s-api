@@ -104,27 +104,6 @@ describe('Bedrock advanced protection settings', () => {
     ).not.toBeInTheDocument()
   })
 
-  test('keeps the custom API URL collapsed until expanded', async () => {
-    const user = userEvent.setup()
-    render(<SettingsForm onSave={() => undefined} />)
-
-    const trigger = screen.getByRole('button', { name: 'API URL' })
-    expect(trigger).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('textbox', { name: 'API URL' })).toBeNull()
-
-    await user.click(trigger)
-    const input = screen.getByRole('textbox', { name: 'API URL' })
-    expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    await user.type(input, 'https://bedrock-proxy.example')
-
-    await user.click(trigger)
-    expect(screen.queryByRole('textbox', { name: 'API URL' })).toBeNull()
-    await user.click(trigger)
-    expect(screen.getByRole('textbox', { name: 'API URL' })).toHaveValue(
-      'https://bedrock-proxy.example'
-    )
-  })
-
   test('selects unique channel models and saves RPM and TPM in separate fields', async () => {
     const user = userEvent.setup()
     const saved: string[] = []

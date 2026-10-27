@@ -7380,8 +7380,6 @@
     "bedrock ramp-up requires a start time and channel rate limits": "Для роста нагрузки Bedrock нужны время начала и лимиты канала",
     "invalid bedrock retry backoff settings": "Неверные настройки задержки Bedrock",
     "429 ratio threshold (%)": "Порог доли 429 (%)",
-    "Bedrock usage metrics": "Метрики использования Bedrock",
-    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "Собирает RPM и расчётный TPM по каналам для дополнительных столбцов таблицы.",
     "Minimum sample size": "Минимальный размер выборки",
     "Uses estimated request tokens": "Используются оценочные токены запроса",
     "Selected channel model test": "Тест моделей выбранных каналов",
@@ -7451,6 +7449,11 @@
     "AWS Bedrock Passthrough Compatibility": "Совместимость passthrough AWS Bedrock",
     "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "Преобразовывать поддерживаемые запросы клиентов при включённом passthrough AWS. Пользователи с прямым passthrough AWS обходят совместимость. По умолчанию выключено.",
     "AWS Direct Passthrough": "Прямой passthrough AWS",
-    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Обходить глобальную совместимость passthrough AWS для этого пользователя. Действует только при включённом passthrough запросов. По умолчанию выключено."
+    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Обходить глобальную совместимость passthrough AWS для этого пользователя. Действует только при включённом passthrough запросов. По умолчанию выключено.",
+    "AWS model quotas": "Квоты моделей AWS",
+    "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "Получать квоты RPM и TPM AWS в режиме только чтения через прокси этого канала.",
+    "Please fill in the channel proxy before querying AWS quotas": "Укажите прокси канала перед запросом квот AWS",
+    "Failed to query AWS quotas": "Не удалось получить квоты AWS",
+    "AWS region": "Регион AWS"
   }
 }

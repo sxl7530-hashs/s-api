@@ -117,7 +117,6 @@ export interface BedrockProtectionSettings {
   retry_backoff_enabled?: boolean
   retry_backoff_base_ms?: number
   retry_backoff_max_ms?: number
-  usage_metrics_enabled?: boolean
   rate_limit_enabled?: boolean
   rpm?: number
   tpm?: number
@@ -140,6 +139,20 @@ export interface ChannelUsage {
 export interface ChannelUsageResponse {
   success: boolean
   data: Record<string, ChannelUsage>
+}
+
+export interface BedrockModelQuota {
+  model: string
+  rpm?: number
+  tpm?: number
+}
+
+export interface BedrockQuotaResponse {
+  success: boolean
+  data: {
+    region: string
+    models: BedrockModelQuota[]
+  }
 }
 
 export interface ChannelOtherSettings {

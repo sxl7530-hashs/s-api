@@ -7380,8 +7380,6 @@
     "bedrock ramp-up requires a start time and channel rate limits": "bedrock ramp-up requires a start time and channel rate limits",
     "invalid bedrock retry backoff settings": "invalid bedrock retry backoff settings",
     "429 ratio threshold (%)": "429 ratio threshold (%)",
-    "Bedrock usage metrics": "Bedrock usage metrics",
-    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "Collect per-channel RPM and estimated TPM for the optional channel table columns.",
     "Minimum sample size": "Minimum sample size",
     "Uses estimated request tokens": "Uses estimated request tokens",
     "Selected channel model test": "Selected channel model test",
@@ -7451,6 +7449,11 @@
     "AWS Bedrock Passthrough Compatibility": "AWS Bedrock Passthrough Compatibility",
     "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.",
     "AWS Direct Passthrough": "AWS Direct Passthrough",
-    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default."
+    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.",
+    "AWS model quotas": "AWS model quotas",
+    "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.",
+    "Please fill in the channel proxy before querying AWS quotas": "Please fill in the channel proxy before querying AWS quotas",
+    "Failed to query AWS quotas": "Failed to query AWS quotas",
+    "AWS region": "AWS region"
   }
 }

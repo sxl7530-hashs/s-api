@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -17,16 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useState } from 'react'
 import { type UseFormReturn, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { DateTimePicker } from '@/components/datetime-picker'
 import { sideDrawerSwitchItemClassName } from '@/components/drawer-layout'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import { Button } from '@/components/ui/button'
 import {
   FormControl,
   FormDescription,
@@ -37,16 +35,24 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
+import { getBedrockQuotas } from '../api'
 import type { ChannelFormValues } from '../lib/channel-form'
 import { parseModelsString } from '../lib/model-mapping-validation'
+import type { BedrockModelQuota } from '../types'
 import { BedrockModelLimitsEditor } from './bedrock-model-limits-editor'
 
 export function BedrockAdvancedSettings(props: {
   form: UseFormReturn<ChannelFormValues>
   disabled: boolean
+  channelId?: number | null
 }) {
   const { t } = useTranslation()
+  const [quotas, setQuotas] = useState<BedrockModelQuota[]>([])
+  const [quotaRegion, setQuotaRegion] = useState('')
+  const [isLoadingQuotas, setIsLoadingQuotas] = useState(false)
   const [modelEnabled, rampEnabled, backoffEnabled, models] = useWatch({
     control: props.form.control,
     name: [
@@ -56,6 +62,29 @@ export function BedrockAdvancedSettings(props: {
       'models',
     ],
   })
+
+  const handleFetchQuotas = async () => {
+    if (!props.channelId) return
+    if (!props.form.getValues('proxy')?.trim()) {
+      toast.error(
+        t('Please fill in the channel proxy before querying AWS quotas')
+      )
+      return
+    }
+    setIsLoadingQuotas(true)
+    try {
+      const response = requireServerSuccess(
+        await getBedrockQuotas(props.channelId)
+      )
+      setQuotas(response.data.models)
+      setQuotaRegion(response.data.region)
+      toast.success(t('Fetched successfully'))
+    } catch (error) {
+      handleServerError(error, t('Failed to query AWS quotas'))
+    } finally {
+      setIsLoadingQuotas(false)
+    }
+  }
 
   return (
     <div className='space-y-4'>
@@ -120,47 +149,6 @@ export function BedrockAdvancedSettings(props: {
         />
       ))}
 
-      <Collapsible defaultOpen={false}>
-        <CollapsibleTrigger
-          render={
-            <button
-              type='button'
-              className='border-border/60 hover:bg-muted/40 flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm font-medium transition-colors'
-            />
-          }
-        >
-          {t('API URL')}
-          <ChevronDown
-            className='text-muted-foreground size-4 transition-transform group-aria-expanded:rotate-180'
-            aria-hidden='true'
-          />
-        </CollapsibleTrigger>
-        <CollapsibleContent className='border-border/60 mt-2 rounded-md border px-3 py-3'>
-          <FormField
-            control={props.form.control}
-            name='base_url'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('API URL')}</FormLabel>
-                <FormControl>
-                  <Input
-                    placeholder={t('Leave empty to use default')}
-                    disabled={props.disabled}
-                    {...field}
-                  />
-                </FormControl>
-                <FormDescription>
-                  {t(
-                    'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
-                  )}
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </CollapsibleContent>
-      </Collapsible>
-
       {modelEnabled && (
         <FormField
           control={props.form.control}
@@ -180,6 +168,65 @@ export function BedrockAdvancedSettings(props: {
             </FormItem>
           )}
         />
+      )}
+
+      {props.channelId && (
+        <div className='border-border/60 space-y-3 rounded-md border p-3'>
+          <div className='flex items-start justify-between gap-3'>
+            <div className='space-y-0.5'>
+              <div className='text-sm font-medium'>{t('AWS model quotas')}</div>
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.'
+                )}
+              </p>
+            </div>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              onClick={handleFetchQuotas}
+              disabled={props.disabled || isLoadingQuotas}
+            >
+              <RefreshCw
+                className={
+                  isLoadingQuotas ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'
+                }
+                aria-hidden='true'
+              />
+              {isLoadingQuotas ? t('Fetching...') : t('Fetch')}
+            </Button>
+          </div>
+          {quotas.length > 0 && (
+            <div className='overflow-x-auto'>
+              <table className='w-full text-sm'>
+                <thead>
+                  <tr className='text-muted-foreground border-b text-left text-xs'>
+                    <th className='py-2 pr-3 font-medium'>{t('Model')}</th>
+                    <th className='py-2 pr-3 font-medium'>{t('RPM')}</th>
+                    <th className='py-2 font-medium'>{t('TPM')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quotas.map((quota) => (
+                    <tr key={quota.model} className='border-b last:border-0'>
+                      <td className='py-2 pr-3 font-mono text-xs'>
+                        {quota.model}
+                      </td>
+                      <td className='py-2 pr-3 tabular-nums'>
+                        {quota.rpm ?? '—'}
+                      </td>
+                      <td className='py-2 tabular-nums'>{quota.tpm ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className='text-muted-foreground mt-2 text-xs'>
+                {t('AWS region')}: {quotaRegion}
+              </p>
+            </div>
+          )}
+        </div>
       )}
 
       {rampEnabled && (

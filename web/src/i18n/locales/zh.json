@@ -7380,8 +7380,6 @@
     "bedrock ramp-up requires a start time and channel rate limits": "Bedrock 梯度放量须设置开始时间并开启渠道限流",
     "invalid bedrock retry backoff settings": "Bedrock 重试退避配置无效",
     "429 ratio threshold (%)": "429 比例阈值（%）",
-    "Bedrock usage metrics": "Bedrock 用量指标",
-    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "采集每个渠道的 RPM 和预估 TPM，用于可选的渠道列表列。",
     "Minimum sample size": "最小样本数",
     "Uses estimated request tokens": "按预估的请求 Token 计数",
     "Selected channel model test": "所选渠道全模型测试",
@@ -7451,6 +7449,11 @@
     "AWS Bedrock Passthrough Compatibility": "AWS Bedrock 透传兼容",
     "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "开启 AWS 透传时转换支持的客户端请求。启用 AWS 直接透传的用户将跳过兼容处理。默认关闭。",
     "AWS Direct Passthrough": "AWS 直接透传",
-    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "为此用户跳过全局 AWS 透传兼容处理。仅在启用请求透传时生效。默认关闭。"
+    "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "为此用户跳过全局 AWS 透传兼容处理。仅在启用请求透传时生效。默认关闭。",
+    "AWS model quotas": "AWS 模型配额",
+    "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "通过此渠道代理只读查询 AWS Service Quotas 中的模型 RPM 和 TPM 配额。",
+    "Please fill in the channel proxy before querying AWS quotas": "请先填写渠道代理地址，再查询 AWS 配额",
+    "Failed to query AWS quotas": "查询 AWS 配额失败",
+    "AWS region": "AWS 区域"
   }
 }

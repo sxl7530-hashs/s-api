@@ -72,6 +72,11 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import {
   Form,
   FormControl,
   FormDescription,
@@ -3739,6 +3744,28 @@ export function ChannelMutateDrawer({
               <div className='space-y-4'>
                 <FormField
                   control={form.control}
+                  name='base_url'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('API URL')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder={t('Leave empty to use default')}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <Separator />
+                <FormField
+                  control={form.control}
                   name='aws_api_type'
                   render={({ field }) => (
                     <FormItem>
@@ -4001,178 +4028,188 @@ export function ChannelMutateDrawer({
                     )
                   }}
                 />
-                <Separator />
-                <FormField
-                  control={form.control}
-                  name='bedrock_usage_metrics_enabled'
-                  render={({ field }) => (
-                    <FormItem className={sideDrawerSwitchItemClassName()}>
-                      <div className='space-y-0.5'>
-                        <FormLabel>{t('Bedrock usage metrics')}</FormLabel>
-                        <FormDescription>
-                          {t(
-                            'Collect per-channel RPM and estimated TPM for the optional channel table columns.'
-                          )}
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          disabled={sensitiveLocked}
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name='bedrock_rate_limit_enabled'
-                  render={({ field }) => (
-                    <FormItem className={sideDrawerSwitchItemClassName()}>
-                      <div className='space-y-0.5'>
-                        <FormLabel>{t('Bedrock rate protection')}</FormLabel>
-                        <FormDescription>
-                          {t(
-                            'Limit each channel before sending requests to AWS. Redis failures allow traffic through.'
-                          )}
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          disabled={sensitiveLocked}
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                {form.watch('bedrock_rate_limit_enabled') && (
-                  <div className='grid grid-cols-2 gap-3'>
-                    <FormField
-                      control={form.control}
-                      name='bedrock_rpm'
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>{t('RPM limit')}</FormLabel>
-                          <FormControl>
-                            <Input
-                              type='number'
-                              min={0}
-                              disabled={sensitiveLocked}
-                              {...field}
-                              onChange={(event) =>
-                                field.onChange(Number(event.target.value))
-                              }
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            {t('Zero means unlimited')}
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name='bedrock_tpm'
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>{t('TPM limit')}</FormLabel>
-                          <FormControl>
-                            <Input
-                              type='number'
-                              min={0}
-                              disabled={sensitiveLocked}
-                              {...field}
-                              onChange={(event) =>
-                                field.onChange(Number(event.target.value))
-                              }
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            {t('Uses estimated request tokens')}
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                )}
-                <FormField
-                  control={form.control}
-                  name='bedrock_cooldown_enabled'
-                  render={({ field }) => (
-                    <FormItem className={sideDrawerSwitchItemClassName()}>
-                      <div className='space-y-0.5'>
-                        <FormLabel>{t('Bedrock 429 cooldown')}</FormLabel>
-                        <FormDescription>
-                          {t(
-                            'Temporarily bypass this channel after repeated AWS throttling responses.'
-                          )}
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          disabled={sensitiveLocked}
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                {form.watch('bedrock_cooldown_enabled') && (
-                  <div className='grid grid-cols-2 gap-3'>
-                    {(
-                      [
-                        ['bedrock_429_threshold', '429 threshold'],
-                        [
-                          'bedrock_observation_window_seconds',
-                          'Observation window (seconds)',
-                        ],
-                        [
-                          'bedrock_minimum_429_span_seconds',
-                          'Minimum 429 span (seconds)',
-                        ],
-                        ['bedrock_minimum_sample_size', 'Minimum sample size'],
-                        [
-                          'bedrock_throttling_ratio_percent',
-                          '429 ratio threshold (%)',
-                        ],
-                        ['bedrock_cooldown_seconds', 'Cooldown (seconds)'],
-                      ] as const
-                    ).map(([name, label]) => (
-                      <FormField
-                        key={name}
-                        control={form.control}
-                        name={name}
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>{t(label)}</FormLabel>
-                            <FormControl>
-                              <Input
-                                type='number'
-                                min={1}
-                                disabled={sensitiveLocked}
-                                {...field}
-                                onChange={(event) =>
-                                  field.onChange(Number(event.target.value))
-                                }
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
+                <Collapsible defaultOpen={false} className='space-y-4'>
+                  <CollapsibleTrigger
+                    render={
+                      <button
+                        type='button'
+                        className='border-border/60 hover:bg-muted/40 flex w-full items-center justify-between rounded-lg border px-3 py-3 text-left transition-colors'
                       />
-                    ))}
-                  </div>
-                )}
-                <BedrockAdvancedSettings
-                  form={form}
-                  disabled={sensitiveLocked || isSubmitting}
-                />
+                    }
+                  >
+                    <div className='space-y-0.5'>
+                      <div className='text-sm font-medium'>
+                        {t('Bedrock rate protection')}
+                      </div>
+                      <div className='text-muted-foreground text-xs'>
+                        {t(
+                          'Limit each channel before sending requests to AWS. Redis failures allow traffic through.'
+                        )}
+                      </div>
+                    </div>
+                    <ChevronDown
+                      className='text-muted-foreground size-4 transition-transform group-aria-expanded:rotate-180'
+                      aria-hidden='true'
+                    />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className='space-y-4'>
+                    <Separator />
+                    <FormField
+                      control={form.control}
+                      name='bedrock_rate_limit_enabled'
+                      render={({ field }) => (
+                        <FormItem className={sideDrawerSwitchItemClassName()}>
+                          <div className='space-y-0.5'>
+                            <FormLabel>
+                              {t('Bedrock rate protection')}
+                            </FormLabel>
+                            <FormDescription>
+                              {t(
+                                'Limit each channel before sending requests to AWS. Redis failures allow traffic through.'
+                              )}
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              disabled={sensitiveLocked}
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    {form.watch('bedrock_rate_limit_enabled') && (
+                      <div className='grid grid-cols-2 gap-3'>
+                        <FormField
+                          control={form.control}
+                          name='bedrock_rpm'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>{t('RPM limit')}</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type='number'
+                                  min={0}
+                                  disabled={sensitiveLocked}
+                                  {...field}
+                                  onChange={(event) =>
+                                    field.onChange(Number(event.target.value))
+                                  }
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                {t('Zero means unlimited')}
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name='bedrock_tpm'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>{t('TPM limit')}</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type='number'
+                                  min={0}
+                                  disabled={sensitiveLocked}
+                                  {...field}
+                                  onChange={(event) =>
+                                    field.onChange(Number(event.target.value))
+                                  }
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                {t('Uses estimated request tokens')}
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    )}
+                    <FormField
+                      control={form.control}
+                      name='bedrock_cooldown_enabled'
+                      render={({ field }) => (
+                        <FormItem className={sideDrawerSwitchItemClassName()}>
+                          <div className='space-y-0.5'>
+                            <FormLabel>{t('Bedrock 429 cooldown')}</FormLabel>
+                            <FormDescription>
+                              {t(
+                                'Temporarily bypass this channel after repeated AWS throttling responses.'
+                              )}
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              disabled={sensitiveLocked}
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    {form.watch('bedrock_cooldown_enabled') && (
+                      <div className='grid grid-cols-2 gap-3'>
+                        {(
+                          [
+                            ['bedrock_429_threshold', '429 threshold'],
+                            [
+                              'bedrock_observation_window_seconds',
+                              'Observation window (seconds)',
+                            ],
+                            [
+                              'bedrock_minimum_429_span_seconds',
+                              'Minimum 429 span (seconds)',
+                            ],
+                            [
+                              'bedrock_minimum_sample_size',
+                              'Minimum sample size',
+                            ],
+                            [
+                              'bedrock_throttling_ratio_percent',
+                              '429 ratio threshold (%)',
+                            ],
+                            ['bedrock_cooldown_seconds', 'Cooldown (seconds)'],
+                          ] as const
+                        ).map(([name, label]) => (
+                          <FormField
+                            key={name}
+                            control={form.control}
+                            name={name}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>{t(label)}</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type='number'
+                                    min={1}
+                                    disabled={sensitiveLocked}
+                                    {...field}
+                                    onChange={(event) =>
+                                      field.onChange(Number(event.target.value))
+                                    }
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    <BedrockAdvancedSettings
+                      form={form}
+                      disabled={sensitiveLocked || isSubmitting}
+                      channelId={channelId}
+                    />
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
             )}
 
