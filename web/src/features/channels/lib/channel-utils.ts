@@ -54,6 +54,8 @@ export function getChannelTypeIcon(type: number): string {
     58: 'NewAPI', // Advanced Custom
     59: 'Sub2API', // Sub2API
     60: 'NewAPI', // New API
+    62: 'Vllm', // vLLM
+    63: 'SGLang', // SGLang
     3: 'Azure', // Azure
 
     // Anthropic
@@ -102,7 +104,7 @@ export function getChannelTypeIcon(type: number): string {
     52: 'Vidu', // Vidu
     36: 'Suno', // SunoAPI
     55: 'OpenAI', // Sora
-    54: 'Doubao', // DoubaoVideo
+    54: 'Doubao', // Doubao
     56: 'Replicate', // Replicate
 
     // Tools & Platforms
@@ -659,6 +661,8 @@ export function aggregateChannelsByTag(
         created_time: 0,
         balance_updated_time: 0,
         models: '',
+        rpm: 0,
+        tpm: 0,
         children: [],
       } as TagRow
       tagMap.set(tag, tagRow)
@@ -676,6 +680,15 @@ export function aggregateChannelsByTag(
 
     // Aggregate used_quota (sum)
     tagRow.used_quota += channel.used_quota
+
+    tagRow.rpm =
+      tagRow.rpm == null || channel.rpm == null
+        ? undefined
+        : tagRow.rpm + channel.rpm
+    tagRow.tpm =
+      tagRow.tpm == null || channel.tpm == null
+        ? undefined
+        : tagRow.tpm + channel.tpm
 
     // Aggregate response_time (average)
     tagRow.response_time =

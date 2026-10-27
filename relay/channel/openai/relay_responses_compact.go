@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"io"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
@@ -15,7 +14,7 @@ import (
 func OaiResponsesCompactionHandler(c *gin.Context, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := service.ReadResponseBodyLimited(resp, 0)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
@@ -38,6 +37,7 @@ func OaiResponsesCompactionHandler(c *gin.Context, resp *http.Response) (*dto.Us
 		if compactResp.Usage.InputTokensDetails != nil {
 			usage.PromptTokensDetails.CachedTokens = compactResp.Usage.InputTokensDetails.CachedTokens
 			usage.PromptTokensDetails.CacheWriteTokens = compactResp.Usage.InputTokensDetails.CacheWriteTokens
+			usage.PromptTokensDetails.CacheWriteTokensDetails = compactResp.Usage.InputTokensDetails.CacheWriteTokensDetails
 		}
 	}
 

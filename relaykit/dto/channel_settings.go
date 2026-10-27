@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -11,19 +12,83 @@ import (
 )
 
 type ChannelSettings struct {
-	TaskPluginKey          string `json:"task_plugin_key,omitempty"`
-	ForceFormat            bool   `json:"force_format,omitempty"`
-	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
-	Proxy                  string `json:"proxy"`
-	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
-	SystemPrompt           string `json:"system_prompt,omitempty"`
-	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
+	TaskPluginKey             string `json:"task_plugin_key,omitempty"`
+	ForceFormat               bool   `json:"force_format,omitempty"`
+	ThinkingToContent         bool   `json:"thinking_to_content,omitempty"`
+	Proxy                     string `json:"proxy"`
+	PassThroughBodyEnabled    bool   `json:"pass_through_body_enabled,omitempty"`
+	ResponsesWebSocketEnabled bool   `json:"responses_websocket_enabled,omitempty"`
+	SystemPrompt              string `json:"system_prompt,omitempty"`
+	SystemPromptOverride      bool   `json:"system_prompt_override,omitempty"`
+	// TaskExtendPluginKeys lists the task plugins a New API channel (type 60)
+	// is extended with. The upstream gateway may host many plugins, so the
+	// channel serves every listed plugin's models while the request still pins
+	// the executing plugin. TaskPluginKey remains the single type-61 binding
+	// and stays valid on a New API channel as well.
+	TaskExtendPluginKeys []string `json:"task_extend_plugin_keys,omitempty"`
 	// HTTPProtocol controls outbound HTTP version negotiation for this channel.
 	// Accepted values: "", "auto" (default), "http1".
 	HTTPProtocol string `json:"http_protocol,omitempty"`
 	// HTTP2ConnectionShards spreads HTTP/2 traffic across N independent transports
 	// (1-8). Zero/unset means 1. Ignored when HTTPProtocol is "http1".
 	HTTP2ConnectionShards int `json:"http2_connection_shards,omitempty"`
+	// TLSInsecureSkipVerify accepts upstream certificates that fail
+	// verification, such as self-signed ones, for this channel only.
+	TLSInsecureSkipVerify bool                       `json:"tls_insecure_skip_verify,omitempty"`
+	BedrockProtection     *BedrockProtectionSettings `json:"bedrock_protection,omitempty"`
+}
+
+type BedrockProtectionSettings struct {
+	ModelRateLimitEnabled     bool                         `json:"model_rate_limit_enabled,omitempty"`
+	ModelLimits               map[string]BedrockModelLimit `json:"model_limits,omitempty"`
+	RampUpEnabled             bool                         `json:"ramp_up_enabled,omitempty"`
+	RampUpStartUnix           int64                        `json:"ramp_up_start_unix,omitempty"`
+	RampUpDays                int                          `json:"ramp_up_days,omitempty"`
+	RampUpInitialPercent      int                          `json:"ramp_up_initial_percent,omitempty"`
+	RetryBackoffEnabled       bool                         `json:"retry_backoff_enabled,omitempty"`
+	RetryBackoffBaseMS        int                          `json:"retry_backoff_base_ms,omitempty"`
+	RetryBackoffMaxMS         int                          `json:"retry_backoff_max_ms,omitempty"`
+	UsageMetricsEnabled       bool                         `json:"usage_metrics_enabled,omitempty"`
+	RateLimitEnabled          bool                         `json:"rate_limit_enabled,omitempty"`
+	RPM                       int                          `json:"rpm,omitempty"`
+	TPM                       int                          `json:"tpm,omitempty"`
+	ThrottlingCooldownEnabled bool                         `json:"throttling_cooldown_enabled,omitempty"`
+	Consecutive429Threshold   int                          `json:"consecutive_429_threshold,omitempty"`
+	ObservationWindowSeconds  int                          `json:"observation_window_seconds,omitempty"`
+	Minimum429SpanSeconds     int                          `json:"minimum_429_span_seconds,omitempty"`
+	MinimumSampleSize         int                          `json:"minimum_sample_size,omitempty"`
+	ThrottlingRatioPercent    int                          `json:"throttling_ratio_percent,omitempty"`
+	CooldownSeconds           int                          `json:"cooldown_seconds,omitempty"`
+}
+
+type BedrockModelLimit struct {
+	RPM int `json:"rpm,omitempty"`
+	TPM int `json:"tpm,omitempty"`
+}
+
+// BindsTaskPlugin reports whether the channel is bound to the task plugin,
+// either through the single binding or the New API extension list.
+func (s ChannelSettings) BindsTaskPlugin(key string) bool {
+	if key == "" {
+		return false
+	}
+	return s.TaskPluginKey == key || slices.Contains(s.TaskExtendPluginKeys, key)
+}
+
+// TaskPluginBindings returns the sorted, de-duplicated set of task plugins the
+// channel binds through either field, so callers can compare bindings as a set.
+func (s ChannelSettings) TaskPluginBindings() []string {
+	bindings := make([]string, 0, len(s.TaskExtendPluginKeys)+1)
+	if s.TaskPluginKey != "" {
+		bindings = append(bindings, s.TaskPluginKey)
+	}
+	for _, key := range s.TaskExtendPluginKeys {
+		if key != "" && !slices.Contains(bindings, key) {
+			bindings = append(bindings, key)
+		}
+	}
+	slices.Sort(bindings)
+	return bindings
 }
 
 const (
@@ -49,6 +114,66 @@ func (s *ChannelSettings) ValidateHTTPTransport() error {
 	if protocol == HTTPProtocolHTTP1 && s.HTTP2ConnectionShards > 1 {
 		return fmt.Errorf("http2_connection_shards must be 1 when http_protocol is http1")
 	}
+	if p := s.BedrockProtection; p != nil {
+		if len(p.ModelLimits) > 200 {
+			return fmt.Errorf("invalid bedrock model limits")
+		}
+		for name, limit := range p.ModelLimits {
+			if strings.TrimSpace(name) == "" || name != strings.TrimSpace(name) || len(name) > 512 || limit.RPM < 0 || limit.RPM > 10_000_000 || limit.TPM < 0 || limit.TPM > 1_000_000_000 {
+				return fmt.Errorf("invalid bedrock model limits")
+			}
+		}
+		if p.RampUpDays < 0 || p.RampUpDays > 7 || p.RampUpInitialPercent < 0 || p.RampUpInitialPercent > 100 || p.RampUpStartUnix < 0 || p.RampUpStartUnix > 253402300799 {
+			return fmt.Errorf("invalid bedrock ramp-up settings")
+		}
+		if p.RampUpEnabled && (p.RampUpStartUnix == 0 || !p.RateLimitEnabled || (p.RPM == 0 && p.TPM == 0)) {
+			return fmt.Errorf("bedrock ramp-up requires a start time and channel rate limits")
+		}
+		baseMS, maxMS := p.RetryBackoffBaseMS, p.RetryBackoffMaxMS
+		if baseMS == 0 {
+			baseMS = 200
+		}
+		if maxMS == 0 {
+			maxMS = 2000
+		}
+		if baseMS < 1 || maxMS < baseMS || maxMS > 10000 {
+			return fmt.Errorf("invalid bedrock retry backoff settings")
+		}
+		if p.RPM < 0 || p.RPM > 10_000_000 || p.TPM < 0 || p.TPM > 1_000_000_000 {
+			return fmt.Errorf("invalid bedrock protection rpm/tpm")
+		}
+		if p.Consecutive429Threshold < 0 || p.Consecutive429Threshold > 100 || p.ObservationWindowSeconds < 0 || p.ObservationWindowSeconds > 86400 || p.Minimum429SpanSeconds < 0 || p.MinimumSampleSize < 0 || p.MinimumSampleSize > 10000 || p.ThrottlingRatioPercent < 0 || p.ThrottlingRatioPercent > 100 || p.CooldownSeconds < 0 || p.CooldownSeconds > 86400 {
+			return fmt.Errorf("invalid bedrock protection cooldown settings")
+		}
+		if p.ThrottlingCooldownEnabled {
+			threshold := p.Consecutive429Threshold
+			if threshold == 0 {
+				threshold = 3
+			}
+			window := p.ObservationWindowSeconds
+			if window == 0 {
+				window = 60
+			}
+			minimumSpan := p.Minimum429SpanSeconds
+			if minimumSpan == 0 {
+				minimumSpan = 1
+			}
+			if threshold < 2 || minimumSpan > window {
+				return fmt.Errorf("invalid bedrock protection cooldown settings")
+			}
+			minimumSamples := p.MinimumSampleSize
+			if minimumSamples == 0 {
+				minimumSamples = 20
+			}
+			ratioPercent := p.ThrottlingRatioPercent
+			if ratioPercent == 0 {
+				ratioPercent = 50
+			}
+			if minimumSamples < 2 || ratioPercent < 1 {
+				return fmt.Errorf("invalid bedrock protection cooldown settings")
+			}
+		}
+	}
 	return nil
 }
 
@@ -66,9 +191,17 @@ const (
 	AwsKeyTypeApiKey AwsKeyType = "api_key"
 )
 
+type AwsApiType string
+
+const (
+	AwsApiTypeInvokeModel AwsApiType = "invoke_model"
+	AwsApiTypeMantle      AwsApiType = "mantle"
+)
+
 type ChannelOtherSettings struct {
 	AzureResponsesVersion                 string                `json:"azure_responses_version,omitempty"`
-	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"` // "json" or "api_key"
+	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"`   // "json" or "api_key"
+	VertexProjectID                       string                `json:"vertex_project_id,omitempty"` // 仅当 vertex_key_type=api_key 时使用；JSON 模式下从 service account 解析
 	OpenRouterEnterprise                  *bool                 `json:"openrouter_enterprise,omitempty"`
 	ClaudeBetaQuery                       bool                  `json:"claude_beta_query,omitempty"`          // Claude 渠道是否强制追加 ?beta=true
 	AllowServiceTier                      bool                  `json:"allow_service_tier,omitempty"`         // 是否允许 service_tier 透传（默认过滤以避免额外计费）
@@ -79,6 +212,7 @@ type ChannelOtherSettings struct {
 	AllowIncludeObfuscation               bool                  `json:"allow_include_obfuscation,omitempty"`  // 是否允许 stream_options.include_obfuscation 透传（默认过滤以避免关闭流混淆保护）
 	DisableTaskPollingSleep               bool                  `json:"disable_task_polling_sleep,omitempty"` // 是否跳过异步任务轮询间隔
 	AwsKeyType                            AwsKeyType            `json:"aws_key_type,omitempty"`
+	AwsApiType                            AwsApiType            `json:"aws_api_type,omitempty"`
 	UpstreamModelUpdateCheckEnabled       bool                  `json:"upstream_model_update_check_enabled,omitempty"`        // 是否检测上游模型更新
 	UpstreamModelUpdateAutoSyncEnabled    bool                  `json:"upstream_model_update_auto_sync_enabled,omitempty"`    // 是否自动同步上游模型更新
 	UpstreamModelUpdateLastCheckTime      int64                 `json:"upstream_model_update_last_check_time,omitempty"`      // 上次检测时间
@@ -86,6 +220,10 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateLastRemovedModels  []string              `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
 	UpstreamModelUpdateIgnoredModels      []string              `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
 	AdvancedCustom                        *AdvancedCustomConfig `json:"advanced_custom,omitempty"`
+	// OllamaOpenAIChat routes Ollama chat completions to the OpenAI-compatible
+	// /v1/chat/completions endpoint. When unset, chat completions keep using
+	// the native /api/chat protocol.
+	OllamaOpenAIChat bool `json:"ollama_openai_chat,omitempty"`
 	// ToolLossPolicy is a channel-level opt-in for request-phase conversion
 	// rejection. Empty follows the default allow policy. Accepted values:
 	// "", "allow", "safe", "strict".
@@ -114,6 +252,7 @@ func (s *ChannelOtherSettings) ValidateToolLossPolicy() error {
 }
 
 const (
+	AdvancedCustomConverterSGLangRerank                = "jina_rerank_to_sglang"
 	advancedCustomConverterNone                        = "none"
 	advancedCustomConverterClaudeMessagesToOpenAIChat  = "anthropic_messages_to_openai_chat_completions"
 	advancedCustomConverterOpenAIChatToClaudeMessages  = "openai_chat_completions_to_anthropic_messages"
@@ -122,6 +261,10 @@ const (
 	advancedCustomConverterOpenAIResponsesToGemini     = "openai_responses_to_gemini_generate_content"
 	advancedCustomConverterGeminiContentToOpenAIChat   = "gemini_generate_content_to_openai_chat_completions"
 	advancedCustomConverterOpenAIChatToGeminiContent   = "openai_chat_completions_to_gemini_generate_content"
+	// Same values as relayconvert.ConverterClaudeMessagesToOpenAIResponses and
+	// relayconvert.ConverterGeminiContentToOpenAIResponses.
+	advancedCustomConverterClaudeMessagesToOpenAIResponses = "claude_messages_to_openai_responses"
+	advancedCustomConverterGeminiContentToOpenAIResponses  = "gemini_generate_content_to_openai_responses"
 )
 
 const (
@@ -135,11 +278,22 @@ type AdvancedCustomConfig struct {
 }
 
 type AdvancedCustomRoute struct {
-	IncomingPath string                   `json:"incoming_path,omitempty"`
-	UpstreamPath string                   `json:"upstream_path,omitempty"`
-	Converter    string                   `json:"converter,omitempty"`
-	Models       []string                 `json:"models,omitempty"`
-	Auth         *AdvancedCustomRouteAuth `json:"auth,omitempty"`
+	IncomingPath           string                   `json:"incoming_path,omitempty"`
+	UpstreamPath           string                   `json:"upstream_path,omitempty"`
+	Converter              string                   `json:"converter,omitempty"`
+	Models                 []string                 `json:"models,omitempty"`
+	Auth                   *AdvancedCustomRouteAuth `json:"auth,omitempty"`
+	PassThroughBodyEnabled bool                     `json:"pass_through_body_enabled,omitempty"`
+}
+
+// SupportsPassThroughBody reports whether the route converter leaves the request body untouched.
+func (r AdvancedCustomRoute) SupportsPassThroughBody() bool {
+	switch strings.TrimSpace(r.Converter) {
+	case "", advancedCustomConverterNone, AdvancedCustomConverterSGLangRerank:
+		return true
+	default:
+		return false
+	}
 }
 
 type AdvancedCustomRouteAuth struct {
@@ -158,6 +312,8 @@ const (
 	advancedCustomEndpointPathOpenAIResponses        = "/v1/responses"
 	advancedCustomEndpointPathOpenAIResponsesCompact = "/v1/responses/compact"
 	advancedCustomEndpointPathOpenAIAlphaSearch      = "/v1/alpha/search"
+	advancedCustomEndpointPathDeepSeekToolsSearch    = "/v1/tools/search"
+	advancedCustomEndpointPathDeepSeekToolsFetch     = "/v1/tools/fetch"
 	advancedCustomEndpointPathClaudeMessages         = "/v1/messages"
 	advancedCustomEndpointPathJinaRerank             = "/v1/rerank"
 	advancedCustomEndpointPathImageGeneration        = "/v1/images/generations"
@@ -170,6 +326,14 @@ const (
 	// AdvancedCustomBalancePath identifies the optional balance lookup route used by channel management.
 	AdvancedCustomBalancePath = "/v1/dashboard/billing/credit_grants"
 )
+
+// IsNative reports whether the route forwards requests without protocol
+// conversion. Validate normalizes an empty converter to none, but callers may
+// see configurations that were never saved.
+func (r AdvancedCustomRoute) IsNative() bool {
+	converter := strings.TrimSpace(r.Converter)
+	return converter == "" || converter == advancedCustomConverterNone
+}
 
 // MatchPath returns the first route whose IncomingPath matches requestPath.
 // Matching mirrors the relay adaptor: exact match, {model} placeholder, and
@@ -275,6 +439,10 @@ func advancedCustomEndpointTypeFromIncomingPath(incomingPath string) (types.Endp
 		return types.EndpointTypeOpenAIResponseCompact, true
 	case advancedCustomEndpointPathOpenAIAlphaSearch:
 		return types.EndpointTypeOpenAIAlphaSearch, true
+	case advancedCustomEndpointPathDeepSeekToolsSearch:
+		return types.EndpointTypeDeepSeekToolsSearch, true
+	case advancedCustomEndpointPathDeepSeekToolsFetch:
+		return types.EndpointTypeDeepSeekToolsFetch, true
 	case advancedCustomEndpointPathClaudeMessages:
 		return types.EndpointTypeAnthropic, true
 	case advancedCustomEndpointPathJinaRerank:
@@ -373,13 +541,16 @@ func matchAdvancedCustomIncomingPathTemplate(configuredPath string, requestPath 
 func IsAdvancedCustomConverterAllowed(converter string) bool {
 	switch converter {
 	case advancedCustomConverterNone,
+		AdvancedCustomConverterSGLangRerank,
 		advancedCustomConverterClaudeMessagesToOpenAIChat,
 		advancedCustomConverterOpenAIChatToClaudeMessages,
 		advancedCustomConverterOpenAIChatToOpenAIResponses,
 		advancedCustomConverterOpenAIResponsesToOpenAIChat,
 		advancedCustomConverterOpenAIResponsesToGemini,
 		advancedCustomConverterGeminiContentToOpenAIChat,
-		advancedCustomConverterOpenAIChatToGeminiContent:
+		advancedCustomConverterOpenAIChatToGeminiContent,
+		advancedCustomConverterClaudeMessagesToOpenAIResponses,
+		advancedCustomConverterGeminiContentToOpenAIResponses:
 		return true
 	default:
 		return false
@@ -438,6 +609,9 @@ func (c *AdvancedCustomConfig) Validate() error {
 			if strings.Contains(upstreamPath, advancedCustomModelPlaceholder) {
 				return fmt.Errorf("advanced_custom.advanced_routes[%d].upstream_path must not contain %s for %s", i, advancedCustomModelPlaceholder, managementRouteName)
 			}
+			if route.PassThroughBodyEnabled {
+				return fmt.Errorf("advanced_custom.advanced_routes[%d].pass_through_body_enabled must be false for %s", i, managementRouteName)
+			}
 		}
 		if err := validateAdvancedCustomRouteModels(i, route.IncomingPath, route.Models, paths); err != nil {
 			return err
@@ -455,6 +629,9 @@ func (c *AdvancedCustomConfig) Validate() error {
 		}
 		if err := validateAdvancedCustomConverterPath(i, route.IncomingPath, route.Converter); err != nil {
 			return err
+		}
+		if route.PassThroughBodyEnabled && !route.SupportsPassThroughBody() {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].pass_through_body_enabled requires converter none: %s", i, route.Converter)
 		}
 		if err := validateAdvancedCustomRouteAuth(i, route.Auth); err != nil {
 			return err
@@ -556,6 +733,9 @@ func validateAdvancedCustomUpstreamTarget(index int, upstreamPath string) error 
 }
 
 func validateAdvancedCustomConverterPath(index int, incomingPath string, converter string) error {
+	if converter == AdvancedCustomConverterSGLangRerank && (incomingPath == "/v1/rerank" || incomingPath == "/rerank") {
+		return nil
+	}
 	if incomingPath == advancedCustomEndpointPathOpenAIAlphaSearch {
 		if converter == advancedCustomConverterNone {
 			return nil
@@ -565,7 +745,8 @@ func validateAdvancedCustomConverterPath(index int, incomingPath string, convert
 	switch converter {
 	case advancedCustomConverterNone:
 		return nil
-	case advancedCustomConverterClaudeMessagesToOpenAIChat:
+	case advancedCustomConverterClaudeMessagesToOpenAIChat,
+		advancedCustomConverterClaudeMessagesToOpenAIResponses:
 		if incomingPath == "/v1/messages" {
 			return nil
 		}
@@ -583,7 +764,8 @@ func validateAdvancedCustomConverterPath(index int, incomingPath string, convert
 		if incomingPath == "/v1/responses" {
 			return nil
 		}
-	case advancedCustomConverterGeminiContentToOpenAIChat:
+	case advancedCustomConverterGeminiContentToOpenAIChat,
+		advancedCustomConverterGeminiContentToOpenAIResponses:
 		if strings.Contains(incomingPath, ":generateContent") || strings.Contains(incomingPath, ":streamGenerateContent") {
 			return nil
 		}

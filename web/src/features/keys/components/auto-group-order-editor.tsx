@@ -16,22 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  ArrowDown01Icon,
-  ArrowRight01Icon,
-  ArrowUp01Icon,
-  Cancel01Icon,
-  Drag01Icon,
-} from '@hugeicons/core-free-icons'
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Reorder } from 'motion/react'
-import {
-  useMemo,
-  type ComponentProps,
-  type KeyboardEvent,
-} from 'react'
+import { useMemo, type ComponentProps } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { AutoGroupOrderItem } from '@/components/auto-group-order-item'
 import { Button } from '@/components/ui/button'
 import {
   Empty,
@@ -56,93 +47,6 @@ type AutoGroupOrderEditorProps = Omit<ComponentProps<'div'>, 'onChange'> & {
   onChange: (value: { groups: string[]; mode: 'inherit' | 'custom' }) => void
   'data-slot'?: string
   'data-form-root'?: string
-}
-
-type AutoGroupOrderItemProps = {
-  group: string
-  index: number
-  count: number
-  onMove: (index: number, direction: 'up' | 'down') => void
-  onRemove: (group: string) => void
-}
-
-function AutoGroupOrderItem(props: AutoGroupOrderItemProps) {
-  const { t } = useTranslation()
-
-  const handleDragKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      props.onMove(props.index, 'up')
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      props.onMove(props.index, 'down')
-    }
-  }
-
-  return (
-    <Reorder.Item
-      value={props.group}
-      className='bg-background flex cursor-grab touch-none items-center gap-2 rounded-lg border p-2 active:cursor-grabbing'
-    >
-      <Button
-        type='button'
-        variant='ghost'
-        size='icon-sm'
-        className='text-muted-foreground cursor-grab touch-none font-mono active:cursor-grabbing'
-        aria-label={t('Drag {{group}} to reorder', { group: props.group })}
-        onKeyDown={handleDragKeyDown}
-      >
-        <HugeiconsIcon icon={Drag01Icon} strokeWidth={2} aria-hidden='true' />
-      </Button>
-      <span className='min-w-0 flex-1 truncate text-sm font-medium'>
-        {props.group}
-      </span>
-      <div className='flex shrink-0 gap-1'>
-        <Button
-          type='button'
-          variant='ghost'
-          size='icon-sm'
-          disabled={props.index === 0}
-          aria-label={t('Move {{group}} up', { group: props.group })}
-          onClick={() => props.onMove(props.index, 'up')}
-        >
-          <HugeiconsIcon
-            icon={ArrowUp01Icon}
-            strokeWidth={2}
-            aria-hidden='true'
-          />
-        </Button>
-        <Button
-          type='button'
-          variant='ghost'
-          size='icon-sm'
-          disabled={props.index === props.count - 1}
-          aria-label={t('Move {{group}} down', { group: props.group })}
-          onClick={() => props.onMove(props.index, 'down')}
-        >
-          <HugeiconsIcon
-            icon={ArrowDown01Icon}
-            strokeWidth={2}
-            aria-hidden='true'
-          />
-        </Button>
-        <Button
-          type='button'
-          variant='ghost'
-          size='icon-sm'
-          aria-label={t('Remove {{group}}', { group: props.group })}
-          onClick={() => props.onRemove(props.group)}
-        >
-          <HugeiconsIcon
-            icon={Cancel01Icon}
-            strokeWidth={2}
-            aria-hidden='true'
-          />
-        </Button>
-      </div>
-    </Reorder.Item>
-  )
 }
 
 export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
@@ -190,7 +94,7 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
       data-form-root={props['data-form-root']}
       role='group'
       tabIndex={-1}
-      aria-label={props['aria-label'] || t('Group order')}
+      aria-label={props['aria-label'] || t('Auto group order')}
       aria-describedby={props['aria-describedby']}
       aria-invalid={props['aria-invalid']}
       className={cn('flex flex-col gap-3', props.className)}
@@ -198,7 +102,7 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
       <div className='flex items-center justify-between gap-3'>
         <p className='text-muted-foreground text-xs' aria-live='polite'>
           {isInheriting
-            ? t('Using the configured group order ({{count}} groups)', {
+            ? t('Using the complete global Auto order ({{count}} groups)', {
                 count: props.globalOptions.length,
               })
             : t('{{count}} / {{max}} groups selected', {
@@ -215,7 +119,7 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
             props.onChange({ groups: [], mode: 'inherit' })
           }}
         >
-          {t('Restore configured order')}
+          {t('Restore global Auto')}
         </Button>
       </div>
 
@@ -226,7 +130,7 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
         placeholder={
           atLimit
             ? t('Maximum {{max}} groups selected', { max: maxCount })
-            : t('Add group')
+            : t('Add Auto group')
         }
         disabled={atLimit || candidates.length === 0}
       />
@@ -234,9 +138,9 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
       {isInheriting && props.globalOptions.length === 0 && (
         <Empty className='min-h-28 border'>
           <EmptyHeader>
-            <EmptyTitle>{t('Use configured group order')}</EmptyTitle>
+            <EmptyTitle>{t('Inherit global Auto order')}</EmptyTitle>
             <EmptyDescription>
-              {t('No available groups in the configured order.')}
+              {t('No available groups in the global Auto order.')}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -245,7 +149,7 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
       {isInheriting && props.globalOptions.length > 0 && (
         <ol
           data-slot='global-auto-order'
-          aria-label={t('Use configured group order')}
+          aria-label={t('Inherit global Auto order')}
           className='flex max-h-24 flex-wrap content-start gap-1.5 overflow-y-auto'
         >
           {props.globalOptions.map((option, index) => (
@@ -295,10 +199,10 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
       {!isInheriting && props.value.length === 0 && (
         <Empty className='min-h-24 border'>
           <EmptyHeader>
-          <EmptyTitle>{t('Group order')}</EmptyTitle>
+            <EmptyTitle>{t('Auto group order')}</EmptyTitle>
             <EmptyDescription>
               {t(
-                'No groups selected. Add a group or restore the configured order.'
+                'No valid custom Auto groups remain. Add a group or restore global Auto.'
               )}
             </EmptyDescription>
           </EmptyHeader>

@@ -23,6 +23,7 @@ export { BadgeListCell } from './core/badge-list-cell'
 export { TruncatedCell } from './core/truncated-cell'
 export { DataTableViewOptions } from './toolbar/view-options'
 export { DataTableToolbar } from './toolbar/toolbar'
+export { DataTableMobileFilterPanel } from './toolbar/mobile-filter-panel'
 export { DataTableBulkActions } from './toolbar/bulk-actions'
 export {
   StaticDataTable,
@@ -54,7 +55,7 @@ export {
   DataTableViewModeToggle,
   type DataTableViewModeToggleProps,
 } from './toolbar/view-mode-toggle'
-export { useDataTable } from './hooks/use-data-table'
+export { useDataTable, readColumnVisibility } from './hooks/use-data-table'
 export {
   useDataTableViewMode,
   DATA_TABLE_VIEW_MODES,

@@ -72,6 +72,8 @@ export const channelSchema = z.object({
     multi_key_mode: 'random',
   }),
   settings: z.string().default('{}'), // other_settings JSON
+  rpm: z.number().optional(),
+  tpm: z.number().optional(),
 })
 
 export type Channel = z.infer<typeof channelSchema>
@@ -90,21 +92,76 @@ export interface ChannelCostRatioHistory {
 // ============================================================================
 
 export interface ChannelSettings {
+  task_plugin_key?: string
+  task_extend_plugin_keys?: string[]
   force_format?: boolean
   thinking_to_content?: boolean
   proxy?: string
   pass_through_body_enabled?: boolean
+  responses_websocket_enabled?: boolean
   system_prompt?: string
   system_prompt_override?: boolean
   http_protocol?: 'auto' | 'http1' | string
   http2_connection_shards?: number
+  tls_insecure_skip_verify?: boolean
+  bedrock_protection?: BedrockProtectionSettings
+}
+
+export interface BedrockProtectionSettings {
+  model_rate_limit_enabled?: boolean
+  model_limits?: Record<string, { rpm?: number; tpm?: number }>
+  ramp_up_enabled?: boolean
+  ramp_up_start_unix?: number
+  ramp_up_days?: number
+  ramp_up_initial_percent?: number
+  retry_backoff_enabled?: boolean
+  retry_backoff_base_ms?: number
+  retry_backoff_max_ms?: number
+  rate_limit_enabled?: boolean
+  rpm?: number
+  tpm?: number
+  throttling_cooldown_enabled?: boolean
+  consecutive_429_threshold?: number
+  observation_window_seconds?: number
+  minimum_429_span_seconds?: number
+  minimum_sample_size?: number
+  throttling_ratio_percent?: number
+  cooldown_seconds?: number
+}
+
+export interface ChannelUsage {
+  rpm: number
+  tpm: number
+  available: boolean
+  tpm_unavailable?: boolean
+}
+
+export interface ChannelUsageResponse {
+  success: boolean
+  data: Record<string, ChannelUsage>
+}
+
+export interface BedrockModelQuota {
+  model: string
+  rpm?: number
+  tpm?: number
+}
+
+export interface BedrockQuotaResponse {
+  success: boolean
+  data: {
+    region: string
+    models: BedrockModelQuota[]
+  }
 }
 
 export interface ChannelOtherSettings {
   azure_responses_version?: string
   vertex_key_type?: 'json' | 'api_key'
+  vertex_project_id?: string
   openrouter_enterprise?: boolean
   aws_key_type?: 'ak_sk' | 'api_key'
+  aws_api_type?: 'invoke_model' | 'mantle'
   allow_service_tier?: boolean
   disable_store?: boolean
   allow_safety_identifier?: boolean
@@ -112,6 +169,7 @@ export interface ChannelOtherSettings {
   allow_inference_geo?: boolean
   allow_speed?: boolean
   claude_beta_query?: boolean
+  ollama_openai_chat?: boolean
   disable_task_polling_sleep?: boolean
   upstream_model_update_check_enabled?: boolean
   upstream_model_update_auto_sync_enabled?: boolean
@@ -131,6 +189,7 @@ export interface AdvancedCustomRoute {
   converter?: AdvancedCustomConverter
   models?: string[]
   auth?: AdvancedCustomRouteAuth
+  pass_through_body_enabled?: boolean
 }
 
 export interface AdvancedCustomRouteAuth {
@@ -148,6 +207,8 @@ export type AdvancedCustomConverter =
   | 'openai_responses_to_gemini_generate_content'
   | 'gemini_generate_content_to_openai_chat_completions'
   | 'openai_chat_completions_to_gemini_generate_content'
+  | 'claude_messages_to_openai_responses'
+  | 'gemini_generate_content_to_openai_responses'
 
 export type AdvancedCustomAuthType = 'none' | 'header' | 'query'
 
@@ -188,6 +249,10 @@ export interface ChannelOpsResponse {
   message?: string
   data?: {
     retry_times: number
+    request_policy?: {
+      automatic_disable: boolean
+      source: string
+    }
   }
 }
 

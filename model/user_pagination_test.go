@@ -64,3 +64,25 @@ func TestSearchUsersSortsBeforePagination(t *testing.T) {
 	assert.Equal(t, int64(42), total)
 	assert.Equal(t, []int{21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40}, collectUserIDs(users))
 }
+
+func TestSearchUsersMatchesRemark(t *testing.T) {
+	truncateTables(t)
+	user := &User{
+		Username:    "remark-user",
+		Password:    "password123",
+		DisplayName: "Remark User",
+		Email:       "remark@example.com",
+		Remark:      "priority customer",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AffCode:     "remark-aff",
+	}
+	require.NoError(t, DB.Create(user).Error)
+
+	users, total, err := SearchUsers("priority", "", nil, nil, 0, 20)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	require.Len(t, users, 1)
+	assert.Equal(t, user.Id, users[0].Id)
+}

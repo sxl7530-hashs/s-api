@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -292,7 +293,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	//// 创建一个用于日志的 info 副本，移除 ApiKey
 	//logInfo := info
 	//logInfo.ApiKey = ""
-	common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
+	common.SysLog(common.LogText("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
 
 	priceData, err := helper.ModelPriceHelper(c, info, 0, request.GetTokenCountMeta())
 	if err != nil {
@@ -446,7 +447,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		httpResp = resp.(*http.Response)
 		if httpResp.StatusCode != http.StatusOK {
 			err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
-			common.SysError(fmt.Sprintf(
+			common.SysError(common.LogText(
 				"channel test bad response: channel_id=%d name=%s type=%d model=%s endpoint_type=%s status=%d err=%v",
 				channel.Id,
 				channel.Name,
@@ -507,15 +508,15 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		PromptTokens:     usage.PromptTokens,
 		CompletionTokens: usage.CompletionTokens,
 		ModelName:        info.OriginModelName,
-		TokenName:        "模型测试",
+		TokenName:        "Model test",
 		Quota:            quota,
-		Content:          "模型测试",
+		Content:          []*common.Message{common.NewMessage("Model test")},
 		UseTimeSeconds:   int(consumedTime),
 		IsStream:         info.IsStream,
 		Group:            info.UsingGroup,
 		Other:            other,
 	})
-	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	common.SysLog(common.LogText("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return testResult{
 		context:     c,
 		localErr:    nil,
@@ -613,7 +614,7 @@ func detectErrorFromTestResponseBody(respBody []byte) error {
 		return fmt.Errorf("upstream error: %s", message)
 	}
 
-	for _, line := range bytes.Split(b, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(b, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
@@ -639,7 +640,7 @@ func validateStreamTestResponseBody(respBody []byte) error {
 		return errors.New("stream response body is empty")
 	}
 
-	for _, line := range bytes.Split(b, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(b, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 || !bytes.HasPrefix(line, []byte("data:")) {
 			continue
@@ -917,6 +918,332 @@ type channelTestSummary struct {
 	Enabled   int `json:"enabled"`
 }
 
+const maxSelectedChannelModelTests = 1000
+
+type channelModelTestSummary struct {
+	ChannelsTested   int `json:"channels_tested"`
+	ModelsTested     int `json:"models_tested"`
+	ModelsSucceeded  int `json:"models_succeeded"`
+	ModelsFailed     int `json:"models_failed"`
+	ModelsRemoved    int `json:"models_removed"`
+	ChannelsDisabled int `json:"channels_disabled"`
+}
+
+type channelModelTestRequest struct {
+	ChannelIDs []int `json:"channel_ids"`
+}
+
+type channelModelTestResult struct {
+	Model          string
+	Succeeded      bool
+	MatchesAutoBan bool
+}
+
+func selectedChannelModels(channel *model.Channel) []string {
+	seen := make(map[string]struct{})
+	models := make([]string, 0)
+	for _, modelName := range channel.GetModels() {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		if _, exists := seen[modelName]; exists {
+			continue
+		}
+		seen[modelName] = struct{}{}
+		models = append(models, modelName)
+	}
+	return models
+}
+
+func testAllModelsForChannel(ctx context.Context, channel *model.Channel, testUserID int, reportModel func()) []channelModelTestResult {
+	modelNames := selectedChannelModels(channel)
+	results := make([]channelModelTestResult, 0, len(modelNames))
+	disableThreshold := int64(common.ChannelDisableThreshold * 1000)
+	if disableThreshold == 0 {
+		disableThreshold = 10000000
+	}
+	for _, modelName := range modelNames {
+		if ctx.Err() != nil {
+			break
+		}
+		startedAt := time.Now()
+		result := testChannel(ctx, channel, testUserID, modelName, "", false)
+		milliseconds := time.Since(startedAt).Milliseconds()
+		succeeded := result.localErr == nil && result.newAPIError == nil
+		matchesAutoBan := channel.GetAutoBan() && channelTestMatchesAutoBanRules(result.newAPIError, milliseconds, disableThreshold)
+		results = append(results, channelModelTestResult{
+			Model:          modelName,
+			Succeeded:      succeeded,
+			MatchesAutoBan: matchesAutoBan,
+		})
+		if reportModel != nil {
+			reportModel()
+		}
+	}
+	return results
+}
+
+func channelTestMatchesAutoBanRules(newAPIError *types.NewAPIError, milliseconds, disableThreshold int64) bool {
+	if service.ShouldDisableChannel(newAPIError) {
+		return true
+	}
+	return common.AutomaticDisableChannelEnabled && milliseconds > disableThreshold
+}
+
+func applyChannelModelTestResults(channel *model.Channel, results []channelModelTestResult) (removed int, disabled bool, err error) {
+	matched := make(map[string]struct{})
+	for _, result := range results {
+		if result.MatchesAutoBan {
+			matched[result.Model] = struct{}{}
+		}
+	}
+	if len(matched) == 0 {
+		return 0, false, nil
+	}
+
+	tx := model.DB.Begin()
+	if tx.Error != nil {
+		return 0, false, tx.Error
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			tx.Rollback()
+			panic(recovered)
+		}
+	}()
+
+	var current model.Channel
+	if err = tx.First(&current, "id = ?", channel.Id).Error; err != nil {
+		tx.Rollback()
+		return 0, false, err
+	}
+	// A long-running test must not apply an old decision over a channel edited
+	// or disabled while provider calls were in flight.
+	if current.Status == common.ChannelStatusManuallyDisabled || current.Status != channel.Status || current.Models != channel.Models {
+		tx.Rollback()
+		return 0, false, nil
+	}
+	currentModels := current.GetModels()
+	remaining := make([]string, 0, len(currentModels))
+	for _, modelName := range currentModels {
+		modelName = strings.TrimSpace(modelName)
+		if _, hit := matched[modelName]; hit {
+			removed++
+			continue
+		}
+		if modelName != "" {
+			remaining = append(remaining, modelName)
+		}
+	}
+	if removed == 0 {
+		tx.Rollback()
+		return 0, false, nil
+	}
+	// Compare-and-swap also guards the gap between the read and write. The
+	// transaction keeps the channel mutation and ability updates atomic.
+	channelUpdate := tx.Model(&model.Channel{}).Where("id = ? AND status = ? AND models = ?", current.Id, current.Status, current.Models)
+
+	if len(remaining) == 0 {
+		if current.Status == common.ChannelStatusAutoDisabled {
+			tx.Rollback()
+			return 0, false, nil
+		}
+		disabled = true
+		update := channelUpdate.Update("status", common.ChannelStatusAutoDisabled)
+		if update.Error != nil {
+			tx.Rollback()
+			return 0, false, update.Error
+		}
+		if update.RowsAffected == 0 {
+			tx.Rollback()
+			return 0, false, nil
+		}
+		if err = tx.Model(&model.Ability{}).Where("channel_id = ?", current.Id).Update("enabled", false).Error; err != nil {
+			tx.Rollback()
+			return 0, false, err
+		}
+	} else {
+		current.Models = strings.Join(remaining, ",")
+		update := channelUpdate.Update("models", current.Models)
+		if update.Error != nil {
+			tx.Rollback()
+			return 0, false, update.Error
+		}
+		if update.RowsAffected == 0 {
+			tx.Rollback()
+			return 0, false, nil
+		}
+		if err = current.UpdateAbilities(tx); err != nil {
+			tx.Rollback()
+			return 0, false, err
+		}
+	}
+	if err = tx.Commit().Error; err != nil {
+		return 0, false, err
+	}
+	return removed, disabled, nil
+}
+
+func runSelectedChannelModelTests(ctx context.Context, channelIDs []int, report func(processed, total int)) (channelModelTestSummary, error) {
+	summary := channelModelTestSummary{}
+	testUserID, err := resolveChannelTestUserID(nil)
+	if err != nil {
+		return summary, err
+	}
+	channels := make([]*model.Channel, 0, len(channelIDs))
+	totalModels := 0
+	var firstErr error
+	for _, channelID := range channelIDs {
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
+		channel, loadErr := model.GetChannelById(channelID, true)
+		if loadErr != nil {
+			if firstErr == nil {
+				firstErr = loadErr
+			}
+			continue
+		}
+		channels = append(channels, channel)
+		totalModels += len(selectedChannelModels(channel))
+	}
+	concurrency := operation_setting.NormalizeChannelTestConcurrency(operation_setting.GetMonitorSetting().ChannelTestConcurrency)
+	jobs := make(chan *model.Channel)
+	type workerResult struct {
+		summary         channelModelTestSummary
+		err             error
+		modelsProcessed int
+	}
+	results := make(chan workerResult)
+	workerCount := min(concurrency, len(channels))
+	if report != nil {
+		report(0, totalModels)
+	}
+	if workerCount == 0 {
+		return summary, firstErr
+	}
+
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for channel := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				modelResults := testAllModelsForChannel(ctx, channel, testUserID, func() {
+					select {
+					case <-ctx.Done():
+					case results <- workerResult{modelsProcessed: 1}:
+					}
+				})
+				if ctx.Err() != nil {
+					return
+				}
+				item := channelModelTestSummary{ChannelsTested: 1, ModelsTested: len(modelResults)}
+				for _, result := range modelResults {
+					if result.Succeeded {
+						item.ModelsSucceeded++
+					} else {
+						item.ModelsFailed++
+					}
+				}
+				removed, disabled, applyErr := applyChannelModelTestResults(channel, modelResults)
+				item.ModelsRemoved = removed
+				if disabled {
+					item.ChannelsDisabled = 1
+				}
+				results <- workerResult{summary: item, err: applyErr}
+				if common.RequestInterval > 0 {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(common.RequestInterval):
+					}
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, channel := range channels {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- channel:
+			}
+		}
+	}()
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+
+	processedModels := 0
+	for result := range results {
+		if result.modelsProcessed > 0 {
+			processedModels += result.modelsProcessed
+			if report != nil && ctx.Err() == nil {
+				report(processedModels, totalModels)
+			}
+			continue
+		}
+		if firstErr == nil && result.err != nil {
+			firstErr = result.err
+		}
+		summary.ChannelsTested += result.summary.ChannelsTested
+		summary.ModelsTested += result.summary.ModelsTested
+		summary.ModelsSucceeded += result.summary.ModelsSucceeded
+		summary.ModelsFailed += result.summary.ModelsFailed
+		summary.ModelsRemoved += result.summary.ModelsRemoved
+		summary.ChannelsDisabled += result.summary.ChannelsDisabled
+	}
+	if summary.ModelsRemoved > 0 || summary.ChannelsDisabled > 0 {
+		model.InitChannelCache()
+	}
+	return summary, firstErr
+}
+
+func TestSelectedChannelModels(c *gin.Context) {
+	req := channelModelTestRequest{}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	seen := make(map[int]struct{}, len(req.ChannelIDs))
+	ids := make([]int, 0, len(req.ChannelIDs))
+	for _, id := range req.ChannelIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 || len(ids) > maxSelectedChannelModelTests {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeChannelModelTest, channelModelTestTaskPayload{ChannelIDs: ids})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !created {
+		c.JSON(http.StatusConflict, gin.H{"success": false, "message": "a selected-channel model test is already active", "data": gin.H{"task_id": task.TaskID, "status": task.Status}})
+		return
+	}
+	recordManageAudit(c, "channel.model_test_batch", map[string]interface{}{
+		"count":   len(ids),
+		"task_id": task.TaskID,
+	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"task_id": task.TaskID, "status": task.Status}})
+}
+
 func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, testUserID int, allowDisable bool, disableThreshold int64) channelTestSummary {
 	summary := channelTestSummary{}
 	isChannelEnabled := channel.Status == common.ChannelStatusEnabled
@@ -929,18 +1256,14 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 
 	summary.Tested++
 
-	shouldBanChannel := false
 	newAPIError := result.newAPIError
-	if newAPIError != nil {
-		shouldBanChannel = service.ShouldDisableChannel(result.newAPIError)
-	}
-
-	if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
-		if milliseconds > disableThreshold {
-			err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
-			newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
-			shouldBanChannel = true
-		}
+	shouldBanChannel := channelTestMatchesAutoBanRules(newAPIError, milliseconds, disableThreshold)
+	if newAPIError == nil && shouldBanChannel {
+		err := errors.New(i18n.Translate("", i18n.MsgChannelResponseTimeExceeded, map[string]any{
+			"Seconds":   fmt.Sprintf("%.2f", float64(milliseconds)/1000.0),
+			"Threshold": fmt.Sprintf("%.2f", float64(disableThreshold)/1000.0),
+		}))
+		newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
 	}
 
 	if newAPIError == nil {
@@ -1084,8 +1407,9 @@ func performChannelTests(ctx context.Context, channels []*model.Channel, testUse
 // stops promptly. mode selects the channel set: an empty mode falls back to the
 // configured monitor ChannelTestMode (scheduled behavior), while a manual
 // trigger passes ChannelTestModeScheduledAll to test every channel. When notify
-// is set the root user is notified on completion. Cross-instance execution is
-// guarded by the system task per-type lock, so no process-local guard is needed.
+// is set, the administrators who receive channel notices are notified on
+// completion. Cross-instance execution is guarded by the system task per-type
+// lock, so no process-local guard is needed.
 func runChannelTestTask(ctx context.Context, mode string, notify bool, report func(processed, total int)) (channelTestSummary, error) {
 	testUserID, err := resolveChannelTestUserID(nil)
 	if err != nil {
@@ -1103,7 +1427,9 @@ func runChannelTestTask(ctx context.Context, mode string, notify bool, report fu
 	concurrency := operation_setting.GetMonitorSetting().ChannelTestConcurrency
 	summary := performChannelTests(ctx, selected, testUserID, allowDisable, concurrency, report)
 	if notify && (ctx == nil || ctx.Err() == nil) {
-		service.NotifyRootUser(dto.NotifyTypeChannelTest, "通道测试完成", "所有通道测试已完成")
+		service.NotifyChannelWatchers(dto.NotifyTypeChannelTest, func(lang string) (string, string) {
+			return i18n.Translate(lang, i18n.MsgChannelTestCompletedSubject), i18n.Translate(lang, i18n.MsgChannelTestCompletedContent)
+		})
 	}
 	return summary, nil
 }
@@ -1138,15 +1464,12 @@ func TestAllChannels(c *gin.Context) {
 		return
 	}
 	if !created {
-		c.JSON(http.StatusConflict, gin.H{
-			"success": false,
-			"message": "已有通道测试任务正在运行或等待中，不能启动本次手动任务",
-			"data": gin.H{
-				"task_id": task.TaskID,
-				"status":  task.Status,
-				"type":    task.Type,
-			},
-		})
+		msg := common.NewMessage("A channel test task is already running or queued. Cannot start this manual task")
+		common.ApiErrorStatus(c, http.StatusConflict, msg, gin.H{"data": gin.H{
+			"task_id": task.TaskID,
+			"status":  task.Status,
+			"type":    task.Type,
+		}})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

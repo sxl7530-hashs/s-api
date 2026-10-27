@@ -1,7 +1,6 @@
 package model
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,6 +72,10 @@ func rebuildTaskAliasView() {
 	taskAliasViewPtr.Store(buildTaskAliasView(jsplugin.DefaultRegistry.Generation()))
 }
 
+func invalidateTaskAliasView() {
+	taskAliasViewPtr.Store(nil)
+}
+
 type taskAliasDraft struct {
 	spellings []string
 	byPlugin  map[string]map[string]struct{}
@@ -97,7 +100,7 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 		Where("status = ?", common.ChannelStatusEnabled).
 		Find(&channels).Error
 	if err != nil {
-		common.SysError(fmt.Sprintf("rebuild task alias view: %s", err.Error()))
+		common.SysError(common.LogText("rebuild task alias view: %s", err.Error()))
 		return view
 	}
 
@@ -110,7 +113,7 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 		}
 		modelMap := make(map[string]string)
 		if err := common.UnmarshalJsonStr(mappingJSON, &modelMap); err != nil {
-			common.SysError(fmt.Sprintf("task alias view: channel %d model_mapping: %s", channel.Id, err.Error()))
+			common.SysError(common.LogText("task alias view: channel %d model_mapping: %s", channel.Id, err.Error()))
 			continue
 		}
 		inModels := make(map[string]struct{})
@@ -129,7 +132,7 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 			}
 			tail, cyclic := followChannelModelMapping(modelMap, alias)
 			if cyclic {
-				common.SysError(fmt.Sprintf("task alias mapping cycle dropped: channel=%d key=%q", channel.Id, alias))
+				common.SysError(common.LogText("task alias mapping cycle dropped: channel=%d key=%q", channel.Id, alias))
 				continue
 			}
 			declared, ok := generation.CanonicalModel(tail)
@@ -168,7 +171,7 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 			for key := range draft.byPlugin {
 				pluginKeys = append(pluginKeys, key)
 			}
-			common.SysLog(fmt.Sprintf("task model alias %q dropped: maps to multiple plugins %v", alias, pluginKeys))
+			common.SysLog(common.LogText("task model alias %q dropped: maps to multiple plugins %v", alias, pluginKeys))
 			continue
 		}
 		var pluginKey, declared string

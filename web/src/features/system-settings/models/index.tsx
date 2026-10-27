@@ -25,7 +25,10 @@ import {
 } from './section-registry.tsx'
 
 const defaultModelSettings: ModelSettings = {
+  'global.aws_passthrough_compatibility_enabled': false,
   'global.pass_through_request_enabled': false,
+  'global.aws_beta_filter_enabled': true,
+  'global.aws_beta_blacklist': '[]',
   'global.thinking_model_blacklist': '[]',
   'global.chat_completions_to_responses_policy': '{}',
   'general_setting.ping_interval_enabled': false,
@@ -54,6 +57,7 @@ const defaultModelSettings: ModelSettings = {
   ExposeRatioEnabled: false,
   'billing_setting.billing_mode': '{}',
   'billing_setting.billing_expr': '{}',
+  'billing_setting.plugin_billing_expr': '{}',
   'tool_price_setting.prices': '{}',
   TopupGroupRatio: '',
   GroupRatio: '',
@@ -63,24 +67,6 @@ const defaultModelSettings: ModelSettings = {
   MaxTokenAutoGroups: 5,
   DefaultUseAutoGroup: false,
   'group_ratio_setting.group_special_usable_group': '{}',
-  RetryTimes: 0,
-  ChannelDisableThreshold: '',
-  AutomaticDisableChannelEnabled: false,
-  AutomaticEnableChannelEnabled: false,
-  AutomaticDisableKeywords: '',
-  AutomaticDisableStatusCodes: '401',
-  AutomaticRetryStatusCodes:
-    '100-199,300-399,401-407,409-499,500-503,505-523,525-599',
-  'monitor_setting.auto_test_channel_enabled': false,
-  'monitor_setting.auto_test_channel_minutes': 10,
-  'monitor_setting.channel_test_concurrency': 1,
-  'monitor_setting.channel_test_mode': 'scheduled_all',
-  'channel_affinity_setting.enabled': false,
-  'channel_affinity_setting.switch_on_success': true,
-  'channel_affinity_setting.keep_on_channel_disabled': false,
-  'channel_affinity_setting.max_entries': 100000,
-  'channel_affinity_setting.default_ttl_seconds': 3600,
-  'channel_affinity_setting.rules': '[]',
   'model_deployment.ionet.api_key': '',
   'model_deployment.ionet.enabled': false,
 }

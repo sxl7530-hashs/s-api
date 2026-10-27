@@ -585,6 +585,84 @@ func TestAdvancedCustomValidateAlphaSearchConverterPath(t *testing.T) {
 	}
 }
 
+func TestAdvancedCustomValidateRoutePassThroughBody(t *testing.T) {
+	valid := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath:           "/v1/chat/completions",
+				UpstreamPath:           "/v1/chat/completions",
+				PassThroughBodyEnabled: true,
+			},
+			{
+				IncomingPath:           "/v1/rerank",
+				UpstreamPath:           "/v1/rerank",
+				Converter:              AdvancedCustomConverterSGLangRerank,
+				PassThroughBodyEnabled: true,
+			},
+			{
+				IncomingPath: "/v1/messages",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    advancedCustomConverterClaudeMessagesToOpenAIChat,
+			},
+		},
+	}
+	require.NoError(t, valid.Validate())
+
+	route, ok := valid.MatchPathForModel("/v1/chat/completions", "gpt-4o")
+	require.True(t, ok)
+	assert.True(t, route.PassThroughBodyEnabled)
+	route, ok = valid.MatchPathForModel("/v1/messages", "gpt-4o")
+	require.True(t, ok)
+	assert.False(t, route.PassThroughBodyEnabled)
+
+	encoded, err := json.Marshal(valid.Routes[2])
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "pass_through_body_enabled")
+
+	tests := []struct {
+		name  string
+		route AdvancedCustomRoute
+		want  string
+	}{
+		{
+			name: "converter route",
+			route: AdvancedCustomRoute{
+				IncomingPath:           "/v1/messages",
+				UpstreamPath:           "/v1/chat/completions",
+				Converter:              advancedCustomConverterClaudeMessagesToOpenAIChat,
+				PassThroughBodyEnabled: true,
+			},
+			want: "pass_through_body_enabled requires converter none",
+		},
+		{
+			name: "model list route",
+			route: AdvancedCustomRoute{
+				IncomingPath:           AdvancedCustomModelListPath,
+				UpstreamPath:           "/v1/models",
+				PassThroughBodyEnabled: true,
+			},
+			want: "pass_through_body_enabled must be false for /v1/models",
+		},
+		{
+			name: "balance route",
+			route: AdvancedCustomRoute{
+				IncomingPath:           AdvancedCustomBalancePath,
+				UpstreamPath:           "/provider/balance",
+				PassThroughBodyEnabled: true,
+			},
+			want: "pass_through_body_enabled must be false for /v1/dashboard/billing/credit_grants",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (&AdvancedCustomConfig{Routes: []AdvancedCustomRoute{tt.route}}).Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
 func TestChannelSettingsHTTPTransportJSONRoundTrip(t *testing.T) {
 	legacy := `{"proxy":"http://127.0.0.1:8080","force_format":true}`
 	var settings ChannelSettings
@@ -598,20 +676,24 @@ func TestChannelSettingsHTTPTransportJSONRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "http_protocol")
 	assert.NotContains(t, string(encoded), "http2_connection_shards")
+	assert.NotContains(t, string(encoded), "tls_insecure_skip_verify")
 
 	explicit := ChannelSettings{
 		Proxy:                 "socks5://127.0.0.1:1080",
 		HTTPProtocol:          HTTPProtocolHTTP1,
 		HTTP2ConnectionShards: 1,
+		TLSInsecureSkipVerify: true,
 	}
 	encoded, err = json.Marshal(explicit)
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), `"http_protocol":"http1"`)
+	assert.Contains(t, string(encoded), `"tls_insecure_skip_verify":true`)
 
 	var decoded ChannelSettings
 	require.NoError(t, json.Unmarshal(encoded, &decoded))
 	assert.Equal(t, explicit.HTTPProtocol, decoded.HTTPProtocol)
 	assert.Equal(t, 1, decoded.HTTP2ConnectionShards)
+	assert.True(t, decoded.TLSInsecureSkipVerify)
 
 	sharded := ChannelSettings{HTTP2ConnectionShards: 4}
 	encoded, err = json.Marshal(sharded)
@@ -641,6 +723,17 @@ func TestChannelSettingsValidateHTTPTransport(t *testing.T) {
 	err = (&ChannelSettings{HTTPProtocol: "http1", HTTP2ConnectionShards: 2}).ValidateHTTPTransport()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "http2_connection_shards")
+
+	require.NoError(t, (&ChannelSettings{BedrockProtection: &BedrockProtectionSettings{}}).ValidateHTTPTransport())
+	require.NoError(t, (&ChannelSettings{BedrockProtection: &BedrockProtectionSettings{UsageMetricsEnabled: true, RateLimitEnabled: true, RPM: 100, TPM: 10000, ThrottlingCooldownEnabled: true, Consecutive429Threshold: 3, ObservationWindowSeconds: 60, Minimum429SpanSeconds: 1, CooldownSeconds: 900}}).ValidateHTTPTransport())
+	err = (&ChannelSettings{BedrockProtection: &BedrockProtectionSettings{RPM: -1}}).ValidateHTTPTransport()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rpm/tpm")
+	err = (&ChannelSettings{BedrockProtection: &BedrockProtectionSettings{ObservationWindowSeconds: 5, Minimum429SpanSeconds: 6}}).ValidateHTTPTransport()
+	require.NoError(t, err, "disabled cooldown settings must not affect the channel")
+	err = (&ChannelSettings{BedrockProtection: &BedrockProtectionSettings{ThrottlingCooldownEnabled: true, ObservationWindowSeconds: 5, Minimum429SpanSeconds: 6}}).ValidateHTTPTransport()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cooldown")
 }
 
 func TestChannelOtherSettingsValidateToolLossPolicy(t *testing.T) {
@@ -653,4 +746,42 @@ func TestChannelOtherSettingsValidateToolLossPolicy(t *testing.T) {
 	err := (&ChannelOtherSettings{ToolLossPolicy: "drop"}).ValidateToolLossPolicy()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tool_loss_policy")
+}
+
+func TestBedrockProtectionAllowsOmittedOptionalRateLimits(t *testing.T) {
+	var settings ChannelSettings
+	require.NoError(t, json.Unmarshal([]byte(`{"bedrock_protection":{"usage_metrics_enabled":true}}`), &settings))
+	require.NotNil(t, settings.BedrockProtection)
+	assert.Zero(t, settings.BedrockProtection.RPM)
+	assert.Zero(t, settings.BedrockProtection.TPM)
+	require.NoError(t, settings.ValidateHTTPTransport())
+}
+
+func TestBedrockProtectionValidatesModelRampAndBackoff(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings BedrockProtectionSettings
+		valid    bool
+	}{
+		{"defaults off", BedrockProtectionSettings{}, true},
+		{"model override", BedrockProtectionSettings{ModelRateLimitEnabled: true, ModelLimits: map[string]BedrockModelLimit{"opus": {RPM: 10}}}, true},
+		{"invalid model tokens", BedrockProtectionSettings{ModelLimits: map[string]BedrockModelLimit{"opus": {TPM: -1}}}, false},
+		{"ambiguous model whitespace", BedrockProtectionSettings{ModelLimits: map[string]BedrockModelLimit{" opus": {RPM: 1}}}, false},
+		{"seven day ramp", BedrockProtectionSettings{RateLimitEnabled: true, RPM: 100, RampUpEnabled: true, RampUpStartUnix: 1800000000, RampUpDays: 7}, true},
+		{"eight days rejected", BedrockProtectionSettings{RampUpDays: 8}, false},
+		{"ramp without ceiling", BedrockProtectionSettings{RampUpEnabled: true, RampUpStartUnix: 1800000000}, false},
+		{"ramp without start", BedrockProtectionSettings{RateLimitEnabled: true, RPM: 100, RampUpEnabled: true}, false},
+		{"valid backoff", BedrockProtectionSettings{RetryBackoffEnabled: true, RetryBackoffBaseMS: 100, RetryBackoffMaxMS: 1000}, true},
+		{"inverted backoff", BedrockProtectionSettings{RetryBackoffBaseMS: 1000, RetryBackoffMaxMS: 100}, false},
+		{"unbounded backoff", BedrockProtectionSettings{RetryBackoffMaxMS: 10001}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&ChannelSettings{BedrockProtection: &tc.settings}).ValidateHTTPTransport()
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
 }

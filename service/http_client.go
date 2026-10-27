@@ -102,7 +102,7 @@ func newRelayHTTPTransport() *http.Transport {
 	}
 	transport.ForceAttemptHTTP2 = true
 	if common.TLSInsecureSkipVerify {
-		transport.TLSClientConfig = common.InsecureTLSConfig
+		transport.TLSClientConfig = common.InsecureTLSConfig.Clone()
 	}
 	return transport
 }
@@ -162,7 +162,7 @@ func warnLegacyProxyURLOnce(config *proxyURLConfig) {
 	}
 	logger.LogWarn(
 		context.Background(),
-		fmt.Sprintf(
+		common.LogText(
 			"legacy proxy URL suffix ignored at runtime: scheme=%s host=%s; update the channel proxy setting",
 			config.parsedURL.Scheme,
 			config.parsedURL.Host,
@@ -319,6 +319,9 @@ func newTransportFactory(proxyURL *url.URL, tlsConfig *tls.Config) (func() *http
 }
 
 func newHTTPClientFromPolicy(policy HTTPTransportPolicy, proxyURL *url.URL, tlsConfig *tls.Config) (*http.Client, error) {
+	if policy.TLSInsecureSkipVerify {
+		tlsConfig = common.InsecureTLSConfig
+	}
 	factory, err := newTransportFactory(proxyURL, tlsConfig)
 	if err != nil {
 		return nil, err

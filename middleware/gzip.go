@@ -89,6 +89,9 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 
 		if decompressed {
 			c.Request.Header.Del("Content-Encoding")
+			// The original Content-Length describes compressed bytes and must not
+			// be used for admission weight or downstream size assumptions.
+			c.Request.ContentLength = -1
 		}
 
 		// Continue processing the request

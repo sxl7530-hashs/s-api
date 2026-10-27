@@ -78,6 +78,16 @@ export function formatQuota(quota: number): string {
   })
 }
 
+/** Format quota for constrained table cells while preserving the configured currency. */
+export function formatCompactQuota(quota: number): string {
+  return formatQuotaWithCurrency(quota, {
+    compact: true,
+    digitsLarge: 1,
+    digitsSmall: 2,
+    abbreviate: false,
+  })
+}
+
 /**
  * Parse quota from the current display input back to quota units.
  */
