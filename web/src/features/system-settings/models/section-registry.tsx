@@ -46,6 +46,12 @@ const MODELS_SECTIONS = [
               settings['global.aws_passthrough_compatibility_enabled'] ?? false,
             pass_through_request_enabled:
               settings['global.pass_through_request_enabled'],
+            aws_beta_filter_enabled:
+              settings['global.aws_beta_filter_enabled'] ?? true,
+            aws_beta_blacklist: formatJsonForEditor(
+              settings['global.aws_beta_blacklist'],
+              '[]'
+            ),
             thinking_model_blacklist: formatJsonForEditor(
               settings['global.thinking_model_blacklist'],
               '[]'

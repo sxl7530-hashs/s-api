@@ -626,6 +626,10 @@ type ClaudeResponse struct {
 	ContentBlock *ClaudeMediaMessage  `json:"content_block,omitempty"`
 	Delta        *ClaudeMediaMessage  `json:"delta,omitempty"`
 	Message      *ClaudeMediaMessage  `json:"message,omitempty"`
+	// Preserve AWS Bedrock / Anthropic safety fields unchanged on native Claude
+	// responses (dangerous-tool-use safeguard_results, refusal stop_details).
+	SafeguardResults json.RawMessage `json:"safeguard_results,omitempty"`
+	StopDetails      json.RawMessage `json:"stop_details,omitempty"`
 }
 
 // set index

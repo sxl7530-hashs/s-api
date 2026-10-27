@@ -147,7 +147,7 @@ func isAwsManagedOrForwardingHeader(key string) bool {
 		return true
 	}
 	switch key {
-	case "authorization", "host", "x-amz-date", "x-amz-security-token", "x-amz-content-sha256", "content-length", "transfer-encoding", "x-real-ip", "forwarded":
+	case "authorization", "host", "x-amz-date", "x-amz-security-token", "x-amz-content-sha256", "content-length", "transfer-encoding", "x-real-ip", "forwarded", "content-type", "accept":
 		return true
 	default:
 		return false
@@ -442,7 +442,7 @@ func prepareAwsCompatibilityBody(c *gin.Context, info *relaycommon.RelayInfo, bo
 		}
 		// These are native provider controls with no OpenAI equivalent. Never
 		// merge messages, model, output limits or converted sampling fields.
-		for _, key := range []string{"anthropic_beta", "context_management", "output_config", "metadata"} {
+		for _, key := range []string{"anthropic_beta", "context_management", "output_config", "metadata", "safeguards"} {
 			if _, exists := data[key]; !exists && len(extensions[key]) > 0 {
 				data[key] = extensions[key]
 			}
@@ -548,11 +548,14 @@ func prepareAwsCompatibilityBody(c *gin.Context, info *relaycommon.RelayInfo, bo
 				betas = append(betas, beta)
 			}
 		}
+		betas = model_setting.GetGlobalSettings().FilterAwsBetas(betas)
 		if len(betas) > 0 {
 			data["anthropic_beta"], err = common.Marshal(betas)
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			delete(data, "anthropic_beta")
 		}
 	}
 	return common.Marshal(data)

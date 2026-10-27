@@ -27,6 +27,8 @@ import {
 const defaultModelSettings: ModelSettings = {
   'global.aws_passthrough_compatibility_enabled': false,
   'global.pass_through_request_enabled': false,
+  'global.aws_beta_filter_enabled': true,
+  'global.aws_beta_blacklist': '[]',
   'global.thinking_model_blacklist': '[]',
   'global.chat_completions_to_responses_policy': '{}',
   'general_setting.ping_interval_enabled': false,

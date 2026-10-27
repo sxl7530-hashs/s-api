@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 )
 
 type AwsClaudeRequest struct {
@@ -28,6 +29,7 @@ type AwsClaudeRequest struct {
 	ContextManagement json.RawMessage     `json:"context_management,omitempty"`
 	Thinking          *dto.Thinking       `json:"thinking,omitempty"`
 	OutputConfig      json.RawMessage     `json:"output_config,omitempty"`
+	Safeguards        json.RawMessage     `json:"safeguards,omitempty"`
 	//Metadata         json.RawMessage     `json:"metadata,omitempty"`
 }
 
@@ -46,6 +48,7 @@ func formatRequest(requestBody io.Reader, requestHeader http.Header) (*AwsClaude
 			betas = append(betas, beta)
 		}
 	}
+	betas = model_setting.GetGlobalSettings().FilterAwsBetas(betas)
 	if len(betas) > 0 {
 		betaJson, err := common.Marshal(betas)
 		if err != nil {

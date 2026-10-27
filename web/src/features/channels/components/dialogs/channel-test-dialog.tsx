@@ -93,6 +93,8 @@ import type {
   SearchChannelsResponse,
 } from '../../types'
 import { useChannels } from '../channels-provider'
+import { getDisplayedChannelName } from '../../lib/channel-name-display'
+import { useChannelNameDisplay } from '../../hooks/use-channel-name-display'
 
 type ChannelTestDialogProps = {
   open: boolean
@@ -317,6 +319,7 @@ function ChannelTestDialogContent({
 }: ChannelTestDialogContentProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const { settings: nameDisplaySettings } = useChannelNameDisplay()
   const currentChannelId = currentRow.id
   const batchStopRequestedRef = useRef(false)
   const batchProgressToastIdRef = useRef<ReturnType<
@@ -548,7 +551,7 @@ function ChannelTestDialogContent({
         await handleTestChannel(
           currentRow.id,
           {
-            channelName: currentRow.name,
+            channelName: getDisplayedChannelName(currentRow.name, nameDisplaySettings),
             testModel: model,
             endpointType: endpointType === 'auto' ? undefined : endpointType,
             stream: effectiveStreamTest || undefined,
@@ -966,7 +969,7 @@ function ChannelTestDialogContent({
         title={
           <span className='inline-flex max-w-full min-w-0 items-center gap-1.5'>
             <span className='shrink-0'>{t('Test Channel Connection')}:</span>
-            <span className='min-w-0 truncate'>{currentRow.name}</span>
+            <span className='min-w-0 truncate'>{getDisplayedChannelName(currentRow.name, nameDisplaySettings)}</span>
           </span>
         }
         contentClassName='max-h-[min(90dvh,var(--dialog-available-height))] overflow-y-auto sm:max-w-4xl'

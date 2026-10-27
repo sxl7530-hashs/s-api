@@ -43,6 +43,10 @@ type GlobalSettings struct {
 	// family whitelist but whose names already end in an effort word.
 	EffortTailModelIDs               []string                         `json:"effort_tail_model_ids"`
 	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
+	// AwsBetaFilterEnabled strips anthropic-beta values listed in AwsBetaBlacklist
+	// before forwarding to AWS Bedrock (AWS channels only); toggle via settings.
+	AwsBetaFilterEnabled bool     `json:"aws_beta_filter_enabled"`
+	AwsBetaBlacklist     []string `json:"aws_beta_blacklist"`
 }
 
 // 默认配置
@@ -64,6 +68,13 @@ var defaultOpenaiSettings = GlobalSettings{
 		Enabled:     false,
 		AllChannels: true,
 	},
+	AwsBetaFilterEnabled: true,
+	AwsBetaBlacklist: []string{
+		"prompt-caching-2024-07-31",
+		"prompt-caching-scope-2026-01-05",
+		"advanced-tool-use-2025-11-20",
+		"redact-thinking-2026-02-12",
+	},
 }
 
 // 全局实例
@@ -76,6 +87,32 @@ func init() {
 
 func GetGlobalSettings() *GlobalSettings {
 	return &globalSettings
+}
+
+// FilterAwsBetas removes anthropic-beta values that AWS Bedrock does not accept
+// (configured in AwsBetaBlacklist) so they are not forwarded into the Bedrock
+// request body. It only filters when AwsBetaFilterEnabled is true and must be
+// called for AWS channels only.
+func (s *GlobalSettings) FilterAwsBetas(betas []string) []string {
+	if !s.AwsBetaFilterEnabled || len(betas) == 0 || len(s.AwsBetaBlacklist) == 0 {
+		return betas
+	}
+	blocked := make(map[string]struct{}, len(s.AwsBetaBlacklist))
+	for _, b := range s.AwsBetaBlacklist {
+		if b = strings.TrimSpace(b); b != "" {
+			blocked[b] = struct{}{}
+		}
+	}
+	if len(blocked) == 0 {
+		return betas
+	}
+	filtered := make([]string, 0, len(betas))
+	for _, b := range betas {
+		if _, bad := blocked[strings.TrimSpace(b)]; !bad {
+			filtered = append(filtered, b)
+		}
+	}
+	return filtered
 }
 
 const thinkingBlacklistRegexPrefix = "re:"

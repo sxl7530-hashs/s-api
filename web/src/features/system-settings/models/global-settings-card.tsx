@@ -91,6 +91,8 @@ const schema = z.object({
   global: z.object({
     aws_passthrough_compatibility_enabled: z.boolean(),
     pass_through_request_enabled: z.boolean(),
+    aws_beta_filter_enabled: z.boolean(),
+    aws_beta_blacklist: jsonString,
     thinking_model_blacklist: jsonString,
     chat_completions_to_responses_policy: jsonString,
   }),
@@ -106,6 +108,8 @@ type GlobalModelSettingsFormInput = z.input<typeof schema>
 type FlatGlobalModelSettings = {
   'global.aws_passthrough_compatibility_enabled': boolean
   'global.pass_through_request_enabled': boolean
+  'global.aws_beta_filter_enabled': boolean
+  'global.aws_beta_blacklist': string
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
   'general_setting.ping_interval_enabled': boolean
@@ -119,6 +123,11 @@ const flattenGlobalValues = (
     values.global.aws_passthrough_compatibility_enabled,
   'global.pass_through_request_enabled':
     values.global.pass_through_request_enabled,
+  'global.aws_beta_filter_enabled': values.global.aws_beta_filter_enabled,
+  'global.aws_beta_blacklist': normalizeJsonText(
+    values.global.aws_beta_blacklist,
+    '[]'
+  ),
   'global.thinking_model_blacklist': normalizeJsonText(
     values.global.thinking_model_blacklist,
     '[]'
@@ -228,6 +237,49 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
                   <Switch checked={field.value} onCheckedChange={field.onChange} />
                 </FormControl>
               </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.aws_beta_filter_enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Enable AWS anthropic-beta Blacklist')}</FormLabel>
+                  <FormDescription>
+                    {t('When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.')}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch checked={field.value} onCheckedChange={field.onChange} />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.aws_beta_blacklist'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('AWS anthropic-beta Blacklist')}</FormLabel>
+                <FormControl>
+                  <JsonCodeEditor
+                    value={field.value}
+                    onChange={(value) => field.onChange(value)}
+                    name={field.name}
+                    onBlur={field.onBlur}
+                    textareaRef={field.ref}
+                    placeholder='["prompt-caching-2024-07-31", "advanced-tool-use-2025-11-20"]'
+                    heightClassName='h-32 min-h-32 max-h-32'
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t('anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.')}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
             )}
           />
 
