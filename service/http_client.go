@@ -72,6 +72,7 @@ func ValidateSSRFProtectedFetchURL(urlStr string) error {
 }
 
 func newRelayHTTPTransport() *http.Transport {
+	const maxTimeoutSeconds = int((1<<63 - 1) / int64(time.Second))
 	var transport *http.Transport
 	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok && defaultTransport != nil {
 		transport = defaultTransport.Clone()
@@ -91,14 +92,31 @@ func newRelayHTTPTransport() *http.Transport {
 	transport.MaxIdleConns = common.RelayMaxIdleConns
 	transport.MaxIdleConnsPerHost = common.RelayMaxIdleConnsPerHost
 	transport.IdleConnTimeout = time.Duration(common.RelayIdleConnTimeout) * time.Second
-	// Bound the wait for upstream response headers. Without this guard a
-	// connected upstream that never sends headers retains the request, body and
-	// goroutine indefinitely. Keep the bound generous enough for slow models;
-	// streaming idle behaviour remains governed by the stream scanner timeout.
-	if common.RelayResponseHeaderTimeout > 0 {
-		transport.ResponseHeaderTimeout = time.Duration(common.RelayResponseHeaderTimeout) * time.Second
-	} else {
-		transport.ResponseHeaderTimeout = 0
+	if seconds := common.RelayHTTP2PingIdleTimeout; seconds > 0 {
+		if transport.HTTP2 == nil {
+			transport.HTTP2 = &http.HTTP2Config{}
+		}
+		// Probe the upstream connection, independently of downstream SSE heartbeats.
+		transport.HTTP2.SendPingTimeout = time.Duration(min(seconds, maxTimeoutSeconds)) * time.Second
+		transport.HTTP2.PingTimeout = time.Duration(min(max(common.RelayHTTP2PingTimeout, 0), maxTimeoutSeconds)) * time.Second
+	}
+	// Bound the wait for upstream response headers. Without it, an upstream that
+	// accepts the connection but never responds (and never sends FIN/RST) parks the
+	// goroutine forever, and every buffer that request owns -- the raw body read by
+	// io.ReadAll, the decoded messages, and the re-marshalled upstream body -- stays
+	// reachable for the lifetime of the process.
+	//
+	// This only covers the wait for the headers; streaming after the headers arrive
+	// is not affected. Set RELAY_RESPONSE_HEADER_TIMEOUT=0 to restore the old
+	// unbounded behaviour.
+	if seconds := common.RelayResponseHeaderTimeout; seconds > 0 {
+		// Clamp before converting: seconds beyond maxTimeoutSeconds overflow
+		// time.Duration and can wrap into a tiny positive timeout, which would cut
+		// every relay request instead of only the stuck ones.
+		if seconds > maxTimeoutSeconds {
+			seconds = maxTimeoutSeconds
+		}
+		transport.ResponseHeaderTimeout = time.Duration(seconds) * time.Second
 	}
 	transport.ForceAttemptHTTP2 = true
 	if common.TLSInsecureSkipVerify {

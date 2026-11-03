@@ -177,6 +177,9 @@ var RelayResponseHeaderTimeout = 300 // unit is second; configurable via RELAY_R
 
 var RelayIdleConnTimeout int // unit is second
 
+var RelayHTTP2PingIdleTimeout int // seconds without incoming frames before probing; 0 disables probes
+var RelayHTTP2PingTimeout int     // seconds to wait for a PING acknowledgement
+
 var RelayMaxIdleConns int
 var RelayMaxIdleConnsPerHost int
 
