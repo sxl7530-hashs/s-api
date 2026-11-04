@@ -60,6 +60,8 @@ const MODELS_SECTIONS = [
               settings['global.chat_completions_to_responses_policy'],
               '{}'
             ),
+            aws_usage_metrics_enabled:
+              settings['global.aws_usage_metrics_enabled'] ?? false,
           },
           general_setting: {
             ping_interval_enabled:

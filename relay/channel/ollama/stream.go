@@ -153,12 +153,18 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	var responseId = common.GetUUID()
 	var created = time.Now().Unix()
 	var toolCallIndex int
+	send := func(data string) error { return helper.StringData(c, data) }
 	start := helper.GenerateStartEmptyResponse(responseId, created, model, nil)
 	if data, err := common.Marshal(start); err == nil {
-		_ = helper.StringData(c, string(data))
+		if err := send(string(data)); err != nil {
+			return usage, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		}
 	}
 
 	for scanner.Scan() {
+		if c.Request != nil && c.Request.Context().Err() != nil {
+			return usage, nil
+		}
 		line := scanner.Text()
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -177,14 +183,18 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		if !chunk.Done {
 			delta, _ := buildOllamaStreamDelta(&chunk, responseId, created, model, &toolCallIndex)
 			if data, err := common.Marshal(delta); err == nil {
-				_ = helper.StringData(c, string(data))
+				if err := send(string(data)); err != nil {
+					return usage, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+				}
 			}
 			continue
 		}
 		// done frame
 		if delta, hasPayload := buildOllamaStreamDelta(&chunk, responseId, created, model, &toolCallIndex); hasPayload {
 			if data, err := common.Marshal(delta); err == nil {
-				_ = helper.StringData(c, string(data))
+				if err := send(string(data)); err != nil {
+					return usage, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+				}
 			}
 		}
 		// finalize once and break loop
@@ -201,21 +211,28 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		// emit stop delta
 		if stop := helper.GenerateStopResponse(responseId, created, model, finishReason); stop != nil {
 			if data, err := common.Marshal(stop); err == nil {
-				_ = helper.StringData(c, string(data))
+				if err := send(string(data)); err != nil {
+					return usage, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+				}
 			}
 		}
 		// emit usage frame
 		if final := helper.GenerateFinalUsageResponse(responseId, created, model, *usage); final != nil {
 			if data, err := common.Marshal(final); err == nil {
-				_ = helper.StringData(c, string(data))
+				if err := send(string(data)); err != nil {
+					return usage, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+				}
 			}
 		}
 		// send [DONE]
-		helper.Done(c)
+		if err := send("[DONE]"); err != nil {
+			return usage, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		}
 		break
 	}
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		logger.LogError(c, common.LogText("ollama stream scan error: %s", err.Error()))
+		return usage, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
 	}
 	return usage, nil
 }

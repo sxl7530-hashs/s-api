@@ -251,9 +251,11 @@ func main() {
 	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
+	service.FlushBedrockActualUsage()
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysError(common.LogText("server forced to shutdown: %v", err))
 	}
+	service.FlushBedrockActualUsage()
 	if pprofServer != nil {
 		if err := pprofServer.Shutdown(ctx); err != nil {
 			common.SysError(fmt.Sprintf("pprof server forced to shutdown: %v", err))

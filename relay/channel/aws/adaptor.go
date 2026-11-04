@@ -31,6 +31,9 @@ type Adaptor struct {
 	AwsModelId string
 	AwsReq     any
 	IsNova     bool
+	// Capture once before dispatch so RPM and TPM use the same setting even
+	// when an administrator changes it while the upstream request is in flight.
+	collectActualUsage bool
 }
 
 func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeminiChatRequest) (any, error) {

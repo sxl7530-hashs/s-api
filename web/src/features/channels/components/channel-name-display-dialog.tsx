@@ -2,6 +2,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { handleServerError } from '@/lib/handle-server-error'
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,7 +32,15 @@ type ChannelNameDisplayDialogProps = {
 
 export function ChannelNameDisplayDialog(props: ChannelNameDisplayDialogProps) {
   const { t } = useTranslation()
-  const { settings, updateSettings } = useChannelNameDisplay()
+  const {
+    settings,
+    updateSettings,
+    isLoading,
+    isError,
+    isSaving,
+    canEdit,
+    retryLoad,
+  } = useChannelNameDisplay()
   const [enabled, setEnabled] = useState(settings.enabled)
   const [rows, setRows] = useState<MappingRow[]>(() => {
     const entries = Object.entries(settings.mappings)
@@ -40,12 +49,20 @@ export function ChannelNameDisplayDialog(props: ChannelNameDisplayDialogProps) {
       : [{ id: 0, source: '', display: '' }]
   })
   const nextRowId = useRef(rows.length)
+  const draftInitialized = useRef(false)
   const hasIncompleteRow = rows.some(
     (row) => Boolean(row.source.trim()) !== Boolean(row.display.trim())
   )
 
   useEffect(() => {
-    if (!props.open) return
+    if (!props.open) {
+      draftInitialized.current = false
+      return
+    }
+    // Initialize once per opening, after the first successful load. Background
+    // refreshes update the shared display settings without replacing this draft.
+    if (isLoading || isError || draftInitialized.current) return
+    draftInitialized.current = true
     setEnabled(settings.enabled)
     const entries = Object.entries(settings.mappings)
     const nextRows = entries.map(([source, display], id) => ({
@@ -59,7 +76,7 @@ export function ChannelNameDisplayDialog(props: ChannelNameDisplayDialogProps) {
         ? nextRows
         : [{ id: nextRowId.current++, source: '', display: '' }]
     )
-  }, [props.open, settings])
+  }, [props.open, settings, isLoading, isError])
 
   return (
     <Dialog
@@ -77,20 +94,21 @@ export function ChannelNameDisplayDialog(props: ChannelNameDisplayDialogProps) {
             {t('Cancel')}
           </Button>
           <Button
-            onClick={() => {
+            onClick={async () => {
               if (hasIncompleteRow) return
               const mappings = Object.fromEntries(
                 rows
                   .filter((row) => row.source.trim() && row.display.trim())
                   .map((row) => [row.source.trim(), row.display.trim()])
               )
-              updateSettings({
-                enabled,
-                mappings,
-              })
-              props.onOpenChange(false)
+              try {
+                await updateSettings({ enabled, mappings })
+                props.onOpenChange(false)
+              } catch (error) {
+                handleServerError(error)
+              }
             }}
-            disabled={hasIncompleteRow}
+            disabled={hasIncompleteRow || isLoading || isError || isSaving || !canEdit}
           >
             {t('Save')}
           </Button>
@@ -98,6 +116,14 @@ export function ChannelNameDisplayDialog(props: ChannelNameDisplayDialogProps) {
       }
     >
       <div className='space-y-4'>
+        {isError && (
+          <div role='alert' className='flex items-center justify-between gap-3 text-sm text-destructive'>
+            <span>{t('Failed to load')}</span>
+            <Button type='button' variant='outline' size='sm' onClick={() => void retryLoad()}>
+              {t('Retry')}
+            </Button>
+          </div>
+        )}
         <div className='flex items-center justify-between gap-4 rounded-md border p-3'>
           <Label
             htmlFor='channel-name-display-enabled'
@@ -109,6 +135,7 @@ export function ChannelNameDisplayDialog(props: ChannelNameDisplayDialogProps) {
             id='channel-name-display-enabled'
             checked={enabled}
             onCheckedChange={setEnabled}
+            disabled={!canEdit || isLoading || isError || isSaving}
           />
         </div>
         <div className='space-y-2'>
@@ -118,6 +145,7 @@ export function ChannelNameDisplayDialog(props: ChannelNameDisplayDialogProps) {
               type='button'
               size='sm'
               variant='outline'
+              disabled={!canEdit || isLoading || isError || isSaving}
               onClick={() =>
                 setRows((current) => [
                   ...current,
@@ -145,6 +173,7 @@ export function ChannelNameDisplayDialog(props: ChannelNameDisplayDialogProps) {
                       <Input
                         aria-label={`${t('Name')} ${index + 1}`}
                         value={row.source}
+                        disabled={!canEdit || isLoading || isError || isSaving}
                         onChange={(event) =>
                           setRows((current) =>
                             current.map((item) =>
@@ -160,6 +189,7 @@ export function ChannelNameDisplayDialog(props: ChannelNameDisplayDialogProps) {
                       <Input
                         aria-label={`${t('Display name')} ${index + 1}`}
                         value={row.display}
+                        disabled={!canEdit || isLoading || isError || isSaving}
                         onChange={(event) =>
                           setRows((current) =>
                             current.map((item) =>
@@ -178,6 +208,7 @@ export function ChannelNameDisplayDialog(props: ChannelNameDisplayDialogProps) {
                         size='icon'
                         aria-label={t('Delete')}
                         title={t('Delete')}
+                        disabled={!canEdit || isLoading || isError || isSaving}
                         onClick={() =>
                           setRows((current) =>
                             current.filter((item) => item.id !== row.id)

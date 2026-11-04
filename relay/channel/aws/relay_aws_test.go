@@ -195,6 +195,9 @@ func TestBedrockEstimationPreservesRequestCacheOwnership(t *testing.T) {
 }
 
 func TestBedrockOptionalEstimationDoesNotBlockRequests(t *testing.T) {
+	previous := model_setting.GetGlobalSettings().AwsUsageMetricsEnabled
+	model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = true
+	t.Cleanup(func() { model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = previous })
 	server := miniredis.RunT(t)
 	previousClient, previousEnabled := common.RDB, common.RedisEnabled
 	previousMedia, previousNonStream := constant.GetMediaToken, constant.GetMediaTokenNotStream
@@ -202,6 +205,7 @@ func TestBedrockOptionalEstimationDoesNotBlockRequests(t *testing.T) {
 	common.RDB, common.RedisEnabled = client, true
 	constant.GetMediaToken, constant.GetMediaTokenNotStream = true, true
 	t.Cleanup(func() {
+		service.FlushBedrockActualUsage()
 		require.NoError(t, client.Close())
 		common.RDB, common.RedisEnabled = previousClient, previousEnabled
 		constant.GetMediaToken, constant.GetMediaTokenNotStream = previousMedia, previousNonStream
@@ -243,8 +247,9 @@ func TestBedrockOptionalEstimationDoesNotBlockRequests(t *testing.T) {
 			require.Nil(t, protectionErr)
 			_, err := a.AwsClient.InvokeModel(t.Context(), a.AwsReq.(*bedrockruntime.InvokeModelInput))
 			require.Error(t, err)
+			service.FlushBedrockActualUsage()
 			assert.Equal(t, 1, calls)
-			assert.Equal(t, "1", server.HGet("bedrock:usage:v2:{98}", "rpm"))
+			assert.Equal(t, "1", server.HGet("bedrock:actual-usage:v1:{98}", "rpm"))
 			if tc.settings.RateLimitEnabled {
 				require.NotNil(t, bedrockProtectionError(c, info, a), "unknown TPM must not bypass RPM protection")
 			}
@@ -265,7 +270,11 @@ func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
 		for _, mode := range []string{"off", "metrics", "protection", "compatibility"} {
 			for _, stream := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/stream=%t", key, mode, stream), func(t *testing.T) {
+					service.FlushBedrockActualUsage()
 					server.FlushAll()
+					previous := model_setting.GetGlobalSettings().AwsUsageMetricsEnabled
+					model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = mode != "off"
+					t.Cleanup(func() { model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = previous })
 					info := newAwsTestRelayInfo()
 					info.ApiKey, info.ChannelId, info.IsStream = key, 97, stream
 					info.AwsPassthroughCompatibility = mode == "compatibility"
@@ -275,8 +284,8 @@ func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
 						"X-Forwarded-For": "10.0.0.1", "X-Forwarded-Proto": "https", "X-Real-IP": "10.0.0.1", "Forwarded": "for=10.0.0.1",
 						"x-amzn-bedrock-trace": "DISABLED",
 					}
-					if mode != "off" {
-						info.ChannelSetting.BedrockProtection = &dto.BedrockProtectionSettings{UsageMetricsEnabled: true, RateLimitEnabled: mode == "protection", RPM: 100}
+					if mode == "protection" {
+						info.ChannelSetting.BedrockProtection = &dto.BedrockProtectionSettings{RateLimitEnabled: true, RPM: 100}
 					}
 					c := newAwsTestContext(httptest.NewRecorder(), t.Context())
 					c.Request.Header.Set("X-Amzn-Bedrock-Trace", "ENABLED")
@@ -285,9 +294,9 @@ func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
 					a := &Adaptor{}
 					_, err := a.DoRequest(c, info, strings.NewReader(`{"max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`))
 					require.NoError(t, err)
-					tokens := 0
+
 					if mode != "off" {
-						tokens, err = a.estimateProtectionTokens(c, info)
+						_, err = a.estimateProtectionTokens(c, info)
 						require.NoError(t, err)
 					}
 					attempts := 0
@@ -336,11 +345,12 @@ func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
 						wantAttempts = 1
 					}
 					assert.Equal(t, wantAttempts, attempts)
+					service.FlushBedrockActualUsage()
 					if mode == "off" {
 						assert.Empty(t, server.Keys(), "disabled metrics must not write Redis")
 					} else {
-						assert.Equal(t, fmt.Sprint(attempts), server.HGet("bedrock:usage:v2:{97}", "rpm"))
-						assert.Equal(t, fmt.Sprint(attempts*tokens), server.HGet("bedrock:usage:v2:{97}", "tpm"))
+						assert.Equal(t, fmt.Sprint(attempts), server.HGet("bedrock:actual-usage:v1:{97}", "rpm"))
+						assert.Equal(t, "0", server.HGet("bedrock:actual-usage:v1:{97}", "tpm"), "declared max_tokens is not actual usage")
 					}
 				})
 			}
@@ -518,11 +528,16 @@ func TestAwsProtectionCoversStreamNovaAndOversizedOverrides(t *testing.T) {
 }
 
 func TestAwsStreamFailureDoesNotEmitSuccessfulTerminalEvent(t *testing.T) {
+	service.FlushBedrockActualUsage()
 	server := miniredis.RunT(t)
+	previousMetrics := model_setting.GetGlobalSettings().AwsUsageMetricsEnabled
+	model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = true
 	previousClient, previousEnabled := common.RDB, common.RedisEnabled
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	common.RDB, common.RedisEnabled = client, true
 	t.Cleanup(func() {
+		service.FlushBedrockActualUsage()
+		model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = previousMetrics
 		require.NoError(t, client.Close())
 		common.RDB, common.RedisEnabled = previousClient, previousEnabled
 	})
@@ -530,10 +545,19 @@ func TestAwsStreamFailureDoesNotEmitSuccessfulTerminalEvent(t *testing.T) {
 		name      string
 		partial   bool
 		throttled bool
-	}{{"initial throttle", false, true}, {"partial throttle", true, true}, {"truncated stream", true, false}} {
+		format    relaytypes.RelayFormat
+	}{
+		{"initial throttle", false, true, relaytypes.RelayFormatOpenAI},
+		{"partial throttle", true, true, relaytypes.RelayFormatOpenAI},
+		{"truncated stream", true, false, relaytypes.RelayFormatOpenAI},
+		{"Claude initial throttle", false, true, relaytypes.RelayFormatClaude},
+		{"Claude partial throttle", true, true, relaytypes.RelayFormatClaude},
+		{"Claude truncated stream", true, false, relaytypes.RelayFormatClaude},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server.FlushAll()
 			info := newAwsTestRelayInfo()
+			info.RelayFormat = tc.format
 			info.ChannelId = 81
 			info.ChannelSetting.BedrockProtection = &dto.BedrockProtectionSettings{
 				ThrottlingCooldownEnabled: true, MinimumSampleSize: 1, ThrottlingRatioPercent: 100,
@@ -571,6 +595,10 @@ func TestAwsStreamFailureDoesNotEmitSuccessfulTerminalEvent(t *testing.T) {
 			assert.True(t, info.StreamStatus.HasErrors())
 			assert.Equal(t, string(relaycommon.ResponseOutcomeFailed), info.StreamStatus.ResponseOutcome())
 			assert.NotContains(t, recorder.Body.String(), "[DONE]")
+			assert.NotContains(t, recorder.Body.String(), "event: message_stop")
+			service.FlushBedrockActualUsage()
+			assert.Equal(t, "1", server.HGet("bedrock:actual-usage:v1:{81}", "unknown"), "failed streams must mark TPM incomplete")
+			assert.Equal(t, "0", server.HGet("bedrock:actual-usage:v1:{81}", "tpm"), "partial usage must not be presented as a final total")
 			assert.Equal(t, tc.throttled, service.IsBedrockCoolingDown(info.ChannelId, info.ChannelSetting.BedrockProtection))
 		})
 	}
@@ -763,6 +791,48 @@ func TestDoAwsClientRequest_AppliesRuntimeHeaderOverrideToAnthropicBeta(t *testi
 	values, ok := anthropicBeta.([]any)
 	require.True(t, ok)
 	require.Equal(t, []any{"computer-use-2025-01-24"}, values)
+}
+
+func TestAwsFormattedRequestFiltersBodyBetasAndHonorsHeaderOverride(t *testing.T) {
+	settings := model_setting.GetGlobalSettings()
+	common.OptionMapRWMutex.Lock()
+	previousEnabled, previousBlacklist := settings.AwsBetaFilterEnabled, settings.AwsBetaBlacklist
+	settings.AwsBetaFilterEnabled, settings.AwsBetaBlacklist = true, []string{"blocked"}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		defer common.OptionMapRWMutex.Unlock()
+		settings.AwsBetaFilterEnabled, settings.AwsBetaBlacklist = previousEnabled, previousBlacklist
+	})
+	for _, tc := range []struct {
+		name, body, header string
+		want               []string
+		disabled           bool
+	}{
+		{"body blacklist", `["blocked","allowed"]`, "", []string{"allowed"}, false},
+		{"fully blocked body", `["blocked"]`, "", nil, false},
+		{"blocked header must not restore body", `["allowed"]`, "blocked", nil, false},
+		{"header override", `["body-beta"]`, "header-beta", []string{"header-beta"}, false},
+		{"disabled filter keeps body", `["blocked","allowed"]`, "", []string{"blocked", "allowed"}, true},
+		{"disabled filter keeps header override", `["allowed"]`, "blocked", []string{"blocked"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			common.OptionMapRWMutex.Lock()
+			settings.AwsBetaFilterEnabled = !tc.disabled
+			common.OptionMapRWMutex.Unlock()
+			headers := http.Header{}
+			headers.Set("anthropic-beta", tc.header)
+			formatted, err := formatRequest(strings.NewReader(`{"max_tokens":128,"messages":[],"anthropic_beta":`+tc.body+`}`), headers)
+			require.NoError(t, err)
+			encoded, err := common.Marshal(formatted)
+			require.NoError(t, err)
+			var payload struct {
+				Betas []string `json:"anthropic_beta"`
+			}
+			require.NoError(t, common.Unmarshal(encoded, &payload))
+			assert.Equal(t, tc.want, payload.Betas)
+		})
+	}
 }
 
 func TestDoAwsClientRequest_ForwardsThinkingBlockBindingAndBetaList(t *testing.T) {
@@ -1031,6 +1101,19 @@ func TestAwsHandlersCancelSdkRequestAndSkipRetry(t *testing.T) {
 }
 
 func TestAwsStreamHandlerUsesFinalUpstreamUsage(t *testing.T) {
+	service.FlushBedrockActualUsage()
+	server := miniredis.RunT(t)
+	previousClient, previousEnabled := common.RDB, common.RedisEnabled
+	previousMetrics := model_setting.GetGlobalSettings().AwsUsageMetricsEnabled
+	redisClient := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = redisClient, true
+	model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = true
+	t.Cleanup(func() {
+		service.FlushBedrockActualUsage()
+		require.NoError(t, redisClient.Close())
+		common.RDB, common.RedisEnabled = previousClient, previousEnabled
+		model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = previousMetrics
+	})
 	originalRelayTimeout := common.RelayTimeout
 	common.RelayTimeout = 0
 	t.Cleanup(func() {
@@ -1056,8 +1139,12 @@ func TestAwsStreamHandlerUsesFinalUpstreamUsage(t *testing.T) {
 	adaptor := &Adaptor{AwsClient: client, AwsReq: newAwsStreamInput()}
 	recorder := httptest.NewRecorder()
 	c := newAwsTestContext(recorder, context.Background())
+	info := newAwsTestRelayInfo()
+	info.ChannelId = 98
 
-	handlerErr, usage := awsStreamHandler(c, newAwsTestRelayInfo(), adaptor)
+	require.Nil(t, bedrockProtectionError(c, info, adaptor))
+	handlerErr, usage := awsStreamHandler(c, info, adaptor)
+	service.FlushBedrockActualUsage()
 
 	require.Nil(t, handlerErr)
 	require.NotNil(t, usage)
@@ -1065,7 +1152,217 @@ func TestAwsStreamHandlerUsesFinalUpstreamUsage(t *testing.T) {
 	require.NotNil(t, usage.BillingUsage.ClaudeUsage)
 	assert.Equal(t, 100, usage.BillingUsage.ClaudeUsage.InputTokens)
 	assert.Equal(t, 423, usage.BillingUsage.ClaudeUsage.OutputTokens)
+	assert.Equal(t, "1", server.HGet("bedrock:actual-usage:v1:{98}", "rpm"))
+	assert.Equal(t, "523", server.HGet("bedrock:actual-usage:v1:{98}", "tpm"))
 	assert.Contains(t, recorder.Body.String(), "[DONE]")
+}
+
+func TestBedrockUsageUsesOneSettingSnapshotPerRequest(t *testing.T) {
+	service.FlushBedrockActualUsage()
+	server := miniredis.RunT(t)
+	previousClient, previousRedis := common.RDB, common.RedisEnabled
+	previousMetrics := model_setting.GetGlobalSettings().AwsUsageMetricsEnabled
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() {
+		service.FlushBedrockActualUsage()
+		require.NoError(t, client.Close())
+		common.RDB, common.RedisEnabled = previousClient, previousRedis
+		model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = previousMetrics
+	})
+	for _, stream := range []bool{false, true} {
+		for _, initiallyEnabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("stream=%t/initially_enabled=%t", stream, initiallyEnabled), func(t *testing.T) {
+				service.FlushBedrockActualUsage()
+				server.FlushAll()
+				model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = initiallyEnabled
+				upstream := newAwsTestClient(awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+					// Simulate a settings update after dispatch but before usage arrives.
+					model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = !initiallyEnabled
+					if stream {
+						var body bytes.Buffer
+						for _, event := range []string{
+							`{"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","content":[],"usage":{"input_tokens":100,"output_tokens":0}}}`,
+							`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":23}}`,
+							`{"type":"message_stop"}`,
+						} {
+							require.NoError(t, writeAwsStreamEvent(&body, event))
+						}
+						return newAwsStreamResponse(request, io.NopCloser(bytes.NewReader(body.Bytes()))), nil
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Request: request,
+						Body: io.NopCloser(strings.NewReader(`{"id":"msg_test","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":23}}`))}, nil
+				}))
+				adaptor := &Adaptor{AwsClient: upstream, AwsReq: &bedrockruntime.InvokeModelInput{ModelId: aws.String(awsTestModel), Body: []byte(`{"max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`)}}
+				info := newAwsTestRelayInfo()
+				info.ChannelId, info.IsStream = 99, stream
+				c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+				if stream {
+					adaptor.AwsReq = newAwsStreamInput()
+					handlerErr, _ := awsStreamHandler(c, info, adaptor)
+					require.Nil(t, handlerErr)
+				} else {
+					handlerErr, _ := awsHandler(c, info, adaptor)
+					require.Nil(t, handlerErr)
+				}
+				service.FlushBedrockActualUsage()
+				if initiallyEnabled {
+					assert.Equal(t, "1", server.HGet("bedrock:actual-usage:v1:{99}", "rpm"))
+					assert.Equal(t, "123", server.HGet("bedrock:actual-usage:v1:{99}", "tpm"))
+					// Reusing the adaptor after disabling metrics must also remove
+					// its previous attempt observer, not just stop token collection.
+					nextContext := newAwsTestContext(httptest.NewRecorder(), t.Context())
+					if stream {
+						handlerErr, _ := awsStreamHandler(nextContext, info, adaptor)
+						require.Nil(t, handlerErr)
+					} else {
+						handlerErr, _ := awsHandler(nextContext, info, adaptor)
+						require.Nil(t, handlerErr)
+					}
+					service.FlushBedrockActualUsage()
+					assert.Equal(t, "1", server.HGet("bedrock:actual-usage:v1:{99}", "rpm"), "disabled requests must not retain an old observer")
+					assert.Equal(t, "123", server.HGet("bedrock:actual-usage:v1:{99}", "tpm"))
+				} else {
+					assert.Empty(t, server.Keys(), "enabling during an in-flight request must not record TPM without RPM")
+				}
+			})
+		}
+	}
+}
+
+func TestBedrockActualUsageIgnoresOutputBudgetAndUsesAuthoritativeSnapshots(t *testing.T) {
+	service.FlushBedrockActualUsage()
+	server := miniredis.RunT(t)
+	previousClient, previousEnabled := common.RDB, common.RedisEnabled
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() {
+		service.FlushBedrockActualUsage()
+		require.NoError(t, client.Close())
+		common.RDB, common.RedisEnabled = previousClient, previousEnabled
+	})
+	tests := []struct {
+		name   string
+		events []string
+		total  int64
+		known  bool
+	}{
+		{"nonstream with cache", []string{`{"usage":{"input_tokens":100,"output_tokens":23,"cache_read_input_tokens":50,"cache_creation_input_tokens":10}}`}, 183, true},
+		{"cumulative stream usage", []string{`{"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":1}}}`, `{"type":"message_delta","usage":{"output_tokens":20}}`, `{"type":"message_delta","usage":{"output_tokens":23}}`}, 123, true},
+		{"disconnected before final output usage", []string{`{"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":1}}}`}, 0, false},
+		{"Nova", []string{`{"usage":{"inputTokens":100,"outputTokens":23,"totalTokens":123}}`}, 123, true},
+		{"explicit zero", []string{`{"usage":{"input_tokens":0,"output_tokens":0}}`}, 0, true},
+		{"missing usage", []string{`{"content":[]}`}, 0, false},
+		{"content deltas are not usage events", []string{`{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\"usage\":{\"input_tokens\":999}}"},"usage":{"input_tokens":999,"output_tokens":999}}`}, 0, false},
+		{"usage after content and ping", []string{`{"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":1}}}`, `{"type":"content_block_delta","delta":{"type":"text_delta","text":"response text"}}`, `{"type":"ping"}`, `{"type":"message_delta","usage":{"output_tokens":23}}`}, 123, true},
+		{"invalid final output must not reuse earlier snapshot", []string{`{"usage":{"input_tokens":100,"output_tokens":20}}`, `{"usage":{"output_tokens":-1}}`}, 0, false},
+		{"fractional cache usage is not exact", []string{`{"usage":{"input_tokens":100,"output_tokens":23,"cache_read_input_tokens":1.5}}`}, 0, false},
+		{"null cache usage is not zero", []string{`{"usage":{"input_tokens":100,"output_tokens":23,"cache_creation_input_tokens":null}}`}, 0, false},
+		{"invalid total must not fall back to components", []string{`{"usage":{"inputTokens":100,"outputTokens":23,"totalTokens":"123"}}`}, 0, false},
+		{"oversized sum must not be reported as exact", []string{`{"usage":{"input_tokens":2147483647,"output_tokens":1}}`}, 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			service.FlushBedrockActualUsage()
+			server.FlushAll()
+			usage := bedrockActualTokenUsage{}
+			for _, event := range tc.events {
+				usage.observe([]byte(event))
+			}
+			usage.record(101)
+			service.FlushBedrockActualUsage()
+			assert.Equal(t, fmt.Sprint(tc.total), server.HGet("bedrock:actual-usage:v1:{101}", "tpm"))
+			if tc.known {
+				assert.Equal(t, "0", server.HGet("bedrock:actual-usage:v1:{101}", "unknown"))
+			} else {
+				assert.Equal(t, "1", server.HGet("bedrock:actual-usage:v1:{101}", "unknown"))
+			}
+		})
+	}
+}
+
+func TestBedrockTransportFailureMarksTokenUsageUnknown(t *testing.T) {
+	service.FlushBedrockActualUsage()
+	server := miniredis.RunT(t)
+	previousClient, previousRedis := common.RDB, common.RedisEnabled
+	previousMetrics := model_setting.GetGlobalSettings().AwsUsageMetricsEnabled
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = client, true
+	model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = true
+	t.Cleanup(func() {
+		service.FlushBedrockActualUsage()
+		require.NoError(t, client.Close())
+		common.RDB, common.RedisEnabled = previousClient, previousRedis
+		model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = previousMetrics
+	})
+	for _, tc := range []struct {
+		name    string
+		request any
+		handle  func(*gin.Context, *relaycommon.RelayInfo, *Adaptor) (*relaytypes.NewAPIError, *dto.Usage)
+	}{
+		{"Claude", newAwsInvokeModelInput(), awsHandler},
+		{"stream", newAwsStreamInput(), awsStreamHandler},
+		{"Nova", newAwsInvokeModelInput(), handleNovaRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service.FlushBedrockActualUsage()
+			server.FlushAll()
+			upstream := newAwsTestClient(awsHTTPClientFunc(func(*http.Request) (*http.Response, error) {
+				return nil, io.ErrUnexpectedEOF
+			}))
+			info := newAwsTestRelayInfo()
+			info.ChannelId = 106
+			adaptor := &Adaptor{AwsClient: upstream, AwsReq: tc.request}
+			handlerErr, usage := tc.handle(newAwsTestContext(httptest.NewRecorder(), t.Context()), info, adaptor)
+			require.NotNil(t, handlerErr)
+			assert.Nil(t, usage)
+			service.FlushBedrockActualUsage()
+			assert.Equal(t, "1", server.HGet("bedrock:actual-usage:v1:{106}", "rpm"))
+			assert.Equal(t, "0", server.HGet("bedrock:actual-usage:v1:{106}", "tpm"))
+			assert.Equal(t, "1", server.HGet("bedrock:actual-usage:v1:{106}", "unknown"), "a lost upstream response is not proof of zero token usage")
+		})
+	}
+}
+
+func TestNovaActualUsageSurvivesResponseConversionErrors(t *testing.T) {
+	service.FlushBedrockActualUsage()
+	server := miniredis.RunT(t)
+	previousClient, previousRedis := common.RDB, common.RedisEnabled
+	previousMetrics := model_setting.GetGlobalSettings().AwsUsageMetricsEnabled
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = client, true
+	model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = true
+	t.Cleanup(func() {
+		service.FlushBedrockActualUsage()
+		require.NoError(t, client.Close())
+		common.RDB, common.RedisEnabled = previousClient, previousRedis
+		model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = previousMetrics
+	})
+	for _, tc := range []struct {
+		name, body, tpm, unknown string
+	}{
+		{"missing content with valid usage", `{"output":{"message":{"content":[]}},"usage":{"inputTokens":100,"outputTokens":23,"totalTokens":123}}`, "123", "0"},
+		{"invalid response without usage", `not-json`, "0", "1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service.FlushBedrockActualUsage()
+			server.FlushAll()
+			upstream := newAwsTestClient(awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Request: request, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
+			}))
+			adaptor := &Adaptor{AwsClient: upstream, AwsReq: newAwsInvokeModelInput()}
+			info := newAwsTestRelayInfo()
+			info.ChannelId = 102
+			c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+			handlerErr, usage := handleNovaRequest(c, info, adaptor)
+			require.NotNil(t, handlerErr)
+			assert.Nil(t, usage)
+			service.FlushBedrockActualUsage()
+			assert.Equal(t, "1", server.HGet("bedrock:actual-usage:v1:{102}", "rpm"))
+			assert.Equal(t, tc.tpm, server.HGet("bedrock:actual-usage:v1:{102}", "tpm"))
+			assert.Equal(t, tc.unknown, server.HGet("bedrock:actual-usage:v1:{102}", "unknown"))
+		})
+	}
 }
 
 func TestAwsStreamHandlerStopsAtClientCancellation(t *testing.T) {

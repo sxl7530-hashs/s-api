@@ -7459,6 +7459,10 @@
     "Example: sara => Supplier 1": "範例：sara => 供應商1",
     "Complete both names or remove the incomplete row.": "請填寫完整的原名稱和顯示名稱，或刪除未完成的資料列。",
     "AWS Bedrock Passthrough Compatibility": "AWS Bedrock 透傳相容",
+    "AWS anthropic-beta Blacklist": "AWS anthropic-beta Blacklist",
+    "Enable AWS anthropic-beta Blacklist": "Enable AWS anthropic-beta Blacklist",
+    "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.": "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.",
+    "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.": "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.",
     "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "啟用 AWS 透傳時轉換支援的用戶端請求。啟用 AWS 直接透傳的使用者會略過相容處理。預設關閉。",
     "AWS Direct Passthrough": "AWS 直接透傳",
     "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "讓此使用者略過全域 AWS 透傳相容處理。僅在啟用請求透傳時生效。預設關閉。",
@@ -7466,6 +7470,12 @@
     "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "透過此渠道代理唯讀查詢 AWS Service Quotas 中的模型 RPM 和 TPM 配額。",
     "Please fill in the channel proxy before querying AWS quotas": "請先填寫渠道代理地址，再查詢 AWS 配額",
     "Failed to query AWS quotas": "查詢 AWS 配額失敗",
-    "AWS region": "AWS 區域"
+    "AWS region": "AWS 區域",
+    "Enable AWS RPM/TPM Metrics": "啟用 AWS RPM/TPM 統計",
+    "Collect rolling RPM and TPM for all AWS Bedrock channels.": "統計所有 AWS Bedrock 渠道的滾動 RPM 和 TPM。",
+    "Channel Name Display Mapping": "渠道名稱顯示對映",
+    "JSON with enabled and mappings fields, shared by all administrators.": "使用包含 enabled 和 mappings 欄位的 JSON，所有管理員共用。",
+    "Bedrock usage metrics": "Bedrock 用量指標",
+    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "採集每個渠道的 RPM 和預估 TPM，用於可選的渠道列表欄位。"
   }
 }

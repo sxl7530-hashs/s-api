@@ -54,7 +54,9 @@ func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
 		return fmt.Errorf("expected Claude stream responses, got %T", result.Value)
 	}
 	for _, resp := range claudeResponses {
-		helper.ClaudeData(c, *resp)
+		if err := helper.ClaudeData(c, *resp); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -114,8 +116,9 @@ func sendGeminiStreamResults(c *gin.Context, results []relayconvert.ResponseResu
 			logger.LogError(c, common.LogText("failed to marshal gemini response: %s", err.Error()))
 			return err
 		}
-		c.Render(-1, common.CustomEvent{Data: "data: " + string(data)})
-		_ = helper.FlushWriter(c)
+		if err := helper.StringData(c, string(data)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -192,38 +195,41 @@ func handleLastResponse(lastStreamData string, responseId *string, createAt *int
 
 func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStreamData string,
 	responseId string, createAt int64, model string, systemFingerprint string,
-	usage *dto.Usage, containStreamUsage bool) {
+	usage *dto.Usage, containStreamUsage bool) error {
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
 		if info.ShouldIncludeUsage && !containStreamUsage {
 			response := helper.GenerateFinalUsageResponse(responseId, createAt, model, *usage)
 			response.SetSystemFingerprint(systemFingerprint)
-			helper.ObjectData(c, response)
+			if err := helper.ObjectData(c, response); err != nil {
+				return err
+			}
 		}
-		helper.Done(c)
+		return helper.StringData(c, "[DONE]")
 
 	case types.RelayFormatClaude:
 		var streamResponse dto.ChatCompletionsStreamResponse
 		if err := common.Unmarshal(common.StringToByteSlice(lastStreamData), &streamResponse); err != nil {
 			common.SysLog(common.LogText("error unmarshalling stream response: %s", err.Error()))
-			return
+			return err
 		}
 
-		info.ClaudeConvertInfo.Usage = usage
+		info.EnsureClaudeConvertInfo().Usage = usage
 
 		result, err := service.ConvertStreamResponse(c, info, types.RelayFormatClaude, &streamResponse)
 		if err != nil {
 			common.SysLog(common.LogText("error converting Claude stream response: %s", err.Error()))
-			return
+			return err
 		}
 		claudeResponses, ok := result.Value.([]*dto.ClaudeResponse)
 		if !ok {
-			common.SysLog(common.LogText("expected Claude stream responses, got %T", result.Value))
-			return
+			return fmt.Errorf("expected Claude stream responses, got %T", result.Value)
 		}
 		for _, resp := range claudeResponses {
-			_ = helper.ClaudeData(c, *resp)
+			if err := helper.ClaudeData(c, *resp); err != nil {
+				return err
+			}
 		}
 		info.ClaudeConvertInfo.Done = true
 
@@ -231,33 +237,35 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 		var streamResponse dto.ChatCompletionsStreamResponse
 		if err := common.Unmarshal(common.StringToByteSlice(lastStreamData), &streamResponse); err != nil {
 			common.SysLog(common.LogText("error unmarshalling stream response: %s", err.Error()))
-			return
+			return err
 		}
 
 		state, err := chatToGeminiStreamState(info, &streamResponse)
 		if err != nil {
 			common.SysLog(common.LogText("error creating Gemini stream state: %s", err.Error()))
-			return
+			return err
 		}
 		state.SetUsage(usage)
 
 		results, err := service.ConvertStreamResponseChunk(c, info, state, &streamResponse)
 		if err != nil {
 			common.SysLog(common.LogText("error converting final Gemini stream response: %s", err.Error()))
-			return
+			return err
 		}
 		if err := sendGeminiStreamResults(c, results); err != nil {
 			common.SysLog(common.LogText("error sending final Gemini stream response: %s", err.Error()))
-			return
+			return err
 		}
 
 		results, err = service.FinalizeStreamResponse(c, info, state)
 		if err != nil {
 			common.SysLog(common.LogText("error finalizing Gemini stream response: %s", err.Error()))
-			return
+			return err
 		}
 		if err := sendGeminiStreamResults(c, results); err != nil {
 			common.SysLog(common.LogText("error sending finalized Gemini stream response: %s", err.Error()))
+			return err
 		}
 	}
+	return nil
 }

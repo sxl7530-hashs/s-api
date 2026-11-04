@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -282,6 +283,20 @@ func GetAllChannels(c *gin.Context) {
 		"type_counts": typeCounts,
 	})
 	return
+}
+
+func GetChannelNameDisplay(c *gin.Context) {
+	common.OptionMapRWMutex.RLock()
+	value := common.OptionMap["global.channel_name_display"]
+	common.OptionMapRWMutex.RUnlock()
+	settings := model_setting.ChannelNameDisplaySettings{Mappings: map[string]string{}}
+	if value != "" {
+		if err := common.UnmarshalJsonStr(value, &settings); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	common.ApiSuccess(c, settings)
 }
 
 func GetChannelUsage(c *gin.Context) {

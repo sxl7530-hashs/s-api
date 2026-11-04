@@ -7459,6 +7459,10 @@
     "Example: sara => Supplier 1": "Exemple : sara => Fournisseur 1",
     "Complete both names or remove the incomplete row.": "Renseignez les deux noms ou supprimez la ligne incomplète.",
     "AWS Bedrock Passthrough Compatibility": "Compatibilité de passthrough AWS Bedrock",
+    "AWS anthropic-beta Blacklist": "AWS anthropic-beta Blacklist",
+    "Enable AWS anthropic-beta Blacklist": "Enable AWS anthropic-beta Blacklist",
+    "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.": "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.",
+    "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.": "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.",
     "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "Convertit les requêtes prises en charge lorsque le passthrough AWS est activé. Les utilisateurs en passthrough direct AWS ignorent cette compatibilité. Désactivé par défaut.",
     "AWS Direct Passthrough": "Passthrough direct AWS",
     "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Ignore la compatibilité globale du passthrough AWS pour cet utilisateur. S’applique uniquement lorsque le passthrough est activé. Désactivé par défaut.",
@@ -7466,6 +7470,12 @@
     "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "Interroge en lecture seule les quotas RPM et TPM AWS via le proxy de ce canal.",
     "Please fill in the channel proxy before querying AWS quotas": "Veuillez renseigner le proxy du canal avant d’interroger les quotas AWS",
     "Failed to query AWS quotas": "Échec de la consultation des quotas AWS",
-    "AWS region": "Région AWS"
+    "AWS region": "Région AWS",
+    "Enable AWS RPM/TPM Metrics": "Activer les métriques RPM/TPM AWS",
+    "Collect rolling RPM and TPM for all AWS Bedrock channels.": "Collecter le RPM et le TPM glissants de tous les canaux AWS Bedrock.",
+    "Channel Name Display Mapping": "Mappage d’affichage des noms de canaux",
+    "JSON with enabled and mappings fields, shared by all administrators.": "JSON avec les champs enabled et mappings, partagé par tous les administrateurs.",
+    "Bedrock usage metrics": "Mesures d’utilisation Bedrock",
+    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "Collecte les RPM et TPM estimés par canal pour les colonnes facultatives du tableau."
   }
 }

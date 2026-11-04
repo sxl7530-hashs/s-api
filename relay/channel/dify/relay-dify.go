@@ -251,11 +251,12 @@ func difyStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 			}
 		}
 		if err := helper.ObjectData(c, openaiResponse); err != nil {
-			common.SysLog(err.Error())
-			sr.Error(err)
+			sr.Stop(err)
 		}
 	})
-	helper.Done(c)
+	if info.StreamStatus != nil && info.StreamStatus.IsNormalEnd() && c.Request.Context().Err() == nil {
+		helper.Done(c)
+	}
 	if usage.TotalTokens == 0 {
 		usage = service.ResponseTokens2Usage(c, responseTokens.Tokens(), info.GetEstimatePromptTokens())
 	}

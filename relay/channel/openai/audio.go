@@ -50,7 +50,7 @@ func OpenaiTTSHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 				}
 			}
 			if err := helper.StringData(c, data); err != nil {
-				sr.Error(err)
+				sr.Stop(err)
 			}
 		})
 	} else {

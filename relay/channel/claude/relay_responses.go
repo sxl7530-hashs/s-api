@@ -2,6 +2,7 @@ package claude
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -73,6 +74,8 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 		if !handled {
 			return false
 		}
+		info.StreamStatus.RecordError(err.Error())
+		info.StreamStatus.MarkFailed(string(types.ErrorCodeBadResponse), "server_error", http.StatusBadGateway)
 		for _, result := range failureResults {
 			if !sendResult(result) {
 				return true
@@ -158,10 +161,29 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 			}
 		}
 	})
+	info.StreamStatus.RequireTerminal()
+	if c.Request.Context().Err() != nil {
+		info.StreamStatus.MarkCancelled()
+		HandleStreamFinalResponse(c, info, claudeInfo)
+		return claudeInfo.Usage, nil
+	}
+	if streamErr == nil && !streamFailed && info.StreamStatus.ResponseOutcome() != string(relaycommon.ResponseOutcomeCompleted) {
+		streamErr = types.NewOpenAIError(io.ErrUnexpectedEOF, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		if c.Writer.Written() {
+			failResponsesStream(io.ErrUnexpectedEOF)
+		}
+	}
 	if streamErr != nil {
-		return nil, streamErr
+		info.StreamStatus.RecordError(streamErr.Error())
+		info.StreamStatus.MarkFailed(string(streamErr.GetErrorCode()), streamErr.ToOpenAIError().Type, streamErr.StatusCode)
+		if !c.Writer.Written() {
+			return nil, streamErr
+		}
+		HandleStreamFinalResponse(c, info, claudeInfo)
+		return claudeInfo.Usage, nil
 	}
 	if streamFailed {
+		HandleStreamFinalResponse(c, info, claudeInfo)
 		return claudeInfo.Usage, nil
 	}
 
@@ -171,12 +193,20 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 	finalResults, err := service.FinalizeStreamResponse(c, info, state)
 	if err != nil {
 		if failResponsesStream(err) {
+			if c.Writer.Written() {
+				return claudeInfo.Usage, nil
+			}
 			return claudeInfo.Usage, streamErr
 		}
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 	for _, result := range finalResults {
 		if !sendResult(result) {
+			info.StreamStatus.RecordError(streamErr.Error())
+			info.StreamStatus.MarkFailed(string(streamErr.GetErrorCode()), streamErr.ToOpenAIError().Type, streamErr.StatusCode)
+			if c.Writer.Written() {
+				return claudeInfo.Usage, nil
+			}
 			return nil, streamErr
 		}
 	}

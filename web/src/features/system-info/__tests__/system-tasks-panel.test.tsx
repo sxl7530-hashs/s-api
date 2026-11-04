@@ -176,7 +176,7 @@ it('keeps filters available and disables cleanup when history is empty', async (
 })
 
 it('shows progress and confirms cancellation for a selected-channel model test', async () => {
-  vi.spyOn(api, 'get').mockImplementation(async (_url, config) => ({
+  vi.spyOn(api, 'get').mockImplementation(async (_url, config?: ApiRequestConfig) => ({
     data: {
       success: true,
       data:

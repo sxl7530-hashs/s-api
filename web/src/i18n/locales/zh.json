@@ -7470,6 +7470,12 @@
     "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "通过此渠道代理只读查询 AWS Service Quotas 中的模型 RPM 和 TPM 配额。",
     "Please fill in the channel proxy before querying AWS quotas": "请先填写渠道代理地址，再查询 AWS 配额",
     "Failed to query AWS quotas": "查询 AWS 配额失败",
-    "AWS region": "AWS 区域"
+    "AWS region": "AWS 区域",
+    "Enable AWS RPM/TPM Metrics": "启用 AWS RPM/TPM 统计",
+    "Collect rolling RPM and TPM for all AWS Bedrock channels.": "统计所有 AWS Bedrock 渠道的滚动 RPM 和 TPM。",
+    "Channel Name Display Mapping": "渠道名称显示映射",
+    "JSON with enabled and mappings fields, shared by all administrators.": "使用包含 enabled 和 mappings 字段的 JSON，所有管理员共享。",
+    "Bedrock usage metrics": "Bedrock 用量指标",
+    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "采集每个渠道的 RPM 和预估 TPM，用于可选的渠道列表列。"
   }
 }

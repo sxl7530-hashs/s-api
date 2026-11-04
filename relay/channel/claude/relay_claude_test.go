@@ -1,7 +1,10 @@
 package claude
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,6 +25,161 @@ import (
 
 func commonPointer[T any](value T) *T {
 	return &value
+}
+
+type claudeFailingFinalWriter struct {
+	*httptest.ResponseRecorder
+}
+
+func (w *claudeFailingFinalWriter) Write(data []byte) (int, error) {
+	if bytes.Contains(data, []byte("event: response.completed")) {
+		return 0, io.ErrClosedPipe
+	}
+	return w.ResponseRecorder.Write(data)
+}
+
+func (w *claudeFailingFinalWriter) WriteString(data string) (int, error) {
+	return w.Write([]byte(data))
+}
+
+func TestClaudeStreamFailurePreservesPartialUsageWithoutSuccessfulEnd(t *testing.T) {
+	for _, format := range []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatClaude, types.RelayFormatOpenAIResponses} {
+		for _, ending := range []string{"completed", "truncated", "malformed", "upstream error", "initial error", "empty stream", "cancelled", "final write failure"} {
+			if ending == "final write failure" && format != types.RelayFormatOpenAIResponses {
+				continue
+			}
+			t.Run(fmt.Sprintf("%s/%s", format, ending), func(t *testing.T) {
+				var events []string
+				if ending != "initial error" && ending != "empty stream" && ending != "cancelled" {
+					events = append(events,
+						`{"type":"message_start","message":{"id":"msg_test","model":"claude-test","role":"assistant","content":[],"usage":{"input_tokens":100,"output_tokens":1}}}`,
+						`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+						`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`,
+					)
+				}
+				switch ending {
+				case "completed", "final write failure":
+					events = append(events, `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}`, `{"type":"message_stop"}`)
+				case "upstream error", "initial error":
+					events = append(events, `{"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}`)
+				case "malformed":
+					events = append(events, `{"type":`)
+				}
+				var body strings.Builder
+				for _, event := range events {
+					body.WriteString("data: " + event + "\n\n")
+				}
+				recorder := httptest.NewRecorder()
+				var writer http.ResponseWriter = recorder
+				if ending == "final write failure" {
+					writer = &claudeFailingFinalWriter{ResponseRecorder: recorder}
+				}
+				ctx, _ := gin.CreateTestContext(writer)
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+				if ending == "cancelled" {
+					cancelled, cancel := context.WithCancel(t.Context())
+					cancel()
+					ctx.Request = ctx.Request.WithContext(cancelled)
+				}
+				info := &relaycommon.RelayInfo{RelayFormat: format, IsStream: true, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-test"}}
+				handler := ClaudeStreamHandler
+				if format == types.RelayFormatOpenAIResponses {
+					handler = ClaudeResponsesStreamHandler
+				}
+				usage, apiErr := handler(ctx, &http.Response{Body: io.NopCloser(strings.NewReader(body.String())), Header: http.Header{}}, info)
+				if ending == "cancelled" {
+					require.Nil(t, apiErr)
+					require.NotNil(t, usage)
+					assert.Equal(t, string(relaycommon.ResponseOutcomeCancelled), info.StreamStatus.ResponseOutcome())
+					assert.Empty(t, recorder.Body.String())
+					return
+				}
+				if ending == "initial error" || ending == "empty stream" {
+					if ending == "initial error" && format == types.RelayFormatOpenAIResponses {
+						require.Nil(t, apiErr)
+						require.NotNil(t, usage)
+						assert.Contains(t, recorder.Body.String(), "event: response.failed")
+						assert.Equal(t, string(relaycommon.ResponseOutcomeFailed), info.StreamStatus.ResponseOutcome())
+						return
+					}
+					require.NotNil(t, apiErr)
+					assert.Nil(t, usage)
+					if ending == "empty stream" {
+						assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+					}
+					return
+				}
+				require.Nil(t, apiErr, "a partial stream must retain usage for settlement")
+				require.NotNil(t, usage)
+				assert.Equal(t, 100, usage.PromptTokens)
+				assert.Contains(t, recorder.Body.String(), "partial")
+				if ending == "completed" {
+					assert.Equal(t, string(relaycommon.ResponseOutcomeCompleted), info.StreamStatus.ResponseOutcome())
+					assert.Equal(t, 10, usage.CompletionTokens)
+				} else {
+					assert.NotContains(t, recorder.Body.String(), "[DONE]")
+					assert.NotContains(t, recorder.Body.String(), "event: message_stop")
+					if format == types.RelayFormatOpenAIResponses {
+						assert.NotContains(t, recorder.Body.String(), "event: response.completed")
+						if ending != "final write failure" {
+							assert.Contains(t, recorder.Body.String(), "event: response.failed")
+						}
+					}
+					assert.Equal(t, string(relaycommon.ResponseOutcomeFailed), info.StreamStatus.ResponseOutcome())
+				}
+			})
+		}
+	}
+}
+
+func TestClaudeResponsesToolStreamPreservesCacheAndTerminalUsage(t *testing.T) {
+	for _, ending := range []string{"tool_use", "max_tokens", "truncated"} {
+		t.Run(ending, func(t *testing.T) {
+			events := []string{
+				`{"type":"message_start","message":{"id":"msg_tool","model":"claude-test","role":"assistant","content":[],"usage":{"input_tokens":100,"output_tokens":1,"cache_read_input_tokens":200,"cache_creation_input_tokens":50}}}`,
+				`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_read","name":"read_file","input":{}}}`,
+				`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"README.md\"}"}}`,
+				`{"type":"content_block_stop","index":0}`,
+			}
+			if ending != "truncated" {
+				events = append(events, fmt.Sprintf(`{"type":"message_delta","delta":{"stop_reason":%q},"usage":{"output_tokens":42}}`, ending), `{"type":"message_stop"}`)
+			}
+			var body strings.Builder
+			for _, event := range events {
+				body.WriteString("data: " + event + "\n\n")
+			}
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			info := &relaycommon.RelayInfo{RelayFormat: types.RelayFormatOpenAIResponses, IsStream: true, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-test"}}
+			usage, apiErr := ClaudeResponsesStreamHandler(ctx, &http.Response{Body: io.NopCloser(strings.NewReader(body.String())), Header: http.Header{}}, info)
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			require.NotNil(t, usage.BillingUsage)
+			canonical, known := usage.BillingUsage.CanonicalUsage()
+			require.True(t, known)
+			assert.Equal(t, 100, canonical.PromptTokens)
+			assert.Equal(t, 200, canonical.PromptTokensDetails.CachedTokens)
+			assert.Equal(t, 50, canonical.PromptTokensDetails.CachedCreationTokens)
+			assert.Contains(t, recorder.Body.String(), "function_call")
+			assert.Contains(t, recorder.Body.String(), "read_file")
+			assert.Contains(t, recorder.Body.String(), "README.md")
+			switch ending {
+			case "tool_use":
+				assert.Equal(t, 42, canonical.CompletionTokens)
+				assert.Contains(t, recorder.Body.String(), "event: response.completed")
+				assert.NotContains(t, recorder.Body.String(), "event: response.failed")
+			case "max_tokens":
+				assert.Equal(t, 42, canonical.CompletionTokens)
+				assert.Contains(t, recorder.Body.String(), "event: response.incomplete")
+				assert.NotContains(t, recorder.Body.String(), "event: response.failed")
+			case "truncated":
+				assert.Positive(t, canonical.CompletionTokens)
+				assert.Contains(t, recorder.Body.String(), "event: response.failed")
+				assert.NotContains(t, recorder.Body.String(), "event: response.completed")
+			}
+		})
+	}
 }
 
 func TestClaudeStreamFinalUsageEstimatesOnlyUncountedUsage(t *testing.T) {

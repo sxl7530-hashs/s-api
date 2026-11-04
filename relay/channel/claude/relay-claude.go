@@ -124,7 +124,9 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			}
 		}
 		countClaudeStreamBillableTools(info, &claudeResponse)
-		helper.ClaudeChunkData(c, claudeResponse, data)
+		if sendErr := helper.ClaudeChunkData(c, claudeResponse, data); sendErr != nil {
+			return types.NewError(sendErr, types.ErrorCodeBadResponseBody)
+		}
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		state, err := claudeToChatStreamState(info)
 		if err != nil {
@@ -216,8 +218,12 @@ func sendGeminiStreamResults(c *gin.Context, results []relayconvert.ResponseResu
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
-		c.Render(-1, common.CustomEvent{Data: "data: " + string(data)})
-		_ = helper.FlushWriter(c)
+		if err := (common.CustomEvent{Data: "data: " + string(data)}).Render(c.Writer); err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+		if err := helper.FlushWriter(c); err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
 	}
 	return nil
 }
@@ -350,8 +356,19 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		}
 	})
 	info.StreamStatus.RequireTerminal()
+	if c.Request.Context().Err() != nil {
+		info.StreamStatus.MarkCancelled()
+	} else if err == nil && info.StreamStatus.ResponseOutcome() != string(relaycommon.ResponseOutcomeCompleted) {
+		err = types.NewOpenAIError(io.ErrUnexpectedEOF, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		info.StreamStatus.RecordError(err.Error())
+	}
 	if err != nil {
-		return nil, err
+		info.StreamStatus.MarkFailed(string(err.GetErrorCode()), err.ToOpenAIError().Type, err.StatusCode)
+		if !c.Writer.Written() {
+			return nil, err
+		}
+		// Once output has reached the client, retain partial usage for settlement
+		// and suppress successful final events instead of replaying the request.
 	}
 
 	HandleStreamFinalResponse(c, info, claudeInfo)

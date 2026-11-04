@@ -96,8 +96,12 @@ func tencentStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *htt
 	scanner.Split(bufio.ScanLines)
 
 	helper.SetEventStreamHeaders(c)
+	completed := false
 
 	for scanner.Scan() {
+		if c.Request.Context().Err() != nil {
+			break
+		}
 		data := scanner.Text()
 		if len(data) < 5 || !strings.HasPrefix(data, "data:") {
 			continue
@@ -119,14 +123,21 @@ func tencentStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *htt
 		err = helper.ObjectData(c, response)
 		if err != nil {
 			common.SysLog(err.Error())
+			return service.ResponseText2Usage(c, responseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens()), types.NewError(err, types.ErrorCodeBadResponse)
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		common.SysLog(common.LogText("error reading stream: %s", err.Error()))
+	} else if c.Request.Context().Err() == nil {
+		completed = true
 	}
 
-	helper.Done(c)
+	if completed {
+		if err := helper.StringData(c, "[DONE]"); err != nil {
+			return service.ResponseText2Usage(c, responseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens()), types.NewError(err, types.ErrorCodeBadResponse)
+		}
+	}
 
 	service.CloseResponseBodyGracefully(resp)
 

@@ -8,5 +8,9 @@
   "Maximum disk usage for cache (%)": "Maximum disk usage for cache (%)",
   "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
   "Minimum free disk space (MB)": "Minimum free disk space (MB)",
-  "Always keep this space free": "Always keep this space free"
+  "Always keep this space free": "Always keep this space free",
+  "AWS anthropic-beta Blacklist": "AWS anthropic-beta Blacklist",
+  "Enable AWS anthropic-beta Blacklist": "Enable AWS anthropic-beta Blacklist",
+  "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.": "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.",
+  "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.": "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only."
 }

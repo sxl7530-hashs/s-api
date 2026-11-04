@@ -95,6 +95,7 @@ const schema = z.object({
     aws_beta_blacklist: jsonString,
     thinking_model_blacklist: jsonString,
     chat_completions_to_responses_policy: jsonString,
+    aws_usage_metrics_enabled: z.boolean(),
   }),
   general_setting: z.object({
     ping_interval_enabled: z.boolean(),
@@ -112,6 +113,7 @@ type FlatGlobalModelSettings = {
   'global.aws_beta_blacklist': string
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
+  'global.aws_usage_metrics_enabled': boolean
   'general_setting.ping_interval_enabled': boolean
   'general_setting.ping_interval_seconds': number
 }
@@ -136,6 +138,7 @@ const flattenGlobalValues = (
     values.global.chat_completions_to_responses_policy,
     '{}'
   ),
+  'global.aws_usage_metrics_enabled': values.global.aws_usage_metrics_enabled,
   'general_setting.ping_interval_enabled':
     values.general_setting.ping_interval_enabled,
   'general_setting.ping_interval_seconds':
@@ -249,6 +252,24 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
                   <FormLabel>{t('Enable AWS anthropic-beta Blacklist')}</FormLabel>
                   <FormDescription>
                     {t('When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.')}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch checked={field.value} onCheckedChange={field.onChange} />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.aws_usage_metrics_enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Enable AWS RPM/TPM Metrics')}</FormLabel>
+                  <FormDescription>
+                    {t('Collect rolling RPM and TPM for all AWS Bedrock channels.')}
                   </FormDescription>
                 </SettingsSwitchContent>
                 <FormControl>

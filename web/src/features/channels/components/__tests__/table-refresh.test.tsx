@@ -34,7 +34,6 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { Channels } from '../../index'
-import { CHANNEL_NAME_DISPLAY_STORAGE_KEY } from '../../lib/channel-name-display'
 import type { Channel } from '../../types'
 import { ChannelsProvider } from '../channels-provider'
 import { ChannelsTable } from '../channels-table'
@@ -77,9 +76,13 @@ function channel(name: string): Channel {
   }
 }
 
+let nameDisplay = { enabled: false, mappings: {} as Record<string, string> }
 beforeEach(() => {
+ nameDisplay = { enabled: false, mappings: {} }
+
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
   localStorage.clear()
+ useAuthStore.getState().auth.setUser({ id: 1, username: "root", role: 100 })
 })
 
 afterEach(() => {
@@ -98,6 +101,7 @@ async function renderChannelsPage(
   expectedChannelName = 'prod'
 ) {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+ if (url === '/api/channel/name-display') return { data: { success: true, data: nameDisplay } }
     if (url === '/api/channel/test/models/tasks') {
       return { data: { success: true, data: [], total: 0 } }
     }
@@ -201,10 +205,7 @@ it('refetches the channel list with the current filters and marks Refresh busy w
 
 it('shows the configured alias in the channel list without changing channel data', async () => {
   localStorage.setItem('channels:view-mode', 'table')
-  localStorage.setItem(
-    CHANNEL_NAME_DISPLAY_STORAGE_KEY,
-    JSON.stringify({ enabled: true, mappings: { prod: 'Supplier 1' } })
-  )
+  nameDisplay = { enabled: true, mappings: { prod: 'Supplier 1' } }
 
   await renderChannelsPage(
     () => Promise.resolve(),

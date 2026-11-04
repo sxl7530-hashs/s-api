@@ -26,7 +26,8 @@ import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 
-import { CHANNEL_NAME_DISPLAY_STORAGE_KEY } from '@/features/channels/lib/channel-name-display'
+import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { usageLogSchema, type UsageLog } from '../../data/schema'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
@@ -153,14 +154,12 @@ it('opens long channel text on tap and copies the complete value', async () => {
 })
 
 it('shows a mapped channel name in usage logs when display mapping is enabled', async () => {
-  localStorage.setItem(
-    CHANNEL_NAME_DISPLAY_STORAGE_KEY,
-    JSON.stringify({ enabled: true, mappings: { [longName]: 'Supplier 1' } })
-  )
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { success: true, data: { enabled: true, mappings: { [longName]: 'Supplier 1' } } } })
   renderLogs()
 
   expect(
-    screen.getByRole('button', { name: 'Channel: Supplier 1 #372' })
+    await screen.findByRole('button', { name: 'Channel: Supplier 1 #372' })
   ).toBeVisible()
 })
 

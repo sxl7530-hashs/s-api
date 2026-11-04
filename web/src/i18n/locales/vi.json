@@ -7459,6 +7459,10 @@
     "Example: sara => Supplier 1": "Ví dụ: sara => Nhà cung cấp 1",
     "Complete both names or remove the incomplete row.": "Nhập đủ hai tên hoặc xóa hàng chưa hoàn tất.",
     "AWS Bedrock Passthrough Compatibility": "Tương thích passthrough AWS Bedrock",
+    "AWS anthropic-beta Blacklist": "AWS anthropic-beta Blacklist",
+    "Enable AWS anthropic-beta Blacklist": "Enable AWS anthropic-beta Blacklist",
+    "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.": "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.",
+    "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.": "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.",
     "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "Chuyển đổi các yêu cầu được hỗ trợ khi bật passthrough AWS. Người dùng passthrough trực tiếp AWS sẽ bỏ qua chế độ tương thích. Tắt theo mặc định.",
     "AWS Direct Passthrough": "Passthrough trực tiếp AWS",
     "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "Bỏ qua tương thích passthrough AWS toàn cục cho người dùng này. Chỉ áp dụng khi bật passthrough yêu cầu. Tắt theo mặc định.",
@@ -7466,6 +7470,12 @@
     "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "Đọc hạn ngạch RPM và TPM AWS qua proxy của kênh này mà không thay đổi dữ liệu.",
     "Please fill in the channel proxy before querying AWS quotas": "Vui lòng điền proxy của kênh trước khi truy vấn hạn ngạch AWS",
     "Failed to query AWS quotas": "Không thể truy vấn hạn ngạch AWS",
-    "AWS region": "Khu vực AWS"
+    "AWS region": "Khu vực AWS",
+    "Enable AWS RPM/TPM Metrics": "Bật chỉ số RPM/TPM AWS",
+    "Collect rolling RPM and TPM for all AWS Bedrock channels.": "Thu thập RPM và TPM luân phiên cho tất cả kênh AWS Bedrock.",
+    "Channel Name Display Mapping": "Ánh xạ hiển thị tên kênh",
+    "JSON with enabled and mappings fields, shared by all administrators.": "JSON gồm các trường enabled và mappings, dùng chung cho mọi quản trị viên.",
+    "Bedrock usage metrics": "Chỉ số sử dụng Bedrock",
+    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "Thu thập RPM và TPM ước tính theo từng kênh cho các cột tùy chọn trong bảng."
   }
 }

@@ -7470,6 +7470,12 @@
     "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.",
     "Please fill in the channel proxy before querying AWS quotas": "Please fill in the channel proxy before querying AWS quotas",
     "Failed to query AWS quotas": "Failed to query AWS quotas",
-    "AWS region": "AWS region"
+    "AWS region": "AWS region",
+    "Enable AWS RPM/TPM Metrics": "Enable AWS RPM/TPM Metrics",
+    "Collect rolling RPM and TPM for all AWS Bedrock channels.": "Collect rolling RPM and TPM for all AWS Bedrock channels.",
+    "Channel Name Display Mapping": "Channel Name Display Mapping",
+    "JSON with enabled and mappings fields, shared by all administrators.": "JSON with enabled and mappings fields, shared by all administrators.",
+    "Bedrock usage metrics": "Bedrock usage metrics",
+    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "Collect per-channel RPM and estimated TPM for the optional channel table columns."
   }
 }

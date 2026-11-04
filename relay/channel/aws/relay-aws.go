@@ -19,12 +19,13 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"github.com/tidwall/gjson"
 
-	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -68,6 +69,11 @@ func newAwsInvokeError(requestContext context.Context, err error, operation stri
 
 func bedrockProtectionError(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) *types.NewAPIError {
 	settings := info.ChannelSetting.BedrockProtection
+	globalMetrics := model_setting.IsAwsUsageMetricsEnabled()
+	a.collectActualUsage = globalMetrics
+	if settings == nil && globalMetrics {
+		settings = &dto.BedrockProtectionSettings{}
+	}
 	if service.IsBedrockCoolingDown(info.ChannelId, settings) {
 		return types.NewErrorWithStatusCode(errors.New("Bedrock channel is cooling down"), types.ErrorCodeChannelBedrockCoolingDown, http.StatusTooManyRequests)
 	}
@@ -76,7 +82,7 @@ func bedrockProtectionError(c *gin.Context, info *relaycommon.RelayInfo, a *Adap
 	if settings != nil && common.RedisEnabled && common.RDB != nil {
 		modelLimit := settings.ModelLimits[info.UpstreamModelName]
 		requiresTokens := settings.RateLimitEnabled && settings.TPM > 0 || settings.ModelRateLimitEnabled && modelLimit.TPM > 0
-		if settings.UsageMetricsEnabled || requiresTokens {
+		if requiresTokens {
 			var err error
 			tokens, err = a.estimateProtectionTokens(c, info)
 			if err != nil {
@@ -87,17 +93,27 @@ func bedrockProtectionError(c *gin.Context, info *relaycommon.RelayInfo, a *Adap
 			}
 		}
 	}
-	if settings != nil && settings.UsageMetricsEnabled && !settings.RateLimitEnabled && !settings.ModelRateLimitEnabled {
-		// Display-only metrics follow physical HTTP attempts, including SDK
-		// retries. Do not change the SDK's retry policy just to collect metrics.
+	hasMetricsClient := false
+	if a.AwsClient != nil {
+		_, hasMetricsClient = a.AwsClient.Options().HTTPClient.(*bedrockUsageHTTPClient)
+	}
+	if a.AwsClient != nil && (globalMetrics || hasMetricsClient) {
+		// Actual RPM follows physical HTTP attempts, including SDK retries.
 		a.AwsClient = bedrockruntime.New(a.AwsClient.Options(), func(options *bedrockruntime.Options) {
 			client := options.HTTPClient
 			if previous, ok := client.(*bedrockUsageHTTPClient); ok {
 				client = previous.client
 			}
-			options.HTTPClient = &bedrockUsageHTTPClient{client: client, channelID: info.ChannelId, tokens: tokens, modelName: info.UpstreamModelName}
+			options.HTTPClient = client
+			if globalMetrics {
+				options.HTTPClient = &bedrockUsageHTTPClient{client: client, channelID: info.ChannelId}
+			}
 		})
-		return nil
+	}
+	if globalMetrics {
+		if settings == nil || !settings.RateLimitEnabled && !settings.ModelRateLimitEnabled {
+			return nil
+		}
 	}
 	allowed, _ := service.ReserveBedrockUsage(info.ChannelId, tokens, settings, info.UpstreamModelName)
 	if !allowed {
@@ -107,21 +123,94 @@ func bedrockProtectionError(c *gin.Context, info *relaycommon.RelayInfo, a *Adap
 }
 
 // bedrockUsageHTTPClient records each actual send without altering retries or
-// mutating the shared transport. TPM is the same conservative token estimate
-// used by channel protection, rather than billed token usage.
+// mutating the shared transport. TPM is recorded separately from upstream usage.
 type bedrockUsageHTTPClient struct {
 	client    aws.HTTPClient
 	channelID int
-	tokens    int
-	modelName string
 }
 
 func (client *bedrockUsageHTTPClient) Do(request *http.Request) (*http.Response, error) {
 	if err := request.Context().Err(); err != nil {
 		return nil, err
 	}
-	service.ReserveBedrockUsage(client.channelID, client.tokens, &dto.BedrockProtectionSettings{UsageMetricsEnabled: true}, client.modelName)
-	return client.client.Do(request)
+	service.RecordBedrockActualAttempt(client.channelID)
+	response, err := client.client.Do(request)
+	if err != nil {
+		// A transport error can lose the response after AWS accepted the request.
+		// Keep RPM, but never imply that the missing usage consumed zero tokens.
+		service.RecordBedrockActualTokens(client.channelID, 0, false)
+	}
+	return response, err
+}
+
+// bedrockActualTokenUsage observes cumulative usage snapshots without storing
+// response text, estimating tokens, or modifying the relay billing result.
+type bedrockActualTokenUsage struct {
+	input, output, cacheRead, cacheWrite int64
+	total                                int64
+	inputKnown, outputKnown, totalKnown  bool
+	invalid                              bool
+}
+
+func (u *bedrockActualTokenUsage) observe(body []byte) {
+	eventType := gjson.GetBytes(body, "type").String()
+	switch eventType {
+	case "content_block_start", "content_block_delta", "content_block_stop", "ping":
+		// Text and tool argument chunks contain no authoritative usage. Avoid
+		// copying the whole response body just to inspect optional statistics.
+		return
+	}
+	usagePath := "usage"
+	if eventType == "message_start" {
+		usagePath = "message.usage"
+	}
+	usage := gjson.GetBytes(body, usagePath)
+	if !usage.IsObject() {
+		return
+	}
+	for _, field := range []struct {
+		name   string
+		target *int64
+		known  *bool
+	}{
+		{"input_tokens", &u.input, &u.inputKnown}, {"output_tokens", &u.output, &u.outputKnown},
+		{"inputTokens", &u.input, &u.inputKnown}, {"outputTokens", &u.output, &u.outputKnown},
+		{"total_tokens", &u.total, &u.totalKnown}, {"totalTokens", &u.total, &u.totalKnown},
+		{"total_input_tokens", &u.input, &u.inputKnown}, {"total_output_tokens", &u.output, &u.outputKnown},
+		{"cache_read_input_tokens", &u.cacheRead, nil}, {"cache_creation_input_tokens", &u.cacheWrite, nil},
+	} {
+		value := usage.Get(field.name)
+		if !value.Exists() {
+			continue
+		}
+		if value.Type != gjson.Number || value.Float() < 0 || value.Float() > 2147483647 || value.Float() != float64(value.Int()) {
+			// Never present a stale snapshot or a partial cache count as exact.
+			u.invalid = true
+			continue
+		}
+		*field.target = value.Int()
+		if field.known != nil {
+			*field.known = true
+		}
+	}
+	// message_start's output count is provisional, not the final stream usage.
+	if eventType == "message_start" {
+		u.outputKnown = false
+		u.totalKnown = false
+	}
+}
+
+func (u *bedrockActualTokenUsage) record(channelID int) {
+	total := u.total
+	known := u.totalKnown || u.inputKnown && u.outputKnown
+	if !u.totalKnown {
+		total = u.input + u.output + u.cacheRead + u.cacheWrite
+	}
+	known = known && !u.invalid && total <= 2147483647
+	if !known {
+		total = 0
+	}
+	service.RecordBedrockActualTokens(channelID, int(total), known)
 }
 
 type bedrockChannelHeaders map[string]string
@@ -645,6 +734,12 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types
 		c.Writer.Header().Set("Content-Type", *awsResp.ContentType)
 	}
 
+	actualUsage := bedrockActualTokenUsage{}
+	metricsEnabled := a.collectActualUsage
+	if metricsEnabled {
+		defer func() { actualUsage.record(info.ChannelId) }()
+		actualUsage.observe(awsResp.Body)
+	}
 	handlerErr := claude.HandleClaudeResponseData(c, info, claudeInfo, nil, awsResp.Body)
 	if handlerErr != nil {
 		return handlerErr, nil
@@ -677,6 +772,17 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 		Usage:        &dto.Usage{},
 	}
 
+	actualUsage := bedrockActualTokenUsage{}
+	metricsEnabled := a.collectActualUsage
+	defer func() {
+		if metricsEnabled {
+			if info.StreamStatus != nil && info.StreamStatus.ResponseOutcome() == string(relaycommon.ResponseOutcomeCompleted) {
+				actualUsage.record(info.ChannelId)
+			} else {
+				service.RecordBedrockActualTokens(info.ChannelId, 0, false)
+			}
+		}
+	}()
 	events := stream.Events()
 	var responseErr *types.NewAPIError
 streamLoop:
@@ -694,6 +800,9 @@ streamLoop:
 
 			switch v := event.(type) {
 			case *bedrockruntimeTypes.ResponseStreamMemberChunk:
+				if metricsEnabled {
+					actualUsage.observe(v.Value.Bytes)
+				}
 				info.SetFirstResponseTime()
 				respErr := claude.HandleStreamResponseData(c, info, claudeInfo, string(v.Value.Bytes))
 				if respErr != nil {
@@ -759,6 +868,13 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 		return invokeErr, nil
 	}
 
+	// Record AWS usage even when conversion to the client format fails below.
+	if a.collectActualUsage {
+		actualUsage := bedrockActualTokenUsage{}
+		actualUsage.observe(awsResp.Body)
+		actualUsage.record(info.ChannelId)
+	}
+
 	// 解析Nova响应
 	var novaResp struct {
 		Output struct {
@@ -781,7 +897,6 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 	if len(novaResp.Output.Message.Content) == 0 {
 		return types.NewError(errors.New("Nova response contains no message content"), types.ErrorCodeBadResponseBody), nil
 	}
-
 	// 构造OpenAI格式响应
 	response := dto.OpenAITextResponse{
 		Id:      helper.GetResponseID(c),

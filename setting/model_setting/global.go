@@ -18,6 +18,11 @@ type ChatCompletionsToResponsesPolicy struct {
 	ModelPatterns []string `json:"model_patterns,omitempty"`
 }
 
+type ChannelNameDisplaySettings struct {
+	Enabled  bool              `json:"enabled"`
+	Mappings map[string]string `json:"mappings"`
+}
+
 func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channelType int) bool {
 	if !p.Enabled {
 		return false
@@ -45,8 +50,10 @@ type GlobalSettings struct {
 	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
 	// AwsBetaFilterEnabled strips anthropic-beta values listed in AwsBetaBlacklist
 	// before forwarding to AWS Bedrock (AWS channels only); toggle via settings.
-	AwsBetaFilterEnabled bool     `json:"aws_beta_filter_enabled"`
-	AwsBetaBlacklist     []string `json:"aws_beta_blacklist"`
+	AwsBetaFilterEnabled   bool     `json:"aws_beta_filter_enabled"`
+	AwsBetaBlacklist       []string `json:"aws_beta_blacklist"`
+	AwsUsageMetricsEnabled bool     `json:"aws_usage_metrics_enabled"`
+	ChannelNameDisplay     string   `json:"channel_name_display"`
 }
 
 // 默认配置
@@ -75,6 +82,7 @@ var defaultOpenaiSettings = GlobalSettings{
 		"advanced-tool-use-2025-11-20",
 		"redact-thinking-2026-02-12",
 	},
+	ChannelNameDisplay: `{"enabled":false,"mappings":{}}`,
 }
 
 // 全局实例
@@ -89,11 +97,22 @@ func GetGlobalSettings() *GlobalSettings {
 	return &globalSettings
 }
 
+// IsAwsUsageMetricsEnabled reads the live setting under the same lock used by option updates.
+func IsAwsUsageMetricsEnabled() bool {
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+	return globalSettings.AwsUsageMetricsEnabled
+}
+
 // FilterAwsBetas removes anthropic-beta values that AWS Bedrock does not accept
 // (configured in AwsBetaBlacklist) so they are not forwarded into the Bedrock
 // request body. It only filters when AwsBetaFilterEnabled is true and must be
 // called for AWS channels only.
 func (s *GlobalSettings) FilterAwsBetas(betas []string) []string {
+	// Option updates replace both fields under this lock. Read them together
+	// so a request cannot combine the old switch with a new blacklist.
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
 	if !s.AwsBetaFilterEnabled || len(betas) == 0 || len(s.AwsBetaBlacklist) == 0 {
 		return betas
 	}

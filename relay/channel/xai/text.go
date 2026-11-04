@@ -64,8 +64,7 @@ func xAIStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		openaiResponse := streamResponseXAI2OpenAI(xAIResp, usage)
 		_ = openai.ProcessStreamResponse(*openaiResponse, &responseTextBuilder, &toolCount)
 		if err := helper.ObjectData(c, openaiResponse); err != nil {
-			common.SysLog(err.Error())
-			sr.Error(err)
+			sr.Stop(err)
 		}
 	})
 
@@ -74,7 +73,9 @@ func xAIStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		usage.CompletionTokens += toolCount * 7
 	}
 
-	helper.Done(c)
+	if info.StreamStatus != nil && info.StreamStatus.IsNormalEnd() && c.Request.Context().Err() == nil {
+		helper.Done(c)
+	}
 	service.CloseResponseBodyGracefully(resp)
 	return usage, nil
 }

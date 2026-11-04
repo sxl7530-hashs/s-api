@@ -594,6 +594,52 @@ const awsCompatibilityKeys = {
 }
 for (const locale of Object.keys(newKeys)) Object.assign(newKeys[locale], awsCompatibilityKeys[locale])
 
+const globalUiKeys = {
+  en: {
+    'Enable AWS RPM/TPM Metrics': 'Enable AWS RPM/TPM Metrics',
+    'Collect rolling RPM and TPM for all AWS Bedrock channels.': 'Collect rolling RPM and TPM for all AWS Bedrock channels.',
+    'Channel Name Display Mapping': 'Channel Name Display Mapping',
+    'JSON with enabled and mappings fields, shared by all administrators.': 'JSON with enabled and mappings fields, shared by all administrators.',
+  },
+  zh: {
+    'Enable AWS RPM/TPM Metrics': '启用 AWS RPM/TPM 统计',
+    'Collect rolling RPM and TPM for all AWS Bedrock channels.': '统计所有 AWS Bedrock 渠道的滚动 RPM 和 TPM。',
+    'Channel Name Display Mapping': '渠道名称显示映射',
+    'JSON with enabled and mappings fields, shared by all administrators.': '使用包含 enabled 和 mappings 字段的 JSON，所有管理员共享。',
+  },
+  'zh-TW': {
+    'Enable AWS RPM/TPM Metrics': '啟用 AWS RPM/TPM 統計',
+    'Collect rolling RPM and TPM for all AWS Bedrock channels.': '統計所有 AWS Bedrock 渠道的滾動 RPM 和 TPM。',
+    'Channel Name Display Mapping': '渠道名稱顯示對映',
+    'JSON with enabled and mappings fields, shared by all administrators.': '使用包含 enabled 和 mappings 欄位的 JSON，所有管理員共用。',
+  },
+  fr: {
+    'Enable AWS RPM/TPM Metrics': 'Activer les métriques RPM/TPM AWS',
+    'Collect rolling RPM and TPM for all AWS Bedrock channels.': 'Collecter le RPM et le TPM glissants de tous les canaux AWS Bedrock.',
+    'Channel Name Display Mapping': 'Mappage d’affichage des noms de canaux',
+    'JSON with enabled and mappings fields, shared by all administrators.': 'JSON avec les champs enabled et mappings, partagé par tous les administrateurs.',
+  },
+  ja: {
+    'Enable AWS RPM/TPM Metrics': 'AWS RPM/TPM メトリクスを有効化',
+    'Collect rolling RPM and TPM for all AWS Bedrock channels.': 'すべての AWS Bedrock チャネルの移動 RPM と TPM を収集します。',
+    'Channel Name Display Mapping': 'チャネル名表示マッピング',
+    'JSON with enabled and mappings fields, shared by all administrators.': 'enabled と mappings フィールドを含む JSON で、すべての管理者が共有します。',
+  },
+  ru: {
+    'Enable AWS RPM/TPM Metrics': 'Включить метрики RPM/TPM AWS',
+    'Collect rolling RPM and TPM for all AWS Bedrock channels.': 'Собирать скользящие RPM и TPM для всех каналов AWS Bedrock.',
+    'Channel Name Display Mapping': 'Отображаемое сопоставление имён каналов',
+    'JSON with enabled and mappings fields, shared by all administrators.': 'JSON с полями enabled и mappings, общий для всех администраторов.',
+  },
+  vi: {
+    'Enable AWS RPM/TPM Metrics': 'Bật chỉ số RPM/TPM AWS',
+    'Collect rolling RPM and TPM for all AWS Bedrock channels.': 'Thu thập RPM và TPM luân phiên cho tất cả kênh AWS Bedrock.',
+    'Channel Name Display Mapping': 'Ánh xạ hiển thị tên kênh',
+    'JSON with enabled and mappings fields, shared by all administrators.': 'JSON gồm các trường enabled và mappings, dùng chung cho mọi quản trị viên.',
+  },
+}
+for (const locale of Object.keys(newKeys)) Object.assign(newKeys[locale], globalUiKeys[locale])
+
 for (const locale of Object.keys(newKeys)) {
   const file = path.join(dir, `${locale}.json`)
   const data = JSON.parse(await fs.readFile(file, 'utf8'))

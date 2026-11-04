@@ -47,7 +47,6 @@ import {
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VLLM,
 } from '../../constants'
-import { CHANNEL_NAME_DISPLAY_STORAGE_KEY } from '../../lib/channel-name-display'
 import { channelSchema, type Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelsProvider } from '../channels-provider'
@@ -131,7 +130,10 @@ function ConfigurationHarness(props: {
   )
 }
 
+let nameDisplay = { enabled: false, mappings: {} as Record<string, string> }
 beforeEach(() => {
+ nameDisplay = { enabled: false, mappings: {} }
+
   pluginOptions = plugins
   editingChannel = channelSchema.parse({
     id: 42,
@@ -157,6 +159,7 @@ beforeEach(() => {
     },
   })
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
+ if (url === '/api/channel/name-display') return { data: { success: true, data: nameDisplay } }
     if (url === '/api/channel/42') {
       return { data: { success: true, data: editingChannel } }
     }
@@ -1431,10 +1434,7 @@ test('editing opens the shared configuration and omits an unchanged key on updat
 test('channel name mapping is displayed in the edit field but saves the original name', async () => {
   const originalName = 'AWS-sara-20261023-dfhiowehufej'
   editingChannel = { ...editingChannel, name: originalName }
-  localStorage.setItem(
-    CHANNEL_NAME_DISPLAY_STORAGE_KEY,
-    JSON.stringify({ enabled: true, mappings: { sara: '供应商1' } })
-  )
+  nameDisplay = { enabled: true, mappings: { sara: '供应商1' } }
   const put = vi
     .spyOn(api, 'put')
     .mockResolvedValue({ data: { success: true } })

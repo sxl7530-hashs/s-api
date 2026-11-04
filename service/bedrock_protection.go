@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -145,6 +147,223 @@ func bedrockUsageKey(channelID int) string {
 	return fmt.Sprintf("bedrock:usage:v2:{%d}", channelID)
 }
 
+func bedrockActualUsageKey(channelID int) string {
+	return fmt.Sprintf("bedrock:actual-usage:v1:{%d}", channelID)
+}
+
+const recordBedrockActualUsageScript = `
+local now = tonumber(redis.call('TIME')[1])
+local key = KEYS[1]
+local last = tonumber(redis.call('HGET', key, 'last') or now)
+local rpm = tonumber(redis.call('HGET', key, 'rpm') or '0')
+local tpm = tonumber(redis.call('HGET', key, 'tpm') or '0')
+local unknown = tonumber(redis.call('HGET', key, 'unknown') or '0')
+local invalid = tonumber(redis.call('HGET', key, 'invalid') or '0')
+for second = last - 60, math.min(now - 61, last) do
+  local field = tostring(second)
+  local expired = redis.call('HMGET', key, field .. ':r', field .. ':t', field .. ':u', field .. ':i')
+  unknown = unknown - tonumber(expired[3] or '0')
+  invalid = invalid - tonumber(expired[4] or '0')
+  rpm = rpm - tonumber(expired[1] or '0')
+  tpm = tpm - tonumber(expired[2] or '0')
+  redis.call('HDEL', key, field .. ':r', field .. ':t', field .. ':u', field .. ':i')
+end
+local add_rpm = tonumber(ARGV[1])
+local add_tpm = tonumber(ARGV[2])
+-- A Redis pipeline may be retried after AWS metrics were already persisted
+-- but its response was lost. Keep the most recent batch per process, rather
+-- than a single channel-wide batch ID, because instances write concurrently.
+local writer_field = nil
+local duplicate = false
+if ARGV[5] and ARGV[5] ~= '' then
+  writer_field = 'b:' .. ARGV[5]
+  local previous = redis.call('HGET', key, writer_field)
+  duplicate = previous and string.match(previous, '^([^:]+):') == ARGV[6]
+  -- Remove metadata belonging to stopped processes, even on busy channels
+  -- whose statistics key is continually refreshed and never expires.
+  local last_gc = tonumber(redis.call('HGET', key, 'batch_gc') or '0')
+  if now - last_gc >= 60 then
+    local fields = redis.call('HGETALL', key)
+    for i = 1, #fields, 2 do
+      if string.sub(fields[i], 1, 2) == 'b:' then
+        local seen = tonumber(string.match(fields[i + 1], ':(%d+)$') or '0')
+        if now - seen > 120 then redis.call('HDEL', key, fields[i]) end
+      end
+    end
+    redis.call('HSET', key, 'batch_gc', now)
+  end
+end
+if duplicate then
+  add_rpm = 0
+  add_tpm = 0
+end
+if add_rpm > 0 then
+  redis.call('HINCRBY', key, tostring(now) .. ':r', add_rpm)
+  rpm = rpm + add_rpm
+end
+if add_tpm > 0 then
+  redis.call('HINCRBY', key, tostring(now) .. ':t', add_tpm)
+  tpm = tpm + add_tpm
+end
+if not duplicate and ARGV[3] == '1' then
+  unknown = unknown + 1
+  redis.call('HINCRBY', key, tostring(now) .. ':u', 1)
+end
+if not duplicate and ARGV[4] == '1' then
+  invalid = invalid + 1
+  redis.call('HINCRBY', key, tostring(now) .. ':i', 1)
+end
+if writer_field and not duplicate then
+  redis.call('HSET', key, writer_field, ARGV[6] .. ':' .. tostring(now))
+end
+redis.call('HSET', key, 'rpm', rpm, 'tpm', tpm, 'last', now, 'unknown', unknown, 'invalid', invalid)
+redis.call('EXPIRE', key, 120)
+return {rpm, tpm, unknown, invalid}
+`
+
+type bedrockActualUsageEvent struct {
+	channelID int
+	rpm       int
+	tpm       int
+	unknown   bool
+}
+
+type bedrockActualUsageBatch struct {
+	rpm, tpm int
+	unknown  bool
+	invalid  bool
+}
+
+const bedrockActualUsageQueueSize = 32768
+
+var (
+	bedrockActualUsageQueue    = make(chan bedrockActualUsageEvent, bedrockActualUsageQueueSize)
+	bedrockActualUsageDropped  = make(map[int]struct{})
+	bedrockActualUsageDropMu   sync.Mutex
+	bedrockActualUsageWorker   sync.Once
+	bedrockActualUsageFlushMu  sync.Mutex
+	bedrockActualUsageWriterID = common.GetUUID()
+)
+
+// RecordBedrockActualAttempt counts one HTTP attempt sent to AWS. It is kept
+// separate from limiter reservations, which remain conservative estimates.
+func RecordBedrockActualAttempt(channelID int) {
+	recordBedrockActualUsage(channelID, 1, 0, false)
+}
+
+// RecordBedrockActualTokens records only authoritative upstream token usage.
+// Missing usage marks TPM unavailable instead of substituting an estimate.
+func RecordBedrockActualTokens(channelID, tokens int, known bool) {
+	if !known {
+		tokens = 0
+	}
+	recordBedrockActualUsage(channelID, 0, max(tokens, 0), !known)
+}
+
+func recordBedrockActualUsage(channelID, rpm, tpm int, unknown bool) {
+	// Statistics are optional. When Redis is unavailable, skip the event at
+	// the producer boundary instead of filling the queue with data that cannot
+	// be persisted; request forwarding remains fail-open.
+	if !common.RedisEnabled || common.RDB == nil {
+		return
+	}
+	bedrockActualUsageWorker.Do(func() { go runBedrockActualUsageWorker() })
+	select {
+	case bedrockActualUsageQueue <- bedrockActualUsageEvent{channelID: channelID, rpm: rpm, tpm: tpm, unknown: unknown}:
+	default:
+		markBedrockActualUsageDropped(channelID)
+	}
+}
+
+func markBedrockActualUsageDropped(channelID int) {
+	bedrockActualUsageDropMu.Lock()
+	bedrockActualUsageDropped[channelID] = struct{}{}
+	bedrockActualUsageDropMu.Unlock()
+}
+
+func runBedrockActualUsageWorker() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		flushBedrockActualUsageBatch()
+	}
+}
+
+func flushBedrockActualUsageBatch() {
+	bedrockActualUsageFlushMu.Lock()
+	defer bedrockActualUsageFlushMu.Unlock()
+	batch := make(map[int]bedrockActualUsageBatch)
+	for range bedrockActualUsageQueueSize {
+		select {
+		case event := <-bedrockActualUsageQueue:
+			current := batch[event.channelID]
+			current.rpm += event.rpm
+			current.tpm += event.tpm
+			current.unknown = current.unknown || event.unknown
+			batch[event.channelID] = current
+		default:
+			goto drained
+		}
+	}
+
+drained:
+	bedrockActualUsageDropMu.Lock()
+	dropped := bedrockActualUsageDropped
+	if len(dropped) > 0 {
+		bedrockActualUsageDropped = make(map[int]struct{})
+	} else {
+		dropped = nil
+	}
+	bedrockActualUsageDropMu.Unlock()
+	for channelID := range dropped {
+		current := batch[channelID]
+		current.invalid = true
+		batch[channelID] = current
+	}
+	if len(batch) == 0 {
+		return
+	}
+	if !common.RedisEnabled || common.RDB == nil {
+		for channelID := range batch {
+			markBedrockActualUsageDropped(channelID)
+		}
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	pipe := common.RDB.Pipeline()
+	commands := make(map[int]*redis.Cmd, len(batch))
+	batchID := common.GetUUID()
+	for channelID, value := range batch {
+		missing, invalid := 0, 0
+		if value.unknown {
+			missing = 1
+		}
+		if value.invalid {
+			invalid = 1
+		}
+		commands[channelID] = pipe.Eval(ctx, recordBedrockActualUsageScript, []string{bedrockActualUsageKey(channelID)}, value.rpm, value.tpm, missing, invalid, bedrockActualUsageWriterID, batchID)
+	}
+	// go-redis attaches transport failures to the affected commands. A Redis
+	// command error alone does not invalidate successful replies in the batch.
+	_, _ = pipe.Exec(ctx)
+	for channelID, command := range commands {
+		values, commandErr := command.Int64Slice()
+		if commandErr == nil && len(values) != 4 {
+			commandErr = fmt.Errorf("unexpected Bedrock usage result")
+		}
+		if commandErr != nil {
+			warnBedrockProtectionRedis(commandErr)
+			markBedrockActualUsageDropped(channelID)
+		}
+	}
+}
+
+// FlushBedrockActualUsage persists queued statistics before a controlled shutdown.
+func FlushBedrockActualUsage() {
+	flushBedrockActualUsageBatch()
+}
+
 func warnBedrockProtectionRedis(err error) {
 	now := time.Now().Unix()
 	last := lastBedrockProtectionRedisWarning.Load()
@@ -174,7 +393,7 @@ func ReserveBedrockUsage(channelID, tokens int, settings *dto.BedrockProtectionS
 			}
 		}
 	}
-	if !settings.UsageMetricsEnabled && !limitEnabled && !collectingModelUsage {
+	if !limitEnabled && !collectingModelUsage {
 		return true, BedrockUsage{}
 	}
 	if !common.RedisEnabled || common.RDB == nil {
@@ -227,7 +446,7 @@ func ReserveBedrockUsage(channelID, tokens int, settings *dto.BedrockProtectionS
 
 func GetBedrockUsage(channelIDs []int) map[int]BedrockUsage {
 	result := make(map[int]BedrockUsage, len(channelIDs))
-	if !common.RedisEnabled || common.RDB == nil || len(channelIDs) == 0 {
+	if !model_setting.IsAwsUsageMetricsEnabled() || !common.RedisEnabled || common.RDB == nil || len(channelIDs) == 0 {
 		return result
 	}
 	// Reuse channel snapshots; with the cache disabled, load configuration in
@@ -249,19 +468,10 @@ func GetBedrockUsage(channelIDs []int) map[int]BedrockUsage {
 	}
 	eligibleIDs := make([]int, 0, len(channels))
 	for _, channel := range channels {
-		p := channel.GetSetting().BedrockProtection
-		if channel.Type != constant.ChannelTypeAws || p == nil {
+		if channel.Type != constant.ChannelTypeAws {
 			continue
 		}
-		collecting := p.UsageMetricsEnabled || p.RateLimitEnabled && (p.RPM > 0 || p.TPM > 0)
-		if p.ModelRateLimitEnabled {
-			for _, limit := range p.ModelLimits {
-				collecting = collecting || limit.RPM > 0 || limit.TPM > 0
-			}
-		}
-		if collecting {
-			eligibleIDs = append(eligibleIDs, channel.Id)
-		}
+		eligibleIDs = append(eligibleIDs, channel.Id)
 	}
 	if len(eligibleIDs) == 0 {
 		return result
@@ -273,18 +483,17 @@ func GetBedrockUsage(channelIDs []int) map[int]BedrockUsage {
 	for _, id := range eligibleIDs {
 		// The display path must not reserve usage, but the script still requires
 		// its complete argument vector to read and return the current counters.
-		commandByID[id] = pipe.Eval(ctx, reserveBedrockUsageScript, []string{bedrockUsageKey(id)}, -1, 0, 0, 0, 0, 1)
+		commandByID[id] = pipe.Eval(ctx, recordBedrockActualUsageScript, []string{bedrockActualUsageKey(id)}, 0, 0, 0, 0)
 	}
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		warnBedrockProtectionRedis(err)
-		return result
 	}
 	for id, command := range commandByID {
 		values, err := command.Int64Slice()
 		if err != nil || len(values) != 4 {
 			continue
 		}
-		result[id] = BedrockUsage{RPM: values[1], TPM: values[2], Available: true, TPMUnavailable: values[3] > 0}
+		result[id] = BedrockUsage{RPM: values[0], TPM: values[1], Available: values[3] == 0, TPMUnavailable: values[2] > 0}
 	}
 	return result
 }

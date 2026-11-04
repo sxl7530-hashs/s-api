@@ -38,8 +38,12 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 	id := helper.GetResponseID(c)
 	responseTokens := service.NewTokenEstimator(info.UpstreamModelName)
 	isFirst := true
+	completed := false
 
 	for scanner.Scan() {
+		if c.Request.Context().Err() != nil {
+			return nil, service.ResponseTokens2Usage(c, responseTokens.Tokens(), info.GetEstimatePromptTokens())
+		}
 		data := scanner.Text()
 		if len(data) < len("data: ") {
 			continue
@@ -48,6 +52,7 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 		data = strings.TrimSuffix(data, "\r")
 
 		if data == "[DONE]" {
+			completed = true
 			break
 		}
 
@@ -70,6 +75,7 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 		}
 		if err != nil {
 			logger.LogError(c, common.LogText("error_rendering_stream_response: %s", err.Error()))
+			return types.NewError(err, types.ErrorCodeBadResponse), nil
 		}
 	}
 
@@ -82,9 +88,14 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 		err := helper.ObjectData(c, response)
 		if err != nil {
 			logger.LogError(c, common.LogText("error_rendering_final_usage_response: %s", err.Error()))
+			return types.NewError(err, types.ErrorCodeBadResponse), usage
 		}
 	}
-	helper.Done(c)
+	if completed && c.Request.Context().Err() == nil {
+		if err := helper.StringData(c, "[DONE]"); err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponse), usage
+		}
+	}
 
 	service.CloseResponseBodyGracefully(resp)
 

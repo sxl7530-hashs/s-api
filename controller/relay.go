@@ -175,6 +175,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.LastError = nil
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+		if requestErr := c.Request.Context().Err(); requestErr != nil {
+			newAPIError = types.NewErrorWithStatusCode(requestErr, types.ErrorCodeDoRequestFailed, http.StatusRequestTimeout, types.ErrOptionWithSkipRetry())
+			break
+		}
 		relayInfo.StreamStatus = nil
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
@@ -218,6 +222,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			service.MarkRequestPolicySuccess(c, relayInfo.StreamStatus)
 			relayInfo.LastError = nil
 			return
+		}
+		if requestErr := c.Request.Context().Err(); requestErr != nil {
+			// A disconnected client is not an upstream/channel failure. Stop
+			// before recording health failures, disabling a channel, or retrying.
+			newAPIError = types.NewErrorWithStatusCode(requestErr, types.ErrorCodeDoRequestFailed, http.StatusRequestTimeout, types.ErrOptionWithSkipRetry())
+			relayInfo.LastError = newAPIError
+			break
 		}
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)

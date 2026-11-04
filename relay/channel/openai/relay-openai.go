@@ -84,7 +84,9 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 				response.Choices[j].Delta.Reasoning = nil
 			}
 			info.ThinkingContentInfo.SendLastThinkingContent = true
-			helper.ObjectData(c, response)
+			if err := helper.ObjectData(c, response); err != nil {
+				return err
+			}
 		}
 
 		// Convert reasoning content to regular content if any
@@ -119,32 +121,104 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var toolCount int
 	var usage = &dto.Usage{}
 	var lastStreamData string
+	var lastStreamDataSent bool
 	var secondLastStreamData string // 保留倒数第二个stream data；部分兼容网关把完整usage放在倒数第二个事件
 	seenStreamToolCalls := make(map[string]struct{})
 	var streamFunctionCallNames []string
+	var streamErr *types.NewAPIError
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
-		if lastStreamData != "" {
-			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
-				common.SysLog(common.LogText("error handling stream format: %s", err.Error()))
-				sr.Error(err)
+		if ojson.Get(data, "error").Exists() {
+			var envelope struct {
+				Error *types.OpenAIError `json:"error"`
+			}
+			if err := common.UnmarshalJsonStr(data, &envelope); err != nil {
+				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+			} else if envelope.Error != nil {
+				streamErr = types.WithOpenAIError(*envelope.Error, http.StatusBadGateway)
+			}
+			if streamErr != nil {
+				sr.Stop(streamErr)
+				return
 			}
 		}
+		if lastStreamData != "" && !lastStreamDataSent {
+			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+				sr.Stop(streamErr)
+				return
+			}
+			lastStreamDataSent = true
+		}
 		if len(data) > 0 {
+			if err := processTokenData(info, data, &responseTextBuilder, &toolCount); err != nil {
+				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+				sr.Stop(streamErr)
+				return
+			}
 			if lastStreamData != "" {
 				secondLastStreamData = lastStreamData
 			}
 
 			lastStreamData = data
+			lastStreamDataSent = false
 			observeStreamChoices(info, data, seenStreamToolCalls, &streamFunctionCallNames)
-			if err := processTokenData(info, data, &responseTextBuilder, &toolCount); err != nil {
-				logger.LogError(c, common.LogText("error processing stream token data: %s", err.Error()))
-				sr.Error(err)
+			// Content must not wait for the next upstream event, which may be
+			// minutes away during tool execution or reasoning. Keep usage-only
+			// tails buffered so the existing final-usage policy is preserved.
+			choices := ojson.Get(data, "choices").Array()
+			canForward := true
+			if info.RelayFormat != types.RelayFormatOpenAI {
+				// Converters need the final usage snapshot before converting a
+				// terminal event, but ordinary deltas can be forwarded immediately.
+				for _, choice := range choices {
+					if choice.Get("finish_reason").String() != "" {
+						canForward = false
+						break
+					}
+				}
+			}
+			if canForward {
+				for _, choice := range choices {
+					if len(choice.Get("delta").Map()) == 0 && choice.Get("text").String() == "" {
+						continue
+					}
+					lastStreamDataSent = true
+					if err := HandleStreamFormat(c, info, data, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+						streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+						sr.Stop(streamErr)
+					}
+					break
+				}
 			}
 		}
 	})
 
 	info.StreamStatus.RequireTerminal()
+	if c.Request.Context().Err() != nil && streamErr == nil {
+		info.StreamStatus.MarkCancelled()
+		if !c.Writer.Written() {
+			return usage, nil
+		}
+	} else if streamErr == nil {
+		if info.StreamStatus.HasErrors() || !info.StreamStatus.IsNormalEnd() ||
+			(info.StreamStatus.EndReason != relaycommon.StreamEndReasonDone &&
+				info.StreamStatus.ResponseOutcome() != string(relaycommon.ResponseOutcomeCompleted)) {
+			streamErr = types.NewOpenAIError(io.ErrUnexpectedEOF, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		} else {
+			// Some compatible providers terminate with [DONE] without a finish_reason.
+			info.StreamStatus.MarkCompleted()
+		}
+	}
+	if streamErr != nil {
+		info.StreamStatus.MarkFailed(string(streamErr.GetErrorCode()), streamErr.ToOpenAIError().Type, streamErr.StatusCode)
+		if !info.StreamStatus.HasErrors() {
+			info.StreamStatus.RecordError(streamErr.Error())
+		}
+		if !c.Writer.Written() {
+			return nil, streamErr
+		}
+	}
 
 	// 处理最后的响应
 	shouldSendLastResp := true
@@ -176,9 +250,13 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		}
 	}
 
-	if info.RelayFormat == types.RelayFormatOpenAI {
-		if shouldSendLastResp {
-			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
+	if streamErr == nil && c.Request.Context().Err() == nil && info.RelayFormat == types.RelayFormatOpenAI {
+		if shouldSendLastResp && !lastStreamDataSent {
+			if err := sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+				info.StreamStatus.RecordError(streamErr.Error())
+				info.StreamStatus.MarkFailed(string(streamErr.GetErrorCode()), streamErr.ToOpenAIError().Type, streamErr.StatusCode)
+			}
 		}
 	}
 
@@ -192,8 +270,30 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	for _, name := range streamFunctionCallNames {
 		info.CountBillableToolCall(dto.BuildInCallFunctionCall, name)
 	}
+	// Keep the partial usage for settlement after output has started, but never
+	// turn a failed or cancelled stream into a successful protocol completion.
+	if streamErr != nil || c.Request.Context().Err() != nil {
+		return usage, nil
+	}
 
-	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+	if lastStreamDataSent && info.RelayFormat != types.RelayFormatOpenAI {
+		// An upstream may close immediately after a content-bearing frame.
+		// Finalize the conversion without replaying the already delivered delta.
+		var finalResponse dto.ChatCompletionsStreamResponse
+		if common.UnmarshalJsonStr(lastStreamData, &finalResponse) == nil {
+			for i := range finalResponse.Choices {
+				finalResponse.Choices[i].Delta = dto.ChatCompletionsStreamResponseChoiceDelta{}
+			}
+			if data, err := common.Marshal(finalResponse); err == nil {
+				lastStreamData = string(data)
+			}
+		}
+	}
+	if err := HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage); err != nil {
+		streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		info.StreamStatus.RecordError(streamErr.Error())
+		info.StreamStatus.MarkFailed(string(streamErr.GetErrorCode()), streamErr.ToOpenAIError().Type, streamErr.StatusCode)
+	}
 
 	return usage, nil
 }

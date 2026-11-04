@@ -7459,6 +7459,10 @@
     "Example: sara => Supplier 1": "例：sara => 仕入先1",
     "Complete both names or remove the incomplete row.": "元の名前と表示名を入力するか、未入力の行を削除してください。",
     "AWS Bedrock Passthrough Compatibility": "AWS Bedrock パススルー互換",
+    "AWS anthropic-beta Blacklist": "AWS anthropic-beta Blacklist",
+    "Enable AWS anthropic-beta Blacklist": "Enable AWS anthropic-beta Blacklist",
+    "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.": "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.",
+    "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.": "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.",
     "Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.": "AWS パススルー有効時に対応するクライアントリクエストを変換します。AWS 直接パススルーのユーザーは互換処理を省略します。既定では無効です。",
     "AWS Direct Passthrough": "AWS 直接パススルー",
     "Bypass global AWS passthrough compatibility for this user. Only applies when request passthrough is enabled. Disabled by default.": "このユーザーのみグローバル AWS パススルー互換を省略します。リクエストパススルー有効時のみ適用されます。既定では無効です。",
@@ -7466,6 +7470,12 @@
     "Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.": "このチャネルのプロキシ経由で AWS Service Quotas の RPM と TPM を読み取り専用で取得します。",
     "Please fill in the channel proxy before querying AWS quotas": "AWS クォータを照会する前にチャネルのプロキシを入力してください",
     "Failed to query AWS quotas": "AWS クォータの照会に失敗しました",
-    "AWS region": "AWS リージョン"
+    "AWS region": "AWS リージョン",
+    "Enable AWS RPM/TPM Metrics": "AWS RPM/TPM メトリクスを有効化",
+    "Collect rolling RPM and TPM for all AWS Bedrock channels.": "すべての AWS Bedrock チャネルの移動 RPM と TPM を収集します。",
+    "Channel Name Display Mapping": "チャネル名表示マッピング",
+    "JSON with enabled and mappings fields, shared by all administrators.": "enabled と mappings フィールドを含む JSON で、すべての管理者が共有します。",
+    "Bedrock usage metrics": "Bedrock 使用量メトリクス",
+    "Collect per-channel RPM and estimated TPM for the optional channel table columns.": "任意表示のチャネル表列向けに、チャネルごとの RPM と推定 TPM を収集します。"
   }
 }

@@ -131,7 +131,7 @@ func baiduStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 		response := streamResponseBaidu2OpenAI(&baiduResponse)
 		if err := helper.ObjectData(c, response); err != nil {
 			common.SysLog(common.LogText("error sending stream response: %s", err.Error()))
-			sr.Error(err)
+			sr.Stop(err)
 		}
 	})
 	service.CloseResponseBodyGracefully(resp)

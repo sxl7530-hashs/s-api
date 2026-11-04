@@ -232,6 +232,24 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == "global.aws_usage_metrics_enabled" && value != "true" && value != "false" {
+		return common.NewMessage("Invalid parameters")
+	}
+	if key == "global.channel_name_display" {
+		var settings struct {
+			Enabled  *bool             `json:"enabled"`
+			Mappings map[string]string `json:"mappings"`
+		}
+		if len(value) > 131072 || common.UnmarshalJsonStr(value, &settings) != nil || settings.Enabled == nil || settings.Mappings == nil || len(settings.Mappings) > 500 {
+			return common.NewMessage("Invalid parameters")
+		}
+		for source, display := range settings.Mappings {
+			if strings.TrimSpace(source) == "" || strings.TrimSpace(display) == "" || len(source) > 256 || len(display) > 256 {
+				return common.NewMessage("Invalid parameters")
+			}
+		}
+	}
+
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}
@@ -275,6 +293,10 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if key == "global.channel_name_display" || key == "global.aws_usage_metrics_enabled" {
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
+
 	if IsRequestPolicyOption(key) {
 		return UpdateRequestPolicyOptions(map[string]string{key: value})
 	}

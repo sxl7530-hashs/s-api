@@ -48,7 +48,15 @@ func formatRequest(requestBody io.Reader, requestHeader http.Header) (*AwsClaude
 			betas = append(betas, beta)
 		}
 	}
+	// An explicit header overrides body betas. Otherwise the body's native
+	// list must pass through the same AWS blacklist as the header list.
+	if len(betas) == 0 && len(awsClaudeRequest.AnthropicBeta) > 0 {
+		if err := common.Unmarshal(awsClaudeRequest.AnthropicBeta, &betas); err != nil {
+			return nil, err
+		}
+	}
 	betas = model_setting.GetGlobalSettings().FilterAwsBetas(betas)
+	awsClaudeRequest.AnthropicBeta = nil
 	if len(betas) > 0 {
 		betaJson, err := common.Marshal(betas)
 		if err != nil {

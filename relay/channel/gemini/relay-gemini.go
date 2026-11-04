@@ -197,7 +197,9 @@ func handleFinalStream(c *gin.Context, info *relaycommon.RelayInfo, resp *dto.Ch
 	if err != nil {
 		return fmt.Errorf("failed to marshal stream response: %w", err)
 	}
-	openai.HandleFinalResponse(c, info, string(streamData), resp.Id, resp.Created, resp.Model, resp.GetSystemFingerprint(), resp.Usage, false)
+	if err := openai.HandleFinalResponse(c, info, string(streamData), resp.Id, resp.Created, resp.Model, resp.GetSystemFingerprint(), resp.Usage, false); err != nil {
+		return fmt.Errorf("failed to handle final stream format: %w", err)
+	}
 	return nil
 }
 
@@ -299,13 +301,14 @@ func isGeminiDownstreamStop(c *gin.Context, info *relaycommon.RelayInfo) bool {
 		return true
 	}
 	return info != nil && info.StreamStatus != nil &&
-		info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone
+		info.StreamStatus.OutcomeSnapshot().EndReason == relaycommon.StreamEndReasonClientGone
 }
 
 func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	id := helper.GetResponseID(c)
 	createAt := common.GetTimestamp()
 	finishReason := constant.FinishReasonStop
+	var callbackErr error
 	toolCallIndexByChoice := make(map[int]map[string]int)
 	nextToolCallIndexByChoice := make(map[int]int)
 
@@ -366,7 +369,8 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 				finishReason = constant.FinishReasonToolCalls
 				err := handleStream(c, info, emptyResponse)
 				if err != nil {
-					logger.LogError(c, err.Error())
+					callbackErr = err
+					return false
 				}
 
 				response.ClearToolCalls()
@@ -376,23 +380,31 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			} else {
 				err := handleStream(c, info, emptyResponse)
 				if err != nil {
-					logger.LogError(c, err.Error())
+					callbackErr = err
+					return false
 				}
 			}
 		}
 
 		err := handleStream(c, info, response)
 		if err != nil {
-			logger.LogError(c, err.Error())
+			callbackErr = err
+			return false
 		}
 		if isStop {
 			if info.RelayFormat != types.RelayFormatClaude {
-				_ = handleStream(c, info, helper.GenerateStopResponse(id, createAt, info.UpstreamModelName, finishReason))
+				if err := handleStream(c, info, helper.GenerateStopResponse(id, createAt, info.UpstreamModelName, finishReason)); err != nil {
+					callbackErr = err
+					return false
+				}
 			}
 		}
 		return true
 	})
 
+	if callbackErr != nil && c.Request != nil && c.Request.Context().Err() == nil {
+		return usage, types.NewOpenAIError(callbackErr, types.ErrorCodeBadResponse, http.StatusBadGateway)
+	}
 	if err != nil {
 		return usage, err
 	}
@@ -405,6 +417,9 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 	handleErr := handleFinalStream(c, info, response)
 	if handleErr != nil {
 		common.SysLog(common.LogText("send final response failed: %s", handleErr.Error()))
+		if c.Request == nil || c.Request.Context().Err() == nil {
+			return usage, types.NewOpenAIError(handleErr, types.ErrorCodeBadResponse, http.StatusBadGateway)
+		}
 	}
 	return usage, nil
 }
