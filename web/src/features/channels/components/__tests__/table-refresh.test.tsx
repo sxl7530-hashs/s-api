@@ -34,7 +34,8 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { Channels } from '../../index'
-import type { Channel } from '../../types'
+import { aggregateChannelsByTag } from '../../lib/channel-utils'
+import type { Channel, ChannelUsage } from '../../types'
 import { ChannelsProvider } from '../channels-provider'
 import { ChannelsTable } from '../channels-table'
 
@@ -78,11 +79,11 @@ function channel(name: string): Channel {
 
 let nameDisplay = { enabled: false, mappings: {} as Record<string, string> }
 beforeEach(() => {
- nameDisplay = { enabled: false, mappings: {} }
+  nameDisplay = { enabled: false, mappings: {} }
 
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
   localStorage.clear()
- useAuthStore.getState().auth.setUser({ id: 1, username: "root", role: 100 })
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
 })
 
 afterEach(() => {
@@ -97,11 +98,14 @@ async function renderChannelsPage(
   searchGate: () => Promise<void>,
   fullPage = false,
   usageFails: boolean | (() => boolean) = false,
-  tpmUnavailable = false,
-  expectedChannelName = 'prod'
+  tpmUnavailable: boolean | (() => boolean) = false,
+  expectedChannelName = 'prod',
+  usageOverrides: Partial<ChannelUsage> = {}
 ) {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
- if (url === '/api/channel/name-display') return { data: { success: true, data: nameDisplay } }
+    if (url === '/api/channel/name-display') {
+      return { data: { success: true, data: nameDisplay } }
+    }
     if (url === '/api/channel/test/models/tasks') {
       return { data: { success: true, data: [], total: 0 } }
     }
@@ -126,7 +130,11 @@ async function renderChannelsPage(
               rpm: 12,
               tpm: 345,
               available: true,
-              tpm_unavailable: tpmUnavailable,
+              tpm_unavailable:
+                typeof tpmUnavailable === 'function'
+                  ? tpmUnavailable()
+                  : tpmUnavailable,
+              ...usageOverrides,
             },
           },
         },
@@ -233,6 +241,7 @@ it('migrates legacy RPM visibility to one combined column and refreshes both met
   expect(usageCalls()[0][1]?.params).toEqual({ ids: '3' })
   expect(await screen.findByText('12')).toBeVisible()
   expect(await screen.findByText('345')).toBeVisible()
+  expect(screen.getByLabelText('TPM: 345')).toHaveAttribute('title', 'TPM')
   expect(
     screen.getAllByRole('columnheader', { name: /RPM \/ TPM/ })
   ).toHaveLength(1)
@@ -265,7 +274,7 @@ it.each(['null', '[]', '"invalid"', '{broken', '{"throughput":"true"}'])(
   }
 )
 
-it('preserves RPM and shows unavailable TPM when token estimation failed', async () => {
+it('preserves RPM and shows collected TPM as a lower bound when some token usage is unknown', async () => {
   localStorage.setItem('channels:view-mode', 'table')
   localStorage.setItem(
     'channels:column-visibility',
@@ -273,8 +282,103 @@ it('preserves RPM and shows unavailable TPM when token estimation failed', async
   )
   await renderChannelsPage(() => Promise.resolve(), false, false, true)
   expect(await screen.findByText('12')).toBeVisible()
-  expect(screen.queryByText('345')).not.toBeInTheDocument()
-  expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+  const tpm = await screen.findByLabelText('TPM (Incomplete): ≥345')
+  expect(tpm).toHaveTextContent('≥345')
+  expect(tpm).toHaveAttribute('title', 'TPM (Incomplete)')
+})
+
+it('shows a zero lower bound when all token usage is unknown', async () => {
+  localStorage.setItem('channels:view-mode', 'table')
+  localStorage.setItem(
+    'channels:column-visibility',
+    JSON.stringify({ throughput: true })
+  )
+  await renderChannelsPage(
+    () => Promise.resolve(),
+    false,
+    false,
+    true,
+    'prod',
+    { tpm: 0 }
+  )
+  expect(await screen.findByLabelText('TPM (Incomplete): ≥0')).toBeVisible()
+})
+
+it('clears the lower-bound marker after a refresh returns complete token usage', async () => {
+  localStorage.setItem('channels:view-mode', 'table')
+  localStorage.setItem(
+    'channels:column-visibility',
+    JSON.stringify({ throughput: true })
+  )
+  let partial = true
+  await renderChannelsPage(
+    () => Promise.resolve(),
+    false,
+    false,
+    () => partial
+  )
+  expect(await screen.findByLabelText('TPM (Incomplete): ≥345')).toBeVisible()
+
+  partial = false
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+  expect(await screen.findByLabelText('TPM: 345')).toBeVisible()
+  expect(
+    screen.queryByLabelText('TPM (Incomplete): ≥345')
+  ).not.toBeInTheDocument()
+})
+
+it('keeps unavailable metrics hidden even when partial TPM was returned', async () => {
+  localStorage.setItem('channels:view-mode', 'table')
+  localStorage.setItem(
+    'channels:column-visibility',
+    JSON.stringify({ throughput: true })
+  )
+  await renderChannelsPage(
+    () => Promise.resolve(),
+    false,
+    false,
+    true,
+    'prod',
+    { available: false }
+  )
+  expect(await screen.findByLabelText('TPM: Unavailable')).toHaveTextContent(
+    '—'
+  )
+  expect(screen.getByLabelText('RPM: Unavailable')).toHaveTextContent('—')
+  expect(screen.queryByText('≥345')).not.toBeInTheDocument()
+})
+
+it.each([0, 1])(
+  'marks tag TPM as incomplete when child %s has unknown usage',
+  (partialIndex) => {
+    const channels = [
+      { ...channel('first'), id: 1, tag: 'shared', rpm: 2, tpm: 100 },
+      { ...channel('second'), id: 2, tag: 'shared', rpm: 3, tpm: 245 },
+    ].map((item, index) => ({
+      ...item,
+      tpm_unavailable: index === partialIndex,
+    }))
+    expect(aggregateChannelsByTag(channels)[0]).toMatchObject({
+      rpm: 5,
+      tpm: 345,
+      tpm_unavailable: true,
+    })
+  }
+)
+
+it('keeps tag TPM unavailable if a child has unavailable metrics', () => {
+  expect(
+    aggregateChannelsByTag([
+      { ...channel('first'), id: 1, tag: 'shared', rpm: 2, tpm: 100 },
+      {
+        ...channel('second'),
+        id: 2,
+        tag: 'shared',
+        rpm: undefined,
+        tpm: undefined,
+      },
+    ])[0]
+  ).toMatchObject({ rpm: undefined, tpm: undefined })
 })
 
 it('keeps the channel list visible when optional usage metrics fail', async () => {

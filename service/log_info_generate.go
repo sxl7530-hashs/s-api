@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/base64"
+	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -71,6 +72,16 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		return
 	}
 	other.SetAdmin("use_channel", ctx.GetStringSlice("use_channel"))
+	if rules := ctx.GetStringSlice("claude5_compat_rules"); len(rules) > 0 && relayInfo != nil && relayInfo.ChannelMeta != nil && relayInfo.ChannelType == constant.ChannelTypeAws {
+		mode := "off"
+		if slices.Contains(rules, "attribution_removed") {
+			mode = "remove"
+		}
+		if slices.Contains(rules, "attribution_forged") {
+			mode = "forge"
+		}
+		other.SetAdmin("claude5_compat", map[string]any{"rules": rules, "attribution_mode": mode, "beta_injected": ctx.GetBool("claude5_compat_beta_injected"), "thinking_budget_dropped": slices.Contains(rules, "thinking_budget_dropped")})
+	}
 	if relayInfo != nil {
 		if billingModel := relayInfo.GetBillingModelName(); billingModel != "" && billingModel != relayInfo.OriginModelName {
 			other.SetAdmin("billing_model", billingModel)

@@ -25,6 +25,7 @@ import {
 } from './section-registry.tsx'
 
 const defaultModelSettings: ModelSettings = {
+  'global.claude5_compat': '{}',
   'global.aws_passthrough_compatibility_enabled': false,
   'global.pass_through_request_enabled': false,
   'global.aws_beta_filter_enabled': true,

@@ -232,6 +232,7 @@ export type ContentSettings = {
 }
 
 export type ModelSettings = {
+  'global.claude5_compat': string
   'global.aws_usage_metrics_enabled': boolean
   'global.aws_passthrough_compatibility_enabled': boolean
   'global.pass_through_request_enabled': boolean

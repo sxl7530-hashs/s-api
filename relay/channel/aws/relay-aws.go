@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
@@ -373,6 +374,11 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 }
 
 func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor, requestBody io.Reader) (any, error) {
+	// A retry may select Nova or fail before reaching the Claude transformer.
+	// Diagnostics must describe this attempt, not the previous Claude request.
+	if _, exists := c.Get(claude5CompatContextKey); exists {
+		c.Set(claude5CompatContextKey, []string(nil))
+	}
 	awsCli, err := newAwsClient(c, info)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeChannelAwsClientError)
@@ -464,6 +470,10 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 			if bodyErr != nil {
 				return nil, types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeBadRequestBody, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
+			body, bodyErr = applyClaude5Compat(c, info, awsModelId, awsCli.Options().Region, body)
+			if bodyErr != nil {
+				return nil, types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeBadRequestBody, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
 			if info.IsStream {
 				a.AwsReq = &bedrockruntime.InvokeModelWithResponseStreamInput{ModelId: aws.String(awsModelId), Accept: aws.String("application/json"), ContentType: aws.String("application/json"), Body: body}
 			} else {
@@ -486,6 +496,10 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 			if err != nil {
 				return nil, types.NewError(errors.Wrap(err, "marshal aws request fail"), types.ErrorCodeBadRequestBody)
 			}
+			awsReq.Body, err = applyClaude5Compat(c, info, awsModelId, awsCli.Options().Region, awsReq.Body)
+			if err != nil {
+				return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeBadRequestBody, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
 			a.AwsReq = awsReq
 			return nil, nil
 		} else {
@@ -497,6 +511,10 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 			awsReq.Body, err = buildAwsRequestBody(c, info, awsClaudeReq)
 			if err != nil {
 				return nil, types.NewError(errors.Wrap(err, "marshal aws request fail"), types.ErrorCodeBadRequestBody)
+			}
+			awsReq.Body, err = applyClaude5Compat(c, info, awsModelId, awsCli.Options().Region, awsReq.Body)
+			if err != nil {
+				return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeBadRequestBody, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
 			a.AwsReq = awsReq
 			return nil, nil
@@ -784,12 +802,38 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 		}
 	}()
 	events := stream.Events()
+	// Keep SDK stream writes on this loop: a separate heartbeat goroutine can
+	// interleave SSE frames with Claude events and race the response writer.
+	var pingEvents <-chan time.Time
+	generalSettings := operation_setting.GetGeneralSetting()
+	if generalSettings.PingIntervalEnabled && !info.DisablePing {
+		interval := time.Duration(generalSettings.PingIntervalSeconds) * time.Second
+		if interval <= 0 {
+			interval = helper.DefaultPingInterval
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		pingEvents = ticker.C
+	}
 	var responseErr *types.NewAPIError
 streamLoop:
 	for {
 		select {
 		case <-ctx.Done():
 			break streamLoop
+		case <-pingEvents:
+			// Do not commit a successful HTTP response before the first upstream
+			// event. An initial AWS failure must retain its status and retry path.
+			if ctx.Err() != nil {
+				break streamLoop
+			}
+			if !c.Writer.Written() || info.StreamStatus.ResponseOutcome() == string(relaycommon.ResponseOutcomeCompleted) {
+				continue
+			}
+			if err := helper.PingData(c); err != nil {
+				responseErr = types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
+				break streamLoop
+			}
 		case event, ok := <-events:
 			if !ok {
 				break streamLoop

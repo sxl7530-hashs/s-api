@@ -334,8 +334,20 @@ export function ChannelsTable() {
     const usage = isUsageError ? {} : usageResponse?.data || {}
     const rows = rawChannels.map((channel) => {
       const current = usage[String(channel.id)]
-      if (!current?.available) return { ...channel, rpm: undefined, tpm: undefined }
-      return { ...channel, rpm: current.rpm, tpm: current.tpm_unavailable ? undefined : current.tpm }
+      if (!current?.available) {
+        return {
+          ...channel,
+          rpm: undefined,
+          tpm: undefined,
+          tpm_unavailable: undefined,
+        }
+      }
+      return {
+        ...channel,
+        rpm: current.rpm,
+        tpm: current.tpm,
+        tpm_unavailable: current.tpm_unavailable,
+      }
     })
 
     if (enableTagMode && rows.length > 0) {

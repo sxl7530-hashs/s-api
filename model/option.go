@@ -2,6 +2,8 @@ package model
 
 import (
 	"maps"
+	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -22,6 +25,8 @@ type Option struct {
 	Key   string `json:"key" gorm:"primaryKey"`
 	Value string `json:"value"`
 }
+
+var claude5ForgeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
 func AllOption() ([]*Option, error) {
 	var options []*Option
@@ -232,6 +237,47 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == "global.claude5_compat" {
+		var settings model_setting.Claude5CompatSettings
+		if len(value) > 131072 || !strings.HasPrefix(strings.TrimSpace(value), "{") || common.UnmarshalJsonStr(value, &settings) != nil {
+			return common.NewMessage("Invalid parameters")
+		}
+		if settings.AttributionMode != "" && settings.AttributionMode != "off" && settings.AttributionMode != "remove" && settings.AttributionMode != "forge" {
+			return common.NewMessage("Invalid parameters")
+		}
+		if settings.AttributionMode != "" && settings.AttributionMode != "off" && !settings.ThinkingBindingRecover {
+			return common.NewMessage("Attribution processing requires thinking binding recovery")
+		}
+		if settings.DisplayDefault != "" && settings.DisplayDefault != "summarized" && settings.DisplayDefault != "omitted" {
+			return common.NewMessage("Invalid parameters")
+		}
+		if settings.ForgeVersion != "" && !claude5ForgeVersionPattern.MatchString(settings.ForgeVersion) {
+			return common.NewMessage("Invalid parameters")
+		}
+		if len(settings.TargetModels) > 100 || len(settings.TargetRegions) > 50 || len(settings.ThinkingBudgetEffortTable) > 20 {
+			return common.NewMessage("Invalid parameters")
+		}
+		for _, pattern := range settings.TargetModels {
+			if _, err := path.Match(strings.TrimSpace(pattern), ""); err != nil {
+				return common.NewMessage("Invalid parameters")
+			}
+			if strings.TrimSpace(pattern) == "" || len(pattern) > 256 {
+				return common.NewMessage("Invalid parameters")
+			}
+		}
+		for _, region := range settings.TargetRegions {
+			if strings.TrimSpace(region) == "" || len(region) > 64 {
+				return common.NewMessage("Invalid parameters")
+			}
+		}
+		previousBudget := 0
+		for _, entry := range settings.ThinkingBudgetEffortTable {
+			if entry.MaxBudget <= previousBudget || entry.Effort != "low" && entry.Effort != "medium" && entry.Effort != "high" && entry.Effort != "max" {
+				return common.NewMessage("Invalid parameters")
+			}
+			previousBudget = entry.MaxBudget
+		}
+	}
 	if key == "global.aws_usage_metrics_enabled" && value != "true" && value != "false" {
 		return common.NewMessage("Invalid parameters")
 	}

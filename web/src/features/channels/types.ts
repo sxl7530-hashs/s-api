@@ -74,6 +74,7 @@ export const channelSchema = z.object({
   settings: z.string().default('{}'), // other_settings JSON
   rpm: z.number().optional(),
   tpm: z.number().optional(),
+  tpm_unavailable: z.boolean().optional(),
 })
 
 export type Channel = z.infer<typeof channelSchema>

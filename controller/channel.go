@@ -1781,7 +1781,7 @@ func ManageMultiKeys(c *gin.Context) {
 			}
 
 			// Create key preview (first 10 chars)
-			keyPreview := key
+			keyPreview := "***"
 			if len(key) > 10 {
 				keyPreview = key[:10] + "..."
 			}

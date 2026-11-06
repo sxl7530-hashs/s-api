@@ -1,8 +1,10 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -12,6 +14,29 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+var claude5StatsQuerySlot = make(chan struct{}, 1)
+
+// GetClaude5CompatStats is mounted under root-only options. Never enqueue
+// expensive dashboard queries or compete with relays for a background worker.
+func GetClaude5CompatStats(c *gin.Context) {
+	select {
+	case claude5StatsQuerySlot <- struct{}{}:
+		defer func() { <-claude5StatsQuerySlot }()
+	default:
+		common.ApiErrorStatus(c, http.StatusTooManyRequests, common.NewMessage("Too many requests"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	end := common.GetTimestamp()
+	stats, err := model.GetClaude5CompatStats(ctx, end-3600, end)
+	if err != nil {
+		common.ApiErrorT(c, "Failed to query statistics")
+		return
+	}
+	common.ApiSuccess(c, stats)
+}
 
 // logFilterFromQuery reads the log search shared by the log list and the log
 // export. Username and channel are read only for administrators.

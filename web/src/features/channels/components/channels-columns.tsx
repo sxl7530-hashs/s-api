@@ -1192,7 +1192,15 @@ export function useChannelsColumns(
         header: t('RPM / TPM'),
         meta: { mobileHidden: true },
         cell: ({ row }) => {
-          const { rpm, tpm } = row.original
+          const { rpm, tpm, tpm_unavailable } = row.original
+          const tpmTitle =
+            tpm != null && tpm_unavailable
+              ? `${t('TPM')} (${t('Incomplete')})`
+              : t('TPM')
+          let tpmDisplay = '—'
+          if (tpm != null) {
+            tpmDisplay = `${tpm_unavailable ? '≥' : ''}${formatNumber(tpm, locale)}`
+          }
           return (
             <div className='flex min-w-[112px] items-center gap-1.5 py-0.5 font-mono text-[11px] tabular-nums'>
               <Badge
@@ -1205,11 +1213,11 @@ export function useChannelsColumns(
               </Badge>
               <Badge
                 variant='outline'
-                aria-label={`${t('TPM')}: ${tpm == null ? t('Unavailable') : formatNumber(tpm, locale)}`}
-                title={t('TPM')}
+                aria-label={`${tpmTitle}: ${tpm == null ? t('Unavailable') : tpmDisplay}`}
+                title={tpmTitle}
                 className='h-5 min-w-[3.5rem] justify-center rounded-full border-cyan-200 bg-cyan-50 px-1.5 font-mono text-[11px] font-semibold text-cyan-700 shadow-none dark:border-cyan-900/70 dark:bg-cyan-950/40 dark:text-cyan-200'
               >
-                {tpm == null ? '—' : formatNumber(tpm, locale)}
+                {tpmDisplay}
               </Badge>
             </div>
           )

@@ -62,6 +62,10 @@ const MODELS_SECTIONS = [
             ),
             aws_usage_metrics_enabled:
               settings['global.aws_usage_metrics_enabled'] ?? false,
+            claude5_compat: formatJsonForEditor(
+              settings['global.claude5_compat'],
+              '{}'
+            ),
           },
           general_setting: {
             ping_interval_enabled:

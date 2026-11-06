@@ -23,6 +23,46 @@ type ChannelNameDisplaySettings struct {
 	Mappings map[string]string `json:"mappings"`
 }
 
+type Claude5CompatSettings struct {
+	Enabled                   bool                   `json:"enabled"`
+	TargetModels              []string               `json:"target_models"`
+	TargetRegions             []string               `json:"target_regions"`
+	ApplyToPassthroughUsers   bool                   `json:"apply_to_passthrough_users"`
+	AttributionMode           string                 `json:"attribution_mode"`
+	ForgeVersion              string                 `json:"forge_version"`
+	ThinkingBindingRecover    bool                   `json:"thinking_binding_recover"`
+	ThinkingDisabledMap       bool                   `json:"thinking_disabled_map"`
+	ThinkingEnabledMap        bool                   `json:"thinking_enabled_map"`
+	ThinkingBudgetEffortTable []ThinkingBudgetEffort `json:"thinking_budget_effort_table"`
+	ThinkingDisplayNormalize  bool                   `json:"thinking_display_normalize"`
+	DisplayDefault            string                 `json:"display_default"`
+	DropTemperature           bool                   `json:"drop_temperature"`
+	CleanEmptySystem          bool                   `json:"clean_empty_system"`
+	FixToolResultCacheControl bool                   `json:"fix_tool_result_cache_control"`
+	StripContextManagement    bool                   `json:"strip_context_management"`
+	StripOutputConfig         bool                   `json:"strip_output_config"`
+	StripContainerFields      bool                   `json:"strip_container_fields"`
+	MapToolChoiceAuto         bool                   `json:"map_tool_choice_auto"`
+	StripUnsupportedWebSearch bool                   `json:"strip_unsupported_web_search"`
+}
+
+type ThinkingBudgetEffort struct {
+	MaxBudget int    `json:"max_budget"`
+	Effort    string `json:"effort"`
+}
+
+// UnmarshalJSON replaces the complete policy, so omitted switches and target
+// lists cannot retain values from the previously saved configuration.
+func (s *Claude5CompatSettings) UnmarshalJSON(data []byte) error {
+	type policy Claude5CompatSettings
+	var replacement policy
+	if err := common.Unmarshal(data, &replacement); err != nil {
+		return err
+	}
+	*s = Claude5CompatSettings(replacement)
+	return nil
+}
+
 func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channelType int) bool {
 	if !p.Enabled {
 		return false
@@ -50,10 +90,11 @@ type GlobalSettings struct {
 	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
 	// AwsBetaFilterEnabled strips anthropic-beta values listed in AwsBetaBlacklist
 	// before forwarding to AWS Bedrock (AWS channels only); toggle via settings.
-	AwsBetaFilterEnabled   bool     `json:"aws_beta_filter_enabled"`
-	AwsBetaBlacklist       []string `json:"aws_beta_blacklist"`
-	AwsUsageMetricsEnabled bool     `json:"aws_usage_metrics_enabled"`
-	ChannelNameDisplay     string   `json:"channel_name_display"`
+	AwsBetaFilterEnabled   bool                  `json:"aws_beta_filter_enabled"`
+	AwsBetaBlacklist       []string              `json:"aws_beta_blacklist"`
+	AwsUsageMetricsEnabled bool                  `json:"aws_usage_metrics_enabled"`
+	Claude5Compat          Claude5CompatSettings `json:"claude5_compat"`
+	ChannelNameDisplay     string                `json:"channel_name_display"`
 }
 
 // 默认配置
@@ -102,6 +143,19 @@ func IsAwsUsageMetricsEnabled() bool {
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
 	return globalSettings.AwsUsageMetricsEnabled
+}
+
+func GetClaude5CompatSettings() Claude5CompatSettings {
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+	settings := globalSettings.Claude5Compat
+	if !settings.Enabled {
+		return settings
+	}
+	settings.TargetModels = append([]string(nil), settings.TargetModels...)
+	settings.TargetRegions = append([]string(nil), settings.TargetRegions...)
+	settings.ThinkingBudgetEffortTable = append([]ThinkingBudgetEffort(nil), settings.ThinkingBudgetEffortTable...)
+	return settings
 }
 
 // FilterAwsBetas removes anthropic-beta values that AWS Bedrock does not accept

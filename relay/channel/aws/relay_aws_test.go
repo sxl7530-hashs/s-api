@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,6 +22,7 @@ import (
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/tokenkit"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -994,6 +996,45 @@ func TestNewAwsInvokeContextInheritsParent(t *testing.T) {
 	}
 }
 
+func TestAwsValidationErrorsPreserveCapabilityRejectionWording(t *testing.T) {
+	for _, message := range []string{
+		"Claude Code 2.1.215 does not support this model; version 2.1.280 or newer is required",
+		`Invalid signature in thinking block; set "thinking.block_binding.prefix_mismatch_behavior" to "drop_block"`,
+		"context_management: Extra inputs are not permitted",
+	} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("stream=%t/%s", stream, message), func(t *testing.T) {
+				body, err := common.Marshal(map[string]string{"message": message})
+				require.NoError(t, err)
+				client := newAwsTestClient(awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: http.StatusBadRequest,
+						Header:     http.Header{"Content-Type": {"application/json"}, "X-Amzn-Errortype": {"ValidationException"}},
+						Body:       io.NopCloser(bytes.NewReader(body)),
+						Request:    request,
+					}, nil
+				}))
+				info := newAwsTestRelayInfo()
+				info.RelayFormat = relaytypes.RelayFormatClaude
+				recorder := httptest.NewRecorder()
+				c := newAwsTestContext(recorder, t.Context())
+				adaptor := &Adaptor{AwsClient: client, AwsReq: newAwsInvokeModelInput()}
+				var invokeErr *relaytypes.NewAPIError
+				if stream {
+					adaptor.AwsReq = newAwsStreamInput()
+					invokeErr, _ = awsStreamHandler(c, info, adaptor)
+				} else {
+					invokeErr, _ = awsHandler(c, info, adaptor)
+				}
+				require.NotNil(t, invokeErr)
+				assert.Equal(t, http.StatusBadRequest, invokeErr.StatusCode)
+				assert.Contains(t, invokeErr.ToClaudeError().Message, message, "client recovery must receive the original rejection wording")
+				assert.Empty(t, recorder.Body.String(), "initial errors must not start a successful stream")
+			})
+		}
+	}
+}
+
 func TestNewAwsInvokeErrorSkipsRetryOnlyForClientCancellation(t *testing.T) {
 	canceledContext, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1365,7 +1406,90 @@ func TestNovaActualUsageSurvivesResponseConversionErrors(t *testing.T) {
 	}
 }
 
+func TestAwsStreamHeartbeatHonorsSettingsAndPreservesProtocol(t *testing.T) {
+	settings := operation_setting.GetGeneralSetting()
+	previousEnabled, previousInterval := settings.PingIntervalEnabled, settings.PingIntervalSeconds
+	t.Cleanup(func() {
+		settings.PingIntervalEnabled, settings.PingIntervalSeconds = previousEnabled, previousInterval
+	})
+	for _, tc := range []struct {
+		name        string
+		enabled     bool
+		disablePing bool
+		format      relaytypes.RelayFormat
+	}{
+		{"Claude heartbeat", true, false, relaytypes.RelayFormatClaude},
+		{"OpenAI heartbeat", true, false, relaytypes.RelayFormatOpenAI},
+		{"global switch off", false, false, relaytypes.RelayFormatClaude},
+		{"request disables ping", true, true, relaytypes.RelayFormatClaude},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings.PingIntervalEnabled, settings.PingIntervalSeconds = tc.enabled, 1
+			synctest.Test(t, func(t *testing.T) {
+				reader, writer := io.Pipe()
+				defer reader.Close()
+				defer writer.Close()
+				client := newAwsTestClient(awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+					return newAwsStreamResponse(request, reader), nil
+				}))
+				info := newAwsTestRelayInfo()
+				info.RelayFormat, info.DisablePing = tc.format, tc.disablePing
+				recorder := httptest.NewRecorder()
+				finished := make(chan struct{})
+				go func() {
+					defer close(finished)
+					err, usage := awsStreamHandler(newAwsTestContext(recorder, t.Context()), info, &Adaptor{AwsClient: client, AwsReq: newAwsStreamInput()})
+					assert.Nil(t, err)
+					assert.NotNil(t, usage)
+				}()
+				synctest.Wait()
+				// Virtual time tests actual ticker behavior without a wall-clock wait.
+				time.Sleep(time.Second)
+				synctest.Wait()
+				assert.Empty(t, recorder.Body.String(), "initial AWS errors must still be able to return an HTTP error")
+				for _, event := range []string{
+					`{"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","model":"claude-test","content":[],"usage":{"input_tokens":100,"output_tokens":1}}}`,
+					`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+					`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`,
+				} {
+					require.NoError(t, writeAwsStreamEvent(writer, event))
+				}
+				synctest.Wait()
+				time.Sleep(time.Second)
+				synctest.Wait()
+				assert.Equal(t, tc.enabled && !tc.disablePing, strings.Contains(recorder.Body.String(), ": PING\n\n"))
+				for _, event := range []string{
+					`{"type":"content_block_stop","index":0}`,
+					`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}`,
+					`{"type":"message_stop"}`,
+				} {
+					require.NoError(t, writeAwsStreamEvent(writer, event))
+				}
+				synctest.Wait()
+				terminalBody := recorder.Body.String()
+				time.Sleep(time.Second)
+				synctest.Wait()
+				assert.Equal(t, terminalBody, recorder.Body.String(), "message_stop must prevent further pings even before upstream EOF")
+				require.NoError(t, writer.Close())
+				<-finished
+				assert.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
+				assert.Equal(t, string(relaycommon.ResponseOutcomeCompleted), info.StreamStatus.ResponseOutcome())
+				body := recorder.Body.String()
+				time.Sleep(time.Second)
+				synctest.Wait()
+				assert.Equal(t, body, recorder.Body.String(), "completed streams must stop their heartbeat")
+			})
+		})
+	}
+}
+
 func TestAwsStreamHandlerStopsAtClientCancellation(t *testing.T) {
+	settings := operation_setting.GetGeneralSetting()
+	previousEnabled, previousInterval := settings.PingIntervalEnabled, settings.PingIntervalSeconds
+	settings.PingIntervalEnabled, settings.PingIntervalSeconds = true, 1
+	t.Cleanup(func() {
+		settings.PingIntervalEnabled, settings.PingIntervalSeconds = previousEnabled, previousInterval
+	})
 	originalRelayTimeout := common.RelayTimeout
 	common.RelayTimeout = 0
 	t.Cleanup(func() {

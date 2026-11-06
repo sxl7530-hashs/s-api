@@ -327,6 +327,8 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 	require.NoError(t, model.DB.Model(root).Update("role", common.RoleRootUser).Error)
 	rootOps, _ := createMiddlewareScopedToken(t, root.Id, 0, "ops:write")
 	rootRead, _ := createMiddlewareScopedToken(t, root.Id, 0, "ops:read")
+	rootOptions, _ := createMiddlewareScopedToken(t, root.Id, 0, "option:read")
+	adminOptions, _ := createMiddlewareScopedToken(t, admin.Id, 0, "option:read")
 	expired, _ := createMiddlewareScopedToken(t, admin.Id, time.Now().Unix()-1, "profile:read")
 
 	ok := func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"id": c.GetInt("id")}) }
@@ -336,6 +338,7 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 	router.GET("/api/undeclared", UserAuth(), ok)
 	router.GET("/api/channel/", AdminAuth(), RequirePermission(authz.ChannelRead), ok)
 	router.GET("/api/pricing", TryUserAuth(), ok)
+	router.GET("/api/option/claude5_compat_stats", RootAuth(), ok)
 	router.POST("/api/system-task/:task_id/cancel", RootAuth(), ok)
 	router.POST("/api/channel/test/models/tasks/:task_id/cancel", AdminAuth(), RequirePermission(authz.ChannelWrite), ok)
 	for _, test := range []struct {
@@ -383,6 +386,9 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 		status                          int
 	}{
 		{name: "granted scope on a never expiring token", path: "/api/user/self", token: profile, status: http.StatusOK},
+		{name: "root compatibility statistics reader", path: "/api/option/claude5_compat_stats", token: rootOptions, status: http.StatusOK},
+		{name: "root statistics without option scope", path: "/api/option/claude5_compat_stats", token: rootRead, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED", reason: "scope_denied"},
+		{name: "admin cannot read root statistics", path: "/api/option/claude5_compat_stats", token: adminOptions, status: http.StatusForbidden},
 		{name: "missing scope", path: "/api/user/self", token: channel, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED", reason: "scope_denied"},
 		{name: "undeclared route", path: "/api/undeclared", token: profile, status: http.StatusForbidden, code: "ACCESS_TOKEN_ROUTE_UNDECLARED", reason: "route_undeclared"},
 		{name: "session route", path: "/api/user/access_tokens", token: profile, status: http.StatusForbidden, code: "AUTH_SESSION_REQUIRED", reason: "session_required"},

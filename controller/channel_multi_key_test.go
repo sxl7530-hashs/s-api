@@ -16,6 +16,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMultiKeyStatusDoesNotExposeShortKeys(t *testing.T) {
+	setupTaskPluginBindChannelTest(t)
+	channel := model.Channel{Name: "preview-test", Key: "shortkey\nlong-key-secret-value", ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2}}
+	require.NoError(t, model.DB.Create(&channel).Error)
+	payload, err := common.Marshal(MultiKeyManageRequest{ChannelId: channel.Id, Action: "get_key_status"})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/channel/multi_key/manage", bytes.NewReader(payload))
+	c.Request.Header.Set("Content-Type", "application/json")
+	ManageMultiKeys(c)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+	assert.NotContains(t, recorder.Body.String(), "shortkey")
+	assert.NotContains(t, recorder.Body.String(), "long-key-secret-value")
+	assert.Contains(t, recorder.Body.String(), `"key_preview":"***"`)
+}
+
 func TestMultiKeyEnableRestoresOnlyExhaustedChannels(t *testing.T) {
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()

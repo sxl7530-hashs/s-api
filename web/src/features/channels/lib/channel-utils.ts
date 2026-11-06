@@ -663,6 +663,7 @@ export function aggregateChannelsByTag(
         models: '',
         rpm: 0,
         tpm: 0,
+        tpm_unavailable: false,
         children: [],
       } as TagRow
       tagMap.set(tag, tagRow)
@@ -689,6 +690,7 @@ export function aggregateChannelsByTag(
       tagRow.tpm == null || channel.tpm == null
         ? undefined
         : tagRow.tpm + channel.tpm
+    tagRow.tpm_unavailable ||= channel.tpm_unavailable === true
 
     // Aggregate response_time (average)
     tagRow.response_time =

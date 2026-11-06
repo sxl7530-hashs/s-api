@@ -34,6 +34,25 @@ import type {
   UpstreamRatiosResponse,
 } from './types'
 
+export type Claude5CompatStats = {
+  start: number
+  end: number
+  scanned: number
+  partial: boolean
+  requests: number
+  rows: { model: string; rule: string; requests: number }[]
+  buckets: { start: number; requests: number }[]
+}
+
+export async function getClaude5CompatStats(signal?: AbortSignal) {
+  const res = await api.get<{
+    success: boolean
+    message?: string
+    data?: Claude5CompatStats
+  }>('/api/option/claude5_compat_stats', { signal })
+  return res.data
+}
+
 export async function getSystemOptions() {
   const res = await api.get<SystemOptionsResponse>('/api/option/')
   return res.data
