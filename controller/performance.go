@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -27,7 +27,9 @@ type PerformanceStats struct {
 	// 磁盘空间信息
 	DiskSpaceInfo common.DiskSpaceInfo `json:"disk_space_info"`
 	// 配置信息
-	Config PerformanceConfig `json:"config"`
+	Config       PerformanceConfig    `json:"config"`
+	SystemStatus common.SystemStatus  `json:"system_status"`
+	HTTPStats    middleware.StatsInfo `json:"http_stats"`
 }
 
 // MemoryStats 内存统计
@@ -143,6 +145,8 @@ func GetPerformanceStats(c *gin.Context) {
 		DiskCacheInfo: diskCacheInfo,
 		DiskSpaceInfo: diskSpaceInfo,
 		Config:        config,
+		SystemStatus:  systemStatus,
+		HTTPStats:     middleware.GetStats(),
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -161,30 +165,21 @@ func ClearDiskCache(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "不活跃的磁盘缓存已清理",
-	})
+	common.ApiSuccessT(c, "Inactive disk cache cleared", nil)
 }
 
 // ResetPerformanceStats 重置性能统计
 func ResetPerformanceStats(c *gin.Context) {
 	common.ResetDiskCacheStats()
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "统计信息已重置",
-	})
+	common.ApiSuccessT(c, "Statistics reset", nil)
 }
 
 // ForceGC 强制执行 GC
 func ForceGC(c *gin.Context) {
 	runtime.GC()
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "GC 已执行",
-	})
+	common.ApiSuccessT(c, "GC executed", nil)
 }
 
 // LogFileInfo 日志文件信息
@@ -349,11 +344,11 @@ func CleanupLogFiles(c *gin.Context) {
 	}
 
 	if len(failedFiles) > 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": fmt.Sprintf("部分文件删除失败（%d/%d）", len(failedFiles), len(toDelete)),
-			"data":    result,
+		msg := common.NewMessage("Some files could not be deleted ({{failed}}/{{total}})", map[string]any{
+			"failed": len(failedFiles),
+			"total":  len(toDelete),
 		})
+		common.ApiErrorStatus(c, http.StatusOK, msg, gin.H{"data": result})
 		return
 	}
 

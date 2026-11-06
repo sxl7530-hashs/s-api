@@ -4,10 +4,48 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFilterAwsBetasConcurrentConfigurationUpdate(t *testing.T) {
+	settings := GetGlobalSettings()
+	common.OptionMapRWMutex.Lock()
+	previousEnabled, previousBlacklist := settings.AwsBetaFilterEnabled, settings.AwsBetaBlacklist
+	settings.AwsBetaFilterEnabled = true
+	settings.AwsBetaBlacklist = []string{"blocked"}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		defer common.OptionMapRWMutex.Unlock()
+		settings.AwsBetaFilterEnabled, settings.AwsBetaBlacklist = previousEnabled, previousBlacklist
+	})
+
+	start := make(chan struct{})
+	filtered := make(chan []string, 1)
+	updated := make(chan error, 1)
+	go func() {
+		<-start
+		filtered <- settings.FilterAwsBetas([]string{"blocked", "keep"})
+	}()
+	go func() {
+		<-start
+		common.OptionMapRWMutex.Lock()
+		defer common.OptionMapRWMutex.Unlock()
+		updated <- config.UpdateConfigFromMap(settings, map[string]string{
+			"aws_beta_filter_enabled": "false",
+			"aws_beta_blacklist":      `["keep"]`,
+		})
+	}()
+	close(start)
+	result := <-filtered
+	require.NoError(t, <-updated)
+	assert.Contains(t, [][]string{{"keep"}, {"blocked", "keep"}}, result,
+		"a request must use one consistent filter configuration")
+}
 
 func TestShouldPreserveThinkingSuffixExactAndRegex(t *testing.T) {
 	settings := GetGlobalSettings()

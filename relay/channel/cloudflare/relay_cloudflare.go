@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -35,10 +36,14 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 
 	helper.SetEventStreamHeaders(c)
 	id := helper.GetResponseID(c)
-	var responseText string
+	responseTokens := service.NewTokenEstimator(info.UpstreamModelName)
 	isFirst := true
+	completed := false
 
 	for scanner.Scan() {
+		if c.Request.Context().Err() != nil {
+			return nil, service.ResponseTokens2Usage(c, responseTokens.Tokens(), info.GetEstimatePromptTokens())
+		}
 		data := scanner.Text()
 		if len(data) < len("data: ") {
 			continue
@@ -47,18 +52,19 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 		data = strings.TrimSuffix(data, "\r")
 
 		if data == "[DONE]" {
+			completed = true
 			break
 		}
 
 		var response dto.ChatCompletionsStreamResponse
 		err := json.Unmarshal([]byte(data), &response)
 		if err != nil {
-			logger.LogError(c, "error_unmarshalling_stream_response: "+err.Error())
+			logger.LogError(c, common.LogText("error_unmarshalling_stream_response: %s", err.Error()))
 			continue
 		}
 		for _, choice := range response.Choices {
 			choice.Delta.Role = "assistant"
-			responseText += choice.Delta.GetContentString()
+			responseTokens.WriteString(choice.Delta.GetContentString())
 		}
 		response.Id = id
 		response.Model = info.UpstreamModelName
@@ -68,22 +74,28 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 			info.FirstResponseTime = time.Now()
 		}
 		if err != nil {
-			logger.LogError(c, "error_rendering_stream_response: "+err.Error())
+			logger.LogError(c, common.LogText("error_rendering_stream_response: %s", err.Error()))
+			return types.NewError(err, types.ErrorCodeBadResponse), nil
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		logger.LogError(c, "error_scanning_stream_response: "+err.Error())
+		logger.LogError(c, common.LogText("error_scanning_stream_response: %s", err.Error()))
 	}
-	usage := service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens())
+	usage := service.ResponseTokens2Usage(c, responseTokens.Tokens(), info.GetEstimatePromptTokens())
 	if info.ShouldIncludeUsage {
 		response := helper.GenerateFinalUsageResponse(id, info.StartTime.Unix(), info.UpstreamModelName, *usage)
 		err := helper.ObjectData(c, response)
 		if err != nil {
-			logger.LogError(c, "error_rendering_final_usage_response: "+err.Error())
+			logger.LogError(c, common.LogText("error_rendering_final_usage_response: %s", err.Error()))
+			return types.NewError(err, types.ErrorCodeBadResponse), usage
 		}
 	}
-	helper.Done(c)
+	if completed && c.Request.Context().Err() == nil {
+		if err := helper.StringData(c, "[DONE]"); err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponse), usage
+		}
+	}
 
 	service.CloseResponseBodyGracefully(resp)
 
@@ -102,11 +114,11 @@ func cfHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response)
 		return types.NewError(err, types.ErrorCodeBadResponseBody), nil
 	}
 	response.Model = info.UpstreamModelName
-	var responseText string
+	responseTokens := service.NewTokenEstimator(info.UpstreamModelName)
 	for _, choice := range response.Choices {
-		responseText += choice.Message.StringContent()
+		responseTokens.WriteString(choice.Message.StringContent())
 	}
-	usage := service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens())
+	usage := service.ResponseTokens2Usage(c, responseTokens.Tokens(), info.GetEstimatePromptTokens())
 	response.Usage = *usage
 	response.Id = helper.GetResponseID(c)
 	jsonResponse, err := json.Marshal(response)

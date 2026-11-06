@@ -1,6 +1,9 @@
 package model
 
 import (
+	"maps"
+	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -21,6 +25,8 @@ type Option struct {
 	Key   string `json:"key" gorm:"primaryKey"`
 	Value string `json:"value"`
 }
+
+var claude5ForgeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
 func AllOption() ([]*Option, error) {
 	var options []*Option
@@ -56,8 +62,6 @@ func InitOptionMap() {
 	common.OptionMap["TaskEnabled"] = strconv.FormatBool(common.TaskEnabled)
 	common.OptionMap["TaskPluginEnabled"] = strconv.FormatBool(constant.TaskPluginEnabled)
 	jsplugin.DefaultRegistry.SetEnabled(constant.TaskPluginEnabled)
-	common.OptionMap["TaskPluginOverrideEnabled"] = strconv.FormatBool(constant.TaskPluginOverrideEnabled)
-	jsplugin.DefaultRegistry.SetOverrideEnabled(constant.TaskPluginOverrideEnabled)
 	common.OptionMap[setting.TaskPluginMarketplaceSourcesKey] = setting.TaskPluginMarketplaceSources2JsonString()
 	common.OptionMap[setting.TaskPluginDisabledFactoryKeysKey] = "[]"
 	jsplugin.DefaultRegistry.SetDisabledFactoryKeys(nil)
@@ -67,6 +71,9 @@ func InitOptionMap() {
 	common.OptionMap["EmailAliasRestrictionEnabled"] = strconv.FormatBool(common.EmailAliasRestrictionEnabled)
 	common.OptionMap["EmailDomainWhitelist"] = strings.Join(common.EmailDomainWhitelist, ",")
 	common.OptionMap["SMTPServer"] = ""
+	common.OptionMap["EmailProvider"] = "smtp"
+	common.OptionMap["ResendApiKey"] = ""
+	common.OptionMap["ResendFrom"] = ""
 	common.OptionMap["SMTPFrom"] = ""
 	common.OptionMap["SMTPPort"] = strconv.Itoa(common.SMTPPort)
 	common.OptionMap["SMTPAccount"] = ""
@@ -144,6 +151,7 @@ func InitOptionMap() {
 	common.OptionMap["QuotaForNewUser"] = strconv.Itoa(common.QuotaForNewUser)
 	common.OptionMap["QuotaForInviter"] = strconv.Itoa(common.QuotaForInviter)
 	common.OptionMap["QuotaForInvitee"] = strconv.Itoa(common.QuotaForInvitee)
+	common.OptionMap["QuotaRemindEnabled"] = strconv.FormatBool(common.QuotaRemindEnabled)
 	common.OptionMap["QuotaRemindThreshold"] = strconv.Itoa(common.QuotaRemindThreshold)
 	common.OptionMap["PreConsumedQuota"] = strconv.Itoa(common.PreConsumedQuota)
 	common.OptionMap["ModelRequestRateLimitCount"] = strconv.Itoa(setting.ModelRequestRateLimitCount)
@@ -189,38 +197,140 @@ func InitOptionMap() {
 
 	// 自动添加所有注册的模型配置
 	modelConfigs := config.GlobalConfig.ExportAllConfigs()
-	for k, v := range modelConfigs {
-		common.OptionMap[k] = v
-	}
+	maps.Copy(common.OptionMap, modelConfigs)
 
 	common.OptionMapRWMutex.Unlock()
 	loadOptionsFromDatabase()
 }
 
 func loadOptionsFromDatabase() {
+	requestPolicyOptionMutex.Lock()
+	defer requestPolicyOptionMutex.Unlock()
+	defer func() {
+		if err := refreshRequestPolicySnapshot(); err != nil {
+			common.SysError(common.LogText("invalid request policy: %s", err.Error()))
+		}
+	}()
+	passkeyOptionMutex.Lock()
+	defer passkeyOptionMutex.Unlock()
 	options, _ := AllOption()
+	passkeyOptions := make(map[string]string)
 	for _, option := range options {
+		if IsPasskeyDomainOption(option.Key) {
+			passkeyOptions[option.Key] = option.Value
+			continue
+		}
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {
-			common.SysLog("failed to update option map: " + err.Error())
+			common.SysLog(common.LogText("failed to update option map: %s", err.Error()))
 		}
 	}
+	applyPasskeyDomainOptions(passkeyOptions)
 }
 
 func SyncOptions(frequency int) {
 	for {
 		time.Sleep(time.Duration(frequency) * time.Second)
-		common.SysLog("syncing options from database")
+		common.SysLog(common.LogText("syncing options from database"))
 		loadOptionsFromDatabase()
 	}
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == "global.claude5_compat" {
+		var settings model_setting.Claude5CompatSettings
+		if len(value) > 131072 || !strings.HasPrefix(strings.TrimSpace(value), "{") || common.UnmarshalJsonStr(value, &settings) != nil {
+			return common.NewMessage("Invalid parameters")
+		}
+		if settings.AttributionMode != "" && settings.AttributionMode != "off" && settings.AttributionMode != "remove" && settings.AttributionMode != "forge" {
+			return common.NewMessage("Invalid parameters")
+		}
+		if settings.AttributionMode != "" && settings.AttributionMode != "off" && !settings.ThinkingBindingRecover {
+			return common.NewMessage("Attribution processing requires thinking binding recovery")
+		}
+		if settings.DisplayDefault != "" && settings.DisplayDefault != "summarized" && settings.DisplayDefault != "omitted" {
+			return common.NewMessage("Invalid parameters")
+		}
+		if settings.ForgeVersion != "" && !claude5ForgeVersionPattern.MatchString(settings.ForgeVersion) {
+			return common.NewMessage("Invalid parameters")
+		}
+		if len(settings.TargetModels) > 100 || len(settings.TargetRegions) > 50 || len(settings.ThinkingBudgetEffortTable) > 20 {
+			return common.NewMessage("Invalid parameters")
+		}
+		for _, pattern := range settings.TargetModels {
+			if _, err := path.Match(strings.TrimSpace(pattern), ""); err != nil {
+				return common.NewMessage("Invalid parameters")
+			}
+			if strings.TrimSpace(pattern) == "" || len(pattern) > 256 {
+				return common.NewMessage("Invalid parameters")
+			}
+		}
+		for _, region := range settings.TargetRegions {
+			if strings.TrimSpace(region) == "" || len(region) > 64 {
+				return common.NewMessage("Invalid parameters")
+			}
+		}
+		previousBudget := 0
+		for _, entry := range settings.ThinkingBudgetEffortTable {
+			if entry.MaxBudget <= previousBudget || entry.Effort != "low" && entry.Effort != "medium" && entry.Effort != "high" && entry.Effort != "max" {
+				return common.NewMessage("Invalid parameters")
+			}
+			previousBudget = entry.MaxBudget
+		}
+	}
+	if key == "global.aws_usage_metrics_enabled" && value != "true" && value != "false" {
+		return common.NewMessage("Invalid parameters")
+	}
+	if key == "global.channel_name_display" {
+		var settings struct {
+			Enabled  *bool             `json:"enabled"`
+			Mappings map[string]string `json:"mappings"`
+		}
+		if len(value) > 131072 || common.UnmarshalJsonStr(value, &settings) != nil || settings.Enabled == nil || settings.Mappings == nil || len(settings.Mappings) > 500 {
+			return common.NewMessage("Invalid parameters")
+		}
+		for source, display := range settings.Mappings {
+			if strings.TrimSpace(source) == "" || strings.TrimSpace(display) == "" || len(source) > 256 || len(display) > 256 {
+				return common.NewMessage("Invalid parameters")
+			}
+		}
+	}
+
+	if key == legacyAccessTokenRetireAtKey {
+		return errLegacyRetireAtReadOnly
+	}
+	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
+		return err
+	}
+	if key == "EmailProvider" || key == "ResendApiKey" || key == "ResendFrom" {
+		if key == "EmailProvider" && value != "smtp" && value != "resend" {
+			return common.NewMessage("Email sending method must be SMTP or Resend")
+		}
+		common.OptionMapRWMutex.RLock()
+		settings := map[string]string{
+			"EmailProvider": common.OptionMap["EmailProvider"],
+			"ResendApiKey":  common.OptionMap["ResendApiKey"],
+			"ResendFrom":    common.OptionMap["ResendFrom"],
+		}
+		common.OptionMapRWMutex.RUnlock()
+		settings[key] = value
+		// While Resend is the active method, a change must keep settings it can
+		// send with. Inactive drafts are checked when Resend is turned on.
+		if settings["EmailProvider"] == "resend" {
+			return common.ValidateResendConfiguration(settings["ResendApiKey"], settings["ResendFrom"])
+		}
+	}
+	if key == "ResendKeyConfigured" {
+		return common.NewMessage("Resend key configuration status is read-only")
+	}
 	if key == operation_setting.ToolPriceOptionKey {
 		return operation_setting.ValidateToolPricesJSON(value)
 	}
 	if key == operation_setting.ChannelTestConcurrencyOptionKey {
 		return operation_setting.ValidateChannelTestConcurrency(value)
+	}
+	if key == operation_setting.LogMaxRangeDaysOptionKey {
+		return operation_setting.ValidateLogMaxRangeDays(value)
 	}
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
@@ -229,6 +339,20 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if key == "global.channel_name_display" || key == "global.aws_usage_metrics_enabled" {
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
+
+	if IsRequestPolicyOption(key) {
+		return UpdateRequestPolicyOptions(map[string]string{key: value})
+	}
+	if IsPasskeyDomainOption(key) {
+		_, err := UpdatePasskeyDomainOptions(map[string]string{key: value}, false, "")
+		return err
+	}
+	if IsModelPricingOption(key) {
+		return UpdateModelPricingOptions(map[string]string{key: value})
+	}
 	if err := validateOptionValue(key, value); err != nil {
 		return err
 	}
@@ -256,11 +380,37 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
+	for key := range values {
+		if IsPasskeyDomainOption(key) {
+			_, err := UpdatePasskeyDomainOptions(values, false, "")
+			return err
+		}
+	}
 	for key, value := range values {
 		if err := validateOptionValue(key, value); err != nil {
 			return err
 		}
 	}
+	var policySnapshot *RequestPolicySnapshot
+	for key := range values {
+		if IsRequestPolicyOption(key) {
+			requestPolicyOptionMutex.Lock()
+			defer requestPolicyOptionMutex.Unlock()
+			options := maps.Clone(CurrentRequestPolicy().Options)
+			for key, value := range values {
+				if IsRequestPolicyOption(key) {
+					options[key] = value
+				}
+			}
+			var err error
+			policySnapshot, err = BuildRequestPolicy(options)
+			if err != nil {
+				return err
+			}
+			break
+		}
+	}
+
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range values {
 			option := Option{Key: k}
@@ -282,11 +432,14 @@ func UpdateOptionsBulk(values map[string]string) error {
 			return err
 		}
 	}
+	if policySnapshot != nil {
+		requestPolicySnapshot.Store(policySnapshot)
+	}
 	return nil
 }
 
 func updateOptionMap(key string, value string) (err error) {
-	if key == retiredThemeOptionKey {
+	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey {
 		common.OptionMapRWMutex.Lock()
 		delete(common.OptionMap, key)
 		common.OptionMapRWMutex.Unlock()
@@ -344,6 +497,8 @@ func updateOptionMap(key string, value string) (err error) {
 			common.AutomaticDisableChannelEnabled = boolValue
 		case "AutomaticEnableChannelEnabled":
 			common.AutomaticEnableChannelEnabled = boolValue
+		case "QuotaRemindEnabled":
+			common.QuotaRemindEnabled = boolValue
 		case "LogConsumeEnabled":
 			common.LogConsumeEnabled = boolValue
 		case "DisplayInCurrencyEnabled":
@@ -365,9 +520,6 @@ func updateOptionMap(key string, value string) (err error) {
 		case "TaskPluginEnabled":
 			constant.TaskPluginEnabled = boolValue
 			jsplugin.DefaultRegistry.SetEnabled(boolValue)
-		case "TaskPluginOverrideEnabled":
-			constant.TaskPluginOverrideEnabled = boolValue
-			jsplugin.DefaultRegistry.SetOverrideEnabled(boolValue)
 		case "DataExportEnabled":
 			common.DataExportEnabled = boolValue
 		case "DefaultCollapseSidebar":

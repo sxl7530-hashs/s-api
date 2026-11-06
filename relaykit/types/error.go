@@ -57,6 +57,8 @@ const (
 	ErrorCodeChannelHeaderOverrideInvalid ErrorCode = "channel:header_override_invalid"
 	ErrorCodeChannelModelMappedError      ErrorCode = "channel:model_mapped_error"
 	ErrorCodeChannelAwsClientError        ErrorCode = "channel:aws_client_error"
+	ErrorCodeChannelBedrockRateLimited    ErrorCode = "channel:bedrock_rate_limited"
+	ErrorCodeChannelBedrockCoolingDown    ErrorCode = "channel:bedrock_cooling_down"
 	ErrorCodeChannelInvalidKey            ErrorCode = "channel:invalid_key"
 	ErrorCodeChannelResponseTimeExceeded  ErrorCode = "channel:response_time_exceeded"
 
@@ -75,6 +77,7 @@ const (
 	ErrorCodeBadResponseBody        ErrorCode = "bad_response_body"
 	ErrorCodeEmptyResponse          ErrorCode = "empty_response"
 	ErrorCodeAwsInvokeError         ErrorCode = "aws_invoke_error"
+	ErrorCodeBedrockThrottled       ErrorCode = "channel:bedrock_throttled"
 	ErrorCodeModelNotFound          ErrorCode = "model_not_found"
 	ErrorCodePromptBlocked          ErrorCode = "prompt_blocked"
 
@@ -145,7 +148,9 @@ func (e *NewAPIError) ErrorWithStatusCode() string {
 	return fmt.Sprintf("status_code=%d, %s", e.StatusCode, msg)
 }
 
-func (e *NewAPIError) MaskSensitiveError() string {
+// MaskSensitiveError masks the upstream addresses of the channel that produced
+// the error in the error text; see kitutil.MaskSensitiveInfo.
+func (e *NewAPIError) MaskSensitiveError(upstreamURLs ...string) string {
 	if e == nil {
 		return ""
 	}
@@ -156,14 +161,14 @@ func (e *NewAPIError) MaskSensitiveError() string {
 	if e.errorCode == ErrorCodeCountTokenFailed {
 		return errStr
 	}
-	return kitutil.MaskSensitiveInfo(errStr)
+	return kitutil.MaskSensitiveInfo(errStr, upstreamURLs...)
 }
 
-func (e *NewAPIError) MaskSensitiveErrorWithStatusCode() string {
+func (e *NewAPIError) MaskSensitiveErrorWithStatusCode(upstreamURLs ...string) string {
 	if e == nil {
 		return ""
 	}
-	msg := e.MaskSensitiveError()
+	msg := e.MaskSensitiveError(upstreamURLs...)
 	if e.StatusCode == 0 {
 		return msg
 	}
@@ -177,7 +182,9 @@ func (e *NewAPIError) SetMessage(message string) {
 	e.Err = errors.New(message)
 }
 
-func (e *NewAPIError) ToOpenAIError() OpenAIError {
+// ToOpenAIError masks the upstream addresses in the message; pass those of the
+// channel that produced the error, or none when no channel did.
+func (e *NewAPIError) ToOpenAIError(upstreamURLs ...string) OpenAIError {
 	var result OpenAIError
 	switch e.errorType {
 	case ErrorTypeOpenAIError:
@@ -202,7 +209,7 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 		}
 	}
 	if e.errorCode != ErrorCodeCountTokenFailed {
-		result.Message = kitutil.MaskSensitiveInfo(result.Message)
+		result.Message = kitutil.MaskSensitiveInfo(result.Message, upstreamURLs...)
 	}
 	if result.Message == "" {
 		result.Message = string(e.errorType)
@@ -210,7 +217,8 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 	return result
 }
 
-func (e *NewAPIError) ToClaudeError() ClaudeError {
+// ToClaudeError masks the upstream addresses like ToOpenAIError.
+func (e *NewAPIError) ToClaudeError(upstreamURLs ...string) ClaudeError {
 	var result ClaudeError
 	switch e.errorType {
 	case ErrorTypeOpenAIError:
@@ -231,7 +239,7 @@ func (e *NewAPIError) ToClaudeError() ClaudeError {
 		}
 	}
 	if e.errorCode != ErrorCodeCountTokenFailed {
-		result.Message = kitutil.MaskSensitiveInfo(result.Message)
+		result.Message = kitutil.MaskSensitiveInfo(result.Message, upstreamURLs...)
 	}
 	if result.Message == "" {
 		result.Message = string(e.errorType)

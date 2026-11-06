@@ -44,8 +44,8 @@ var performanceSetting = PerformanceSetting{
 	DiskCacheCriticalWatermarkPercent: 90,
 	DiskCacheUnknownLengthDiskFirst:   true,
 	DiskCacheMaxRequestMB:             4096,
-	// false 保持旧版固定容量行为；管理员可在后台开启自动模式。
-	DiskCacheAutoSizing:     false,
+	// 自动按磁盘容量和最低剩余空间计算安全上限。
+	DiskCacheAutoSizing:     true,
 	DiskCacheMaxDiskPercent: 50,
 	DiskCacheMinFreeSpaceMB: 30720,
 
@@ -79,6 +79,12 @@ func syncToCommon() {
 	}
 	if performanceSetting.DiskCacheMinFreeSpaceMB < 0 {
 		performanceSetting.DiskCacheMinFreeSpaceMB = 0
+	}
+	// A zero fixed limit admits no files. Older persisted settings predate
+	// AutoSizing and therefore deserialize both fields as zero/false; promote
+	// that invalid combination to the bounded automatic mode.
+	if performanceSetting.DiskCacheMaxSizeMB <= 0 {
+		performanceSetting.DiskCacheAutoSizing = true
 	}
 	common.SetDiskCacheConfig(common.DiskCacheConfig{
 		Enabled:                  performanceSetting.DiskCacheEnabled,

@@ -3,9 +3,9 @@ package gemini
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
@@ -21,7 +21,7 @@ import (
 func GeminiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := service.ReadResponseBodyLimited(resp, 0)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
@@ -31,11 +31,15 @@ func GeminiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	if err := common.Unmarshal(responseBody, &geminiResponse); err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-	markGeminiGoogleSearchCall(c, &geminiResponse)
+	info.ObserveResponseModel(ojson.GetBytes(responseBody, "modelVersion").Str)
+	var grounding geminiGroundingCounter
+	grounding.observe(&geminiResponse)
+	grounding.commit(info)
 	countGeminiBillableFunctionCalls(info, &geminiResponse)
 	if len(geminiResponse.Candidates) == 0 {
 		usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
 		if geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
+			info.PerformanceBusinessRejection = true
 			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", *geminiResponse.PromptFeedback.BlockReason))
 			return &usage, types.NewOpenAIError(
 				errors.New("request blocked by Gemini API: "+*geminiResponse.PromptFeedback.BlockReason),

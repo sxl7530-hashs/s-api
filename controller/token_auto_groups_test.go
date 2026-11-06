@@ -199,6 +199,35 @@ func TestUpdateTokenAutoGroupsTriStateAndNonAutoCleanup(t *testing.T) {
 	}
 }
 
+func TestUpdateTokenPersistsTokenGroupProfileID(t *testing.T) {
+	configureTokenAutoGroupsTest(t, "5", `[]`)
+	db := setupTokenControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TokenGroupProfile{}))
+	account := &model.User{
+		Id: 102, Username: "token-profile-user", Password: "password",
+		Group: "default", Status: common.UserStatusEnabled,
+	}
+	require.NoError(t, db.Create(account).Error)
+	profile := &model.TokenGroupProfile{Name: "Profile", Slug: "profile", Enabled: true}
+	require.NoError(t, profile.SetRouteGroups([]string{"default"}))
+	require.NoError(t, db.Create(profile).Error)
+	token := seedToken(t, db, account.Id, "profile-token", "profile-token-key")
+
+	request := map[string]any{
+		"id": token.Id, "name": token.Name, "expired_time": -1,
+		"remain_quota": 0, "unlimited_quota": true,
+		"group": "auto", "token_group_profile_id": profile.ID,
+	}
+	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, account.Id)
+	UpdateToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+	var updated model.Token
+	require.NoError(t, db.First(&updated, token.Id).Error)
+	assert.Equal(t, profile.ID, updated.TokenGroupProfileID)
+}
+
 func TestAddTokenRejectsInvalidAutoGroups(t *testing.T) {
 	tests := []struct {
 		name     string

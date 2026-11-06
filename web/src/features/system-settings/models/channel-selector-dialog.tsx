@@ -49,6 +49,7 @@ import {
   MODELS_DEV_PRESET_ID,
   OFFICIAL_CHANNEL_ID,
 } from './constants'
+import { getUpstreamDisplayName } from './upstream-ratio-sync-helpers'
 
 type ChannelSelectorDialogProps = {
   open: boolean
@@ -58,6 +59,8 @@ type ChannelSelectorDialogProps = {
   onSelectedChannelIdsChange: (ids: number[]) => void
   channelEndpoints: Record<number, string>
   onChannelEndpointsChange: (endpoints: Record<number, string>) => void
+  syncTimeout: number
+  onSyncTimeoutChange: (timeout: number) => void
   onConfirm: (selectedIds: number[]) => void
 }
 
@@ -77,6 +80,8 @@ export function ChannelSelectorDialog({
   onSelectedChannelIdsChange,
   channelEndpoints,
   onChannelEndpointsChange,
+  syncTimeout,
+  onSyncTimeoutChange,
   onConfirm,
 }: ChannelSelectorDialogProps) {
   const { t } = useTranslation()
@@ -130,14 +135,16 @@ export function ChannelSelectorDialog({
             onCheckedChange={(value) =>
               table.toggleAllPageRowsSelected(!!value)
             }
-            aria-label='Select all'
+            aria-label={t('Select all')}
           />
         ),
         cell: ({ row }) => (
           <Checkbox
             checked={row.getIsSelected()}
             onCheckedChange={(value) => row.toggleSelected(!!value)}
-            aria-label='Select row'
+            aria-label={t('Select {{name}}', {
+              name: getUpstreamDisplayName(row.original.name, t),
+            })}
           />
         ),
         enableSorting: false,
@@ -149,7 +156,7 @@ export function ChannelSelectorDialog({
         size: 300,
         minSize: 220,
         cell: ({ row }) => {
-          const name = row.getValue('name') as string
+          const name = getUpstreamDisplayName(row.getValue('name') as string, t)
           const channel = row.original
           const isOfficial = isOfficialChannel(channel)
 
@@ -280,10 +287,12 @@ export function ChannelSelectorDialog({
     const searchLower = debouncedSearch.toLowerCase()
     return channels.filter(
       (ch) =>
-        ch.name.toLowerCase().includes(searchLower) ||
+        getUpstreamDisplayName(ch.name, t)
+          .toLowerCase()
+          .includes(searchLower) ||
         ch.base_url.toLowerCase().includes(searchLower)
     )
-  }, [channels, debouncedSearch])
+  }, [channels, debouncedSearch, t])
 
   const sortedChannels = useMemo(() => {
     return [...filteredChannels].sort((a, b) => {
@@ -319,11 +328,8 @@ export function ChannelSelectorDialog({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('Select Sync Channels')}
-      description={t(
-        'Choose channels to sync upstream ratio configurations from'
-      )}
-      contentClassName='flex max-h-[90vh] max-w-[calc(100%-2rem)] flex-col sm:max-w-[90vw] xl:max-w-[1400px]'
+      title={t('Select price sources')}
+      contentClassName='flex max-h-[min(90dvh,var(--dialog-available-height))] max-w-[calc(100%-2rem)] flex-col sm:max-w-[90vw] xl:max-w-[1400px]'
       contentHeight='min(72vh, 720px)'
       bodyClassName='flex h-full min-h-0 flex-col overflow-hidden'
       footer={
@@ -336,7 +342,7 @@ export function ChannelSelectorDialog({
       }
     >
       <div className='flex h-full min-h-0 flex-col gap-4 overflow-hidden'>
-        <div className='flex shrink-0 items-center gap-2'>
+        <div className='flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center'>
           <div className='relative flex-1'>
             <Search className='text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2' />
             <Input
@@ -346,6 +352,32 @@ export function ChannelSelectorDialog({
               className='ps-9'
             />
           </div>
+          <Select
+            items={[15, 30, 45].map((seconds) => ({
+              value: seconds.toString(),
+              label: `${seconds}s`,
+            }))}
+            value={syncTimeout.toString()}
+            onValueChange={(value) => {
+              if (value !== null) onSyncTimeoutChange(Number(value))
+            }}
+          >
+            <SelectTrigger
+              className='w-full sm:w-44'
+              aria-label={t('Sync timeout')}
+            >
+              <SelectValue placeholder={t('Sync timeout')} />
+            </SelectTrigger>
+            <SelectContent alignItemWithTrigger={false}>
+              <SelectGroup>
+                {[15, 30, 45].map((seconds) => (
+                  <SelectItem key={seconds} value={seconds.toString()}>
+                    {t('Sync timeout')}: {seconds}s
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
 
         <DataTableView

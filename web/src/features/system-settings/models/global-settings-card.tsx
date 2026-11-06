@@ -48,6 +48,7 @@ import {
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { Claude5CompatSettings } from './claude5-compat-settings'
 
 const thinkingBlacklistExample = JSON.stringify(
   ['moonshotai/kimi-k2-thinking', 'kimi-k2-thinking', 're:.*@sha256:.*'],
@@ -89,9 +90,14 @@ const jsonString = z.string().refine((value) => {
 
 const schema = z.object({
   global: z.object({
+    aws_passthrough_compatibility_enabled: z.boolean(),
     pass_through_request_enabled: z.boolean(),
+    aws_beta_filter_enabled: z.boolean(),
+    aws_beta_blacklist: jsonString,
     thinking_model_blacklist: jsonString,
     chat_completions_to_responses_policy: jsonString,
+    aws_usage_metrics_enabled: z.boolean(),
+    claude5_compat: jsonString,
   }),
   general_setting: z.object({
     ping_interval_enabled: z.boolean(),
@@ -103,9 +109,14 @@ type GlobalModelSettingsFormValues = z.output<typeof schema>
 type GlobalModelSettingsFormInput = z.input<typeof schema>
 
 type FlatGlobalModelSettings = {
+  'global.aws_passthrough_compatibility_enabled': boolean
   'global.pass_through_request_enabled': boolean
+  'global.aws_beta_filter_enabled': boolean
+  'global.aws_beta_blacklist': string
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
+  'global.aws_usage_metrics_enabled': boolean
+  'global.claude5_compat': string
   'general_setting.ping_interval_enabled': boolean
   'general_setting.ping_interval_seconds': number
 }
@@ -113,14 +124,26 @@ type FlatGlobalModelSettings = {
 const flattenGlobalValues = (
   values: GlobalModelSettingsFormValues
 ): FlatGlobalModelSettings => ({
+  'global.aws_passthrough_compatibility_enabled':
+    values.global.aws_passthrough_compatibility_enabled,
   'global.pass_through_request_enabled':
     values.global.pass_through_request_enabled,
+  'global.aws_beta_filter_enabled': values.global.aws_beta_filter_enabled,
+  'global.aws_beta_blacklist': normalizeJsonText(
+    values.global.aws_beta_blacklist,
+    '[]'
+  ),
   'global.thinking_model_blacklist': normalizeJsonText(
     values.global.thinking_model_blacklist,
     '[]'
   ),
   'global.chat_completions_to_responses_policy': normalizeJsonText(
     values.global.chat_completions_to_responses_policy,
+    '{}'
+  ),
+  'global.aws_usage_metrics_enabled': values.global.aws_usage_metrics_enabled,
+  'global.claude5_compat': normalizeJsonText(
+    values.global.claude5_compat,
     '{}'
   ),
   'general_setting.ping_interval_enabled':
@@ -156,7 +179,6 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
   }, [defaultValues, form])
 
   const pingEnabled = form.watch('general_setting.ping_interval_enabled')
-
   const onSubmit = async (values: GlobalModelSettingsFormValues) => {
     const flattenedDefaults = flattenGlobalValues(defaultValues)
     const flattenedValues = flattenGlobalValues(values)
@@ -206,6 +228,120 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
                   />
                 </FormControl>
               </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.claude5_compat'
+            render={({ field }) => (
+              <FormItem className='space-y-3'>
+                <Claude5CompatSettings
+                  value={field.value}
+                  onChange={field.onChange}
+                />
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.aws_passthrough_compatibility_enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>
+                    {t('AWS Bedrock Passthrough Compatibility')}
+                  </FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.aws_beta_filter_enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>
+                    {t('Enable AWS anthropic-beta Blacklist')}
+                  </FormLabel>
+                  <FormDescription>
+                    {t(
+                      'When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.aws_usage_metrics_enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Enable AWS RPM/TPM Metrics')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Collect rolling RPM and TPM for all AWS Bedrock channels.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.aws_beta_blacklist'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('AWS anthropic-beta Blacklist')}</FormLabel>
+                <FormControl>
+                  <JsonCodeEditor
+                    value={field.value}
+                    onChange={(value) => field.onChange(value)}
+                    name={field.name}
+                    onBlur={field.onBlur}
+                    textareaRef={field.ref}
+                    placeholder='["prompt-caching-2024-07-31", "advanced-tool-use-2025-11-20"]'
+                    heightClassName='h-32 min-h-32 max-h-32'
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
             )}
           />
 

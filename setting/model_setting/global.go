@@ -1,7 +1,6 @@
 package model_setting
 
 import (
-	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -17,6 +16,51 @@ type ChatCompletionsToResponsesPolicy struct {
 	ChannelIDs    []int    `json:"channel_ids,omitempty"`
 	ChannelTypes  []int    `json:"channel_types,omitempty"`
 	ModelPatterns []string `json:"model_patterns,omitempty"`
+}
+
+type ChannelNameDisplaySettings struct {
+	Enabled  bool              `json:"enabled"`
+	Mappings map[string]string `json:"mappings"`
+}
+
+type Claude5CompatSettings struct {
+	Enabled                   bool                   `json:"enabled"`
+	TargetModels              []string               `json:"target_models"`
+	TargetRegions             []string               `json:"target_regions"`
+	ApplyToPassthroughUsers   bool                   `json:"apply_to_passthrough_users"`
+	AttributionMode           string                 `json:"attribution_mode"`
+	ForgeVersion              string                 `json:"forge_version"`
+	ThinkingBindingRecover    bool                   `json:"thinking_binding_recover"`
+	ThinkingDisabledMap       bool                   `json:"thinking_disabled_map"`
+	ThinkingEnabledMap        bool                   `json:"thinking_enabled_map"`
+	ThinkingBudgetEffortTable []ThinkingBudgetEffort `json:"thinking_budget_effort_table"`
+	ThinkingDisplayNormalize  bool                   `json:"thinking_display_normalize"`
+	DisplayDefault            string                 `json:"display_default"`
+	DropTemperature           bool                   `json:"drop_temperature"`
+	CleanEmptySystem          bool                   `json:"clean_empty_system"`
+	FixToolResultCacheControl bool                   `json:"fix_tool_result_cache_control"`
+	StripContextManagement    bool                   `json:"strip_context_management"`
+	StripOutputConfig         bool                   `json:"strip_output_config"`
+	StripContainerFields      bool                   `json:"strip_container_fields"`
+	MapToolChoiceAuto         bool                   `json:"map_tool_choice_auto"`
+	StripUnsupportedWebSearch bool                   `json:"strip_unsupported_web_search"`
+}
+
+type ThinkingBudgetEffort struct {
+	MaxBudget int    `json:"max_budget"`
+	Effort    string `json:"effort"`
+}
+
+// UnmarshalJSON replaces the complete policy, so omitted switches and target
+// lists cannot retain values from the previously saved configuration.
+func (s *Claude5CompatSettings) UnmarshalJSON(data []byte) error {
+	type policy Claude5CompatSettings
+	var replacement policy
+	if err := common.Unmarshal(data, &replacement); err != nil {
+		return err
+	}
+	*s = Claude5CompatSettings(replacement)
+	return nil
 }
 
 func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channelType int) bool {
@@ -37,17 +81,26 @@ func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channe
 }
 
 type GlobalSettings struct {
-	PassThroughRequestEnabled bool     `json:"pass_through_request_enabled"`
-	ThinkingModelBlacklist    []string `json:"thinking_model_blacklist"`
+	PassThroughRequestEnabled          bool     `json:"pass_through_request_enabled"`
+	AwsPassthroughCompatibilityEnabled bool     `json:"aws_passthrough_compatibility_enabled"`
+	ThinkingModelBlacklist             []string `json:"thinking_model_blacklist"`
 	// EffortTailModelIDs lists real model IDs that sit inside the GPT/o-series
 	// family whitelist but whose names already end in an effort word.
 	EffortTailModelIDs               []string                         `json:"effort_tail_model_ids"`
 	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
+	// AwsBetaFilterEnabled strips anthropic-beta values listed in AwsBetaBlacklist
+	// before forwarding to AWS Bedrock (AWS channels only); toggle via settings.
+	AwsBetaFilterEnabled   bool                  `json:"aws_beta_filter_enabled"`
+	AwsBetaBlacklist       []string              `json:"aws_beta_blacklist"`
+	AwsUsageMetricsEnabled bool                  `json:"aws_usage_metrics_enabled"`
+	Claude5Compat          Claude5CompatSettings `json:"claude5_compat"`
+	ChannelNameDisplay     string                `json:"channel_name_display"`
 }
 
 // 默认配置
 var defaultOpenaiSettings = GlobalSettings{
-	PassThroughRequestEnabled: false,
+	PassThroughRequestEnabled:          false,
+	AwsPassthroughCompatibilityEnabled: false,
 	ThinkingModelBlacklist: []string{
 		"moonshotai/kimi-k2-thinking",
 		"kimi-k2-thinking",
@@ -63,6 +116,14 @@ var defaultOpenaiSettings = GlobalSettings{
 		Enabled:     false,
 		AllChannels: true,
 	},
+	AwsBetaFilterEnabled: true,
+	AwsBetaBlacklist: []string{
+		"prompt-caching-2024-07-31",
+		"prompt-caching-scope-2026-01-05",
+		"advanced-tool-use-2025-11-20",
+		"redact-thinking-2026-02-12",
+	},
+	ChannelNameDisplay: `{"enabled":false,"mappings":{}}`,
 }
 
 // 全局实例
@@ -75,6 +136,56 @@ func init() {
 
 func GetGlobalSettings() *GlobalSettings {
 	return &globalSettings
+}
+
+// IsAwsUsageMetricsEnabled reads the live setting under the same lock used by option updates.
+func IsAwsUsageMetricsEnabled() bool {
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+	return globalSettings.AwsUsageMetricsEnabled
+}
+
+func GetClaude5CompatSettings() Claude5CompatSettings {
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+	settings := globalSettings.Claude5Compat
+	if !settings.Enabled {
+		return settings
+	}
+	settings.TargetModels = append([]string(nil), settings.TargetModels...)
+	settings.TargetRegions = append([]string(nil), settings.TargetRegions...)
+	settings.ThinkingBudgetEffortTable = append([]ThinkingBudgetEffort(nil), settings.ThinkingBudgetEffortTable...)
+	return settings
+}
+
+// FilterAwsBetas removes anthropic-beta values that AWS Bedrock does not accept
+// (configured in AwsBetaBlacklist) so they are not forwarded into the Bedrock
+// request body. It only filters when AwsBetaFilterEnabled is true and must be
+// called for AWS channels only.
+func (s *GlobalSettings) FilterAwsBetas(betas []string) []string {
+	// Option updates replace both fields under this lock. Read them together
+	// so a request cannot combine the old switch with a new blacklist.
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+	if !s.AwsBetaFilterEnabled || len(betas) == 0 || len(s.AwsBetaBlacklist) == 0 {
+		return betas
+	}
+	blocked := make(map[string]struct{}, len(s.AwsBetaBlacklist))
+	for _, b := range s.AwsBetaBlacklist {
+		if b = strings.TrimSpace(b); b != "" {
+			blocked[b] = struct{}{}
+		}
+	}
+	if len(blocked) == 0 {
+		return betas
+	}
+	filtered := make([]string, 0, len(betas))
+	for _, b := range betas {
+		if _, bad := blocked[strings.TrimSpace(b)]; !bad {
+			filtered = append(filtered, b)
+		}
+	}
+	return filtered
 }
 
 const thinkingBlacklistRegexPrefix = "re:"
@@ -119,15 +230,15 @@ func compiledThinkingBlacklist() ([]string, []*regexp.Regexp) {
 		if entry == "" {
 			continue
 		}
-		if strings.HasPrefix(entry, thinkingBlacklistRegexPrefix) {
-			pattern := strings.TrimPrefix(entry, thinkingBlacklistRegexPrefix)
+		if after, ok := strings.CutPrefix(entry, thinkingBlacklistRegexPrefix); ok {
+			pattern := after
 			if pattern == "" {
-				common.SysError(fmt.Sprintf("invalid thinking_model_blacklist regex %q: pattern is empty", entry))
+				common.SysError(common.LogText("invalid thinking_model_blacklist regex %q: pattern is empty", entry))
 				continue
 			}
 			re, err := regexp.Compile(pattern)
 			if err != nil {
-				common.SysError(fmt.Sprintf("invalid thinking_model_blacklist regex %q: %v", entry, err))
+				common.SysError(common.LogText("invalid thinking_model_blacklist regex %q: %v", entry, err))
 				continue
 			}
 			regexes = append(regexes, re)
@@ -150,10 +261,8 @@ func ShouldPreserveThinkingSuffix(modelName string) bool {
 	}
 
 	exact, regexes := compiledThinkingBlacklist()
-	for _, entry := range exact {
-		if entry == target {
-			return true
-		}
+	if slices.Contains(exact, target) {
+		return true
 	}
 	for _, re := range regexes {
 		if re.MatchString(target) {

@@ -107,6 +107,52 @@ func TestSystemTaskSchedulerSkipsDisabled(t *testing.T) {
 	assert.Equal(t, int64(0), countSystemTasks(t, handler.taskType))
 }
 
+func TestManualSystemTaskCancellationStopsRunnerBeforeReleasingLease(t *testing.T) {
+	truncate(t)
+	task, err := model.CreateSystemTask(model.SystemTaskTypeChannelModelTest, nil, nil)
+	require.NoError(t, err)
+	task, claimed, err := model.ClaimSystemTask(task.ID, task.Type, "cancel-runner", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	started := make(chan struct{})
+	observedCancellation := make(chan struct{})
+	allowExit := make(chan struct{})
+	finished := make(chan struct{})
+	defer close(allowExit)
+	go func() {
+		runWithLeaseHeartbeat(task, "cancel-runner", func(ctx context.Context) {
+			close(started)
+			<-ctx.Done()
+			close(observedCancellation)
+			<-allowExit
+		})
+		close(finished)
+	}()
+	<-started
+	_, changed, err := model.CancelSystemTask(task.TaskID, "test cancellation")
+	require.NoError(t, err)
+	require.True(t, changed)
+	select {
+	case <-observedCancellation:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner did not observe persisted cancellation")
+	}
+	replacement, err := model.CreateSystemTask(task.Type, nil, nil)
+	require.NoError(t, err)
+	_, claimed, err = model.ClaimSystemTask(replacement.ID, task.Type, "replacement-runner", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	assert.False(t, claimed, "lease must remain held while cancelled handler is draining")
+	allowExit <- struct{}{}
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled runner did not exit")
+	}
+	_, claimed, err = model.ClaimSystemTask(replacement.ID, task.Type, "replacement-runner", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	assert.True(t, claimed, "lease must be released after handler exits")
+}
+
 func TestSystemTaskClaimPassDispatchesByType(t *testing.T) {
 	truncate(t)
 
