@@ -32,9 +32,9 @@ import (
 // response cancelled and is billed for the usage reported at cancel time.
 const (
 	// Polls start fast so short responses return quickly, then settle at the
-	// max interval, which bounds the poll rate: concurrency / 5 GETs per second.
+	// max interval, which bounds the poll rate: concurrency / 2 GETs per second.
 	azureBgPollInitialInterval = 500 * time.Millisecond
-	azureBgPollMaxInterval     = 5 * time.Second
+	azureBgPollMaxInterval     = 2 * time.Second
 	// Must stay below the nginx proxy_read_timeout (1800s) in front of the API.
 	azureBgTotalTimeout    = 25 * time.Minute
 	azureBgCleanupTimeout  = 15 * time.Second
