@@ -243,9 +243,6 @@ func validateOptionValue(key string, value string) error {
 	if key == "global.aws_usage_metrics_enabled" && value != "true" && value != "false" {
 		return common.NewMessage("Invalid parameters")
 	}
-	if key == "global.azure_force_background_models" {
-		return model_setting.ValidateAzureForceBackgroundModels(value)
-	}
 	if key == "global.channel_name_display" {
 		var settings struct {
 			Enabled  *bool             `json:"enabled"`

@@ -122,12 +122,6 @@ func shortenAzureBgWaits(t *testing.T) {
 func newAzureBgTestContext(t *testing.T, fake *fakeAzureBackground, isStream bool) (*gin.Context, *relaycommon.RelayInfo, context.CancelFunc) {
 	t.Helper()
 	shortenAzureBgWaits(t)
-	settings := model_setting.GetGlobalSettings()
-	enabled, models := settings.AzureForceBackgroundEnabled, settings.AzureForceBackgroundModels
-	settings.AzureForceBackgroundEnabled, settings.AzureForceBackgroundModels = true, nil
-	t.Cleanup(func() {
-		settings.AzureForceBackgroundEnabled, settings.AzureForceBackgroundModels = enabled, models
-	})
 	server := httptest.NewServer(http.HandlerFunc(fake.handler))
 	t.Cleanup(server.Close)
 
@@ -144,10 +138,11 @@ func newAzureBgTestContext(t *testing.T, fake *fakeAzureBackground, isStream boo
 		OriginModelName: "gpt-6-astra",
 		RequestURLPath:  "/v1/responses",
 		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelType:       constant.ChannelTypeAzure,
-			ChannelBaseUrl:    server.URL,
-			ApiKey:            "test-key",
-			UpstreamModelName: "gpt-6-astra",
+			ChannelType:          constant.ChannelTypeAzure,
+			ChannelBaseUrl:       server.URL,
+			ApiKey:               "test-key",
+			UpstreamModelName:    "gpt-6-astra",
+			ChannelOtherSettings: dto.ChannelOtherSettings{AzureForceBackground: common.GetPointer(true)},
 		},
 	}
 	return c, info, cancel
@@ -330,34 +325,32 @@ func TestAzureBackgroundStreamHandlerSettlesCancelledUsageOnClientGone(t *testin
 
 func TestShouldUseAzureBackground(t *testing.T) {
 	settings := model_setting.GetGlobalSettings()
-	enabled, models := settings.AzureForceBackgroundEnabled, settings.AzureForceBackgroundModels
-	t.Cleanup(func() {
-		settings.AzureForceBackgroundEnabled, settings.AzureForceBackgroundModels = enabled, models
-	})
-	newInfo := func(channelType int, relayMode int, model string) *relaycommon.RelayInfo {
+	globalDefault := settings.AzureForceBackgroundEnabled
+	t.Cleanup(func() { settings.AzureForceBackgroundEnabled = globalDefault })
+	newInfo := func(channelType int, relayMode int, channelSetting *bool) *relaycommon.RelayInfo {
 		return &relaycommon.RelayInfo{
-			RelayMode:       relayMode,
-			OriginModelName: model,
-			ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: channelType},
+			RelayMode: relayMode,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelType:          channelType,
+				ChannelOtherSettings: dto.ChannelOtherSettings{AzureForceBackground: channelSetting},
+			},
 		}
 	}
+	on, off := common.GetPointer(true), common.GetPointer(false)
 
-	settings.AzureForceBackgroundEnabled, settings.AzureForceBackgroundModels = false, nil
-	assert.False(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeResponses, "gpt-6-astra")))
-
+	// The channel setting wins over the global default.
+	settings.AzureForceBackgroundEnabled = false
+	assert.True(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeResponses, on)))
+	assert.False(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeResponses, off)))
+	assert.False(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeResponses, nil)))
 	settings.AzureForceBackgroundEnabled = true
-	assert.True(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeResponses, "gpt-6-astra")))
-	assert.False(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeOpenAI, relayconstant.RelayModeResponses, "gpt-6-astra")))
-	assert.False(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeResponsesCompact, "gpt-6-astra")))
-	assert.False(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeChatCompletions, "gpt-6-astra")))
-	// Chat and Claude requests for the same channel are routed through Responses.
-	assert.True(t, service.ShouldChatCompletionsUseResponsesGlobal(1, constant.ChannelTypeAzure, "gpt-6-astra"))
-	assert.False(t, service.ShouldChatCompletionsUseResponsesGlobal(1, constant.ChannelTypeOpenAI, "gpt-6-astra"))
+	assert.False(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeResponses, off)))
+	// A channel that never set it follows the global default.
+	assert.True(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeResponses, nil)))
 
-	settings.AzureForceBackgroundModels = []string{"^gpt-6-.*$"}
-	assert.True(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeResponses, "gpt-6-astra")))
-	assert.False(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeResponses, "gpt-4o")))
-	assert.False(t, service.ShouldChatCompletionsUseResponsesGlobal(1, constant.ChannelTypeAzure, "gpt-4o"))
+	assert.False(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeOpenAI, relayconstant.RelayModeResponses, on)))
+	assert.False(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeResponsesCompact, on)))
+	assert.False(t, shouldUseAzureBackground(newInfo(constant.ChannelTypeAzure, relayconstant.RelayModeChatCompletions, on)))
 }
 
 func TestAzureBgItemURL(t *testing.T) {

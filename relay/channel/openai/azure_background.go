@@ -49,7 +49,7 @@ var (
 func shouldUseAzureBackground(info *relaycommon.RelayInfo) bool {
 	return info != nil &&
 		info.RelayMode == relayconstant.RelayModeResponses &&
-		service.ShouldUseAzureBackgroundGlobal(info.ChannelType, info.OriginModelName)
+		service.ShouldUseAzureBackground(info.ChannelType, info.ChannelOtherSettings.AzureForceBackground)
 }
 
 type azureBgTask struct {

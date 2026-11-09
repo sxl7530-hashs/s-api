@@ -51,18 +51,18 @@ func ShouldChatCompletionsUseResponsesGlobal(channelID int, channelType int, mod
 		channelID,
 		channelType,
 		model,
-	) || ShouldUseAzureBackgroundGlobal(channelType, model)
+	)
 }
 
-// ShouldUseAzureBackgroundGlobal reports whether requests for model on a
-// channel of channelType are submitted to Azure in background mode.
-func ShouldUseAzureBackgroundGlobal(channelType int, model string) bool {
-	settings := model_setting.GetGlobalSettings()
-	if !settings.AzureForceBackgroundEnabled || channelType != constant.ChannelTypeAzure {
+// ShouldUseAzureBackground reports whether an Azure channel submits Responses
+// requests in background mode. The channel setting wins; a channel that never
+// set it follows the global default.
+func ShouldUseAzureBackground(channelType int, channelSetting *bool) bool {
+	if channelType != constant.ChannelTypeAzure {
 		return false
 	}
-	if len(settings.AzureForceBackgroundModels) == 0 {
-		return true
+	if channelSetting != nil {
+		return *channelSetting
 	}
-	return matchAnyModelPattern(settings.AzureForceBackgroundModels, model)
+	return model_setting.GetGlobalSettings().AzureForceBackgroundEnabled
 }

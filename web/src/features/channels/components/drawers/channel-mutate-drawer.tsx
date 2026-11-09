@@ -136,6 +136,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import {
   getAllModels,
+  getAzureBackgroundDefault,
   getChannel,
   getChannelDefaultBaseURLs,
   getGroups,
@@ -302,6 +303,7 @@ const SENSITIVE_FORM_FIELDS = [
   'vertex_key_type',
   'aws_key_type',
   'azure_responses_version',
+  'azure_force_background',
   'force_format',
   'thinking_to_content',
   'proxy',
@@ -771,6 +773,31 @@ export function ChannelMutateDrawer({
         ?.label || `#${currentType}`,
     [currentType]
   )
+  const azureBackgroundDefaultQuery = useQuery({
+    queryKey: ['channel-azure-background-default'],
+    queryFn: getAzureBackgroundDefault,
+    enabled: open && currentType === 3,
+    meta: { errorToast: false },
+  })
+  const azureBackgroundDefault = azureBackgroundDefaultQuery.data === true
+  // A new Azure channel starts with the global default and saves it
+  // explicitly; the switch can still turn it off before creating.
+  useEffect(() => {
+    if (
+      !isEditing &&
+      currentType === 3 &&
+      azureBackgroundDefaultQuery.isSuccess &&
+      form.getValues('azure_force_background') === undefined
+    ) {
+      form.setValue('azure_force_background', azureBackgroundDefault)
+    }
+  }, [
+    isEditing,
+    currentType,
+    azureBackgroundDefaultQuery.isSuccess,
+    azureBackgroundDefault,
+    form,
+  ])
   const taskPluginOptionsQuery = useQuery({
     queryKey: ['task-plugin-options'],
     queryFn: async () => requireServerSuccess(await getTaskPluginOptions()),
@@ -3653,6 +3680,29 @@ export function ChannelMutateDrawer({
                         )}
                       </FormDescription>
                       <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='azure_force_background'
+                  render={({ field }) => (
+                    <FormItem className='flex items-center justify-between'>
+                      <div className='space-y-0.5'>
+                        <FormLabel>{t('Force background mode')}</FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Submit every request with background=true and poll it on the gateway; clients still receive a normal synchronous response. Defaults to the global Azure Force Background Mode setting.'
+                          )}
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          disabled={sensitiveLocked}
+                          checked={field.value ?? azureBackgroundDefault}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
                     </FormItem>
                   )}
                 />

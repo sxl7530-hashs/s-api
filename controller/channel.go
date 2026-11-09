@@ -189,6 +189,12 @@ func GetChannelDefaultBaseURLs(c *gin.Context) {
 	common.ApiSuccess(c, baseURLs)
 }
 
+// GetAzureBackgroundDefault returns the global default of the Azure channel
+// azure_force_background setting, used to prefill the channel form.
+func GetAzureBackgroundDefault(c *gin.Context) {
+	common.ApiSuccess(c, gin.H{"enabled": model_setting.GetGlobalSettings().AzureForceBackgroundEnabled})
+}
+
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)

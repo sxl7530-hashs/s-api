@@ -33,7 +33,6 @@ const defaultModelSettings: ModelSettings = {
   'global.thinking_model_blacklist': '[]',
   'global.chat_completions_to_responses_policy': '{}',
   'global.azure_force_background_enabled': false,
-  'global.azure_force_background_models': '[]',
   'global.aws_usage_metrics_enabled': false,
   'general_setting.ping_interval_enabled': false,
   'general_setting.ping_interval_seconds': 60,
