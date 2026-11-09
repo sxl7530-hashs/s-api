@@ -60,6 +60,12 @@ const MODELS_SECTIONS = [
               settings['global.chat_completions_to_responses_policy'],
               '{}'
             ),
+            azure_force_background_enabled:
+              settings['global.azure_force_background_enabled'] ?? false,
+            azure_force_background_models: formatJsonForEditor(
+              settings['global.azure_force_background_models'],
+              '[]'
+            ),
             aws_usage_metrics_enabled:
               settings['global.aws_usage_metrics_enabled'] ?? false,
             claude5_compat: formatJsonForEditor(

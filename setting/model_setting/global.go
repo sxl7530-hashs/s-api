@@ -195,6 +195,24 @@ func (s *Claude5CompatSettings) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ValidateAzureForceBackgroundModels checks the saved option value: a JSON
+// array of non-empty Go regular expressions.
+func ValidateAzureForceBackgroundModels(value string) error {
+	var patterns []string
+	if len(value) > 65536 || common.UnmarshalJsonStr(value, &patterns) != nil || len(patterns) > 200 {
+		return common.NewMessage("Invalid parameters")
+	}
+	for _, pattern := range patterns {
+		if strings.TrimSpace(pattern) == "" {
+			return common.NewMessage("Invalid parameters")
+		}
+		if _, err := regexp.Compile(pattern); err != nil {
+			return common.NewMessage("Invalid parameters")
+		}
+	}
+	return nil
+}
+
 func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channelType int) bool {
 	if !p.Enabled {
 		return false
@@ -220,6 +238,13 @@ type GlobalSettings struct {
 	// family whitelist but whose names already end in an effort word.
 	EffortTailModelIDs               []string                         `json:"effort_tail_model_ids"`
 	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
+	// AzureForceBackgroundEnabled submits Responses requests on Azure channels
+	// with background=true and polls them on the gateway, so clients still see
+	// a synchronous request. Chat and Claude requests are routed through
+	// Responses for it. AzureForceBackgroundModels limits it to models matching
+	// any of the regular expressions; empty means every model.
+	AzureForceBackgroundEnabled bool     `json:"azure_force_background_enabled"`
+	AzureForceBackgroundModels  []string `json:"azure_force_background_models"`
 	// AwsBetaFilterEnabled strips anthropic-beta values listed in AwsBetaBlacklist
 	// before forwarding to AWS Bedrock (AWS channels only); toggle via settings.
 	AwsBetaFilterEnabled   bool                  `json:"aws_beta_filter_enabled"`

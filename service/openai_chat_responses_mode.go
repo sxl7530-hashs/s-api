@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"sync"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 )
 
@@ -50,5 +51,18 @@ func ShouldChatCompletionsUseResponsesGlobal(channelID int, channelType int, mod
 		channelID,
 		channelType,
 		model,
-	)
+	) || ShouldUseAzureBackgroundGlobal(channelType, model)
+}
+
+// ShouldUseAzureBackgroundGlobal reports whether requests for model on a
+// channel of channelType are submitted to Azure in background mode.
+func ShouldUseAzureBackgroundGlobal(channelType int, model string) bool {
+	settings := model_setting.GetGlobalSettings()
+	if !settings.AzureForceBackgroundEnabled || channelType != constant.ChannelTypeAzure {
+		return false
+	}
+	if len(settings.AzureForceBackgroundModels) == 0 {
+		return true
+	}
+	return matchAnyModelPattern(settings.AzureForceBackgroundModels, model)
 }

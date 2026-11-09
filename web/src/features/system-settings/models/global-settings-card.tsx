@@ -96,6 +96,8 @@ const schema = z.object({
     aws_beta_blacklist: jsonString,
     thinking_model_blacklist: jsonString,
     chat_completions_to_responses_policy: jsonString,
+    azure_force_background_enabled: z.boolean(),
+    azure_force_background_models: jsonString,
     aws_usage_metrics_enabled: z.boolean(),
     claude5_compat: jsonString,
   }),
@@ -115,6 +117,8 @@ type FlatGlobalModelSettings = {
   'global.aws_beta_blacklist': string
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
+  'global.azure_force_background_enabled': boolean
+  'global.azure_force_background_models': string
   'global.aws_usage_metrics_enabled': boolean
   'global.claude5_compat': string
   'general_setting.ping_interval_enabled': boolean
@@ -140,6 +144,12 @@ const flattenGlobalValues = (
   'global.chat_completions_to_responses_policy': normalizeJsonText(
     values.global.chat_completions_to_responses_policy,
     '{}'
+  ),
+  'global.azure_force_background_enabled':
+    values.global.azure_force_background_enabled,
+  'global.azure_force_background_models': normalizeJsonText(
+    values.global.azure_force_background_models,
+    '[]'
   ),
   'global.aws_usage_metrics_enabled': values.global.aws_usage_metrics_enabled,
   'global.claude5_compat': normalizeJsonText(
@@ -451,6 +461,58 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
               )}
             />
           </div>
+
+          <Separator />
+
+          <FormField
+            control={form.control}
+            name='global.azure_force_background_enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Azure Force Background Mode')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Azure channels submit Responses, ChatCompletions and Claude Messages requests with background=true and the gateway polls for the result; clients still receive a normal synchronous response. A client that disconnects is billed for the usage at cancel time.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.azure_force_background_models'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Azure Background Models')}</FormLabel>
+                <FormControl>
+                  <JsonCodeEditor
+                    value={field.value}
+                    onChange={(value) => field.onChange(value)}
+                    name={field.name}
+                    onBlur={field.onBlur}
+                    textareaRef={field.ref}
+                    placeholder='["^gpt-6-.*$"]'
+                    heightClassName='h-24 min-h-24 max-h-24'
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Model name regular expressions (JSON array). Empty [] applies to every model on Azure channels.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
           <Separator />
 

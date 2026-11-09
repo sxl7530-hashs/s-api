@@ -70,6 +70,8 @@ const defaultGlobalSettingInputs = {
   'global.pass_through_request_enabled': false,
   'global.thinking_model_blacklist': '[]',
   'global.chat_completions_to_responses_policy': '{}',
+  'global.azure_force_background_enabled': false,
+  'global.azure_force_background_models': '[]',
   'general_setting.ping_interval_enabled': false,
   'general_setting.ping_interval_seconds': 60,
 };
@@ -95,7 +97,10 @@ export default function SettingGlobalModel(props) {
   };
 
   const normalizeValueBeforeSave = (key, value) => {
-    if (key === 'global.thinking_model_blacklist') {
+    if (
+      key === 'global.thinking_model_blacklist' ||
+      key === 'global.azure_force_background_models'
+    ) {
       const text = typeof value === 'string' ? value.trim() : '';
       return text === '' ? '[]' : value;
     }
@@ -146,7 +151,10 @@ export default function SettingGlobalModel(props) {
     for (const key of Object.keys(defaultGlobalSettingInputs)) {
       if (props.options[key] !== undefined) {
         let value = props.options[key];
-        if (key === 'global.thinking_model_blacklist') {
+        if (
+          key === 'global.thinking_model_blacklist' ||
+          key === 'global.azure_force_background_models'
+        ) {
           try {
             value =
               value && String(value).trim() !== ''
@@ -351,6 +359,60 @@ export default function SettingGlobalModel(props) {
                       {t('格式化 JSON')}
                     </Button>
                   </div>
+                </Col>
+              </Row>
+            </Form.Section>
+
+            <Form.Section
+              text={
+                <span style={{ fontSize: 14, fontWeight: 600 }}>
+                  {t('Azure 强制后台模式')}
+                </span>
+              }
+            >
+              <Row>
+                <Col span={24}>
+                  <Form.Switch
+                    label={t('启用 Azure 强制后台模式')}
+                    field={'global.azure_force_background_enabled'}
+                    onChange={(value) =>
+                      setInputs({
+                        ...inputs,
+                        'global.azure_force_background_enabled': value,
+                      })
+                    }
+                    extraText={t(
+                      '开启后，Azure 渠道的 Responses、ChatCompletions 和 Claude Messages 请求以 background=true 提交，由网关轮询结果；客户端仍按普通同步请求收到响应。客户端中途断开时按取消时的实际用量计费。',
+                    )}
+                  />
+                </Col>
+              </Row>
+              <Row>
+                <Col span={24}>
+                  <Form.TextArea
+                    label={t('Azure 后台模式模型')}
+                    field={'global.azure_force_background_models'}
+                    placeholder={t('例如：') + '\n' + '["^gpt-6-.*$"]'}
+                    rows={3}
+                    rules={[
+                      {
+                        validator: (rule, value) => {
+                          if (!value || value.trim() === '') return true;
+                          return verifyJSON(value);
+                        },
+                        message: t('不是合法的 JSON 字符串'),
+                      },
+                    ]}
+                    extraText={t(
+                      '模型名正则表达式（JSON 数组）。留空 [] 表示 Azure 渠道上的所有模型。',
+                    )}
+                    onChange={(value) =>
+                      setInputs({
+                        ...inputs,
+                        'global.azure_force_background_models': value,
+                      })
+                    }
+                  />
                 </Col>
               </Row>
             </Form.Section>
