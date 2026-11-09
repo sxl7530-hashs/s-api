@@ -3,9 +3,12 @@ package openai
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,11 +34,15 @@ const (
 	azureBgPollInitialInterval = 500 * time.Millisecond
 	azureBgPollMaxInterval     = 2 * time.Second
 	// Must stay below the nginx proxy_read_timeout (1800s) in front of the API.
-	azureBgTotalTimeout     = 25 * time.Minute
-	azureBgCleanupTimeout   = 15 * time.Second
-	azureBgMaxPollFailures  = 5
-	azureBgMaxStreamResumes = 5
-	azureBgFinalUsageTries  = 3
+	azureBgTotalTimeout    = 25 * time.Minute
+	azureBgCleanupTimeout  = 15 * time.Second
+	azureBgMaxPollFailures = 5
+	// 5xx and network errors on polls are retried with backoff until they
+	// have persisted this long.
+	azureBgMaxTransientFailure = 2 * time.Minute
+	azureBgMaxTransientBackoff = 10 * time.Second
+	azureBgMaxStreamResumes    = 5
+	azureBgFinalUsageTries     = 3
 )
 
 // These are variables only so tests can shorten the waits.
@@ -44,7 +51,43 @@ var (
 	azureBgPollMax         = azureBgPollMaxInterval
 	azureBgTimeout         = azureBgTotalTimeout
 	azureBgFinalUsageDelay = time.Second
+	azureBgTransientBudget = azureBgMaxTransientFailure
 )
+
+// azureBgPollError is a non-200 answer to a poll.
+type azureBgPollError struct {
+	status int
+	header http.Header
+	body   []byte
+}
+
+func (e *azureBgPollError) Error() string {
+	preview := string(e.body)
+	if len(preview) > 300 {
+		preview = preview[:300]
+	}
+	return fmt.Sprintf("status %d: %s", e.status, preview)
+}
+
+// azureBgTransient reports whether a poll error is worth waiting out: server
+// errors and network failures, as opposed to a response that is gone or a key
+// that is rejected. Throttling is handled by the caller.
+func azureBgTransient(err error) bool {
+	var pollErr *azureBgPollError
+	if !errors.As(err, &pollErr) {
+		return true
+	}
+	return pollErr.status == http.StatusRequestTimeout || pollErr.status >= 500
+}
+
+// azureBgJitter spreads polls of concurrent requests by up to ±20%, so they
+// do not reach the upstream in lockstep.
+func azureBgJitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	return d*4/5 + time.Duration(rand.Int64N(int64(d)*2/5+1))
+}
 
 func shouldUseAzureBackground(info *relaycommon.RelayInfo) bool {
 	return info != nil &&
@@ -112,7 +155,9 @@ func doAzureBackgroundRequest(a *Adaptor, c *gin.Context, info *relaycommon.Rela
 func (t *azureBgTask) poll(current []byte) (*http.Response, error) {
 	ctx := t.c.Request.Context()
 	interval := azureBgPollInterval
+	wait := interval
 	failures := 0
+	var failingSince time.Time
 	for {
 		switch status := ojson.GetBytes(current, "status").String(); status {
 		case "completed", "incomplete":
@@ -123,7 +168,7 @@ func (t *azureBgTask) poll(current []byte) (*http.Response, error) {
 			return t.jsonResponse(azureBgErrorStatus(current), azureBgErrorBody(current, status)), nil
 		}
 
-		timer := time.NewTimer(interval)
+		timer := time.NewTimer(azureBgJitter(wait))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -134,21 +179,40 @@ func (t *azureBgTask) poll(current []byte) (*http.Response, error) {
 			return t.abandon("timeout", current), nil
 		}
 		interval = min(interval*2, azureBgPollMax)
+		wait = interval
 
 		next, err := t.fetch(ctx, "")
 		if err != nil {
 			if ctx.Err() != nil {
 				return t.abandon("client_gone", current), nil
 			}
+			var pollErr *azureBgPollError
+			if errors.As(err, &pollErr) && pollErr.status == http.StatusTooManyRequests {
+				// Throttled: fail like a synchronous request would, so the
+				// relay's retry settings decide whether another channel runs it.
+				t.cancelDetached()
+				t.logDone("throttled", false)
+				return t.upstreamErrorResponse(pollErr), nil
+			}
 			failures++
-			logger.LogWarn(t.c, "azure_bg poll failed resp_id=%s attempt=%d: %s", t.respID, failures, err.Error())
-			if failures >= azureBgMaxPollFailures {
+			if failingSince.IsZero() {
+				failingSince = time.Now()
+			}
+			transient := azureBgTransient(err)
+			logger.LogWarn(t.c, "azure_bg poll failed resp_id=%s attempt=%d transient=%t: %s", t.respID, failures, transient, err.Error())
+			if (transient && time.Since(failingSince) > azureBgTransientBudget) ||
+				(!transient && failures >= azureBgMaxPollFailures) {
 				t.cancelDetached()
 				return nil, fmt.Errorf("azure background poll failed %d times: %w", failures, err)
+			}
+			if transient {
+				// Back off further while the upstream keeps failing.
+				wait = max(wait, min(azureBgPollMax<<min(failures, 3), azureBgMaxTransientBackoff))
 			}
 			continue
 		}
 		failures = 0
+		failingSince = time.Time{}
 		current = next
 	}
 }
@@ -229,11 +293,7 @@ func (t *azureBgTask) fetch(ctx context.Context, query string) ([]byte, error) {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		preview := string(body)
-		if len(preview) > 300 {
-			preview = preview[:300]
-		}
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, preview)
+		return nil, &azureBgPollError{status: resp.StatusCode, header: resp.Header.Clone(), body: body}
 	}
 	return body, nil
 }
@@ -290,6 +350,26 @@ func (t *azureBgTask) jsonResponse(statusCode int, body []byte) *http.Response {
 		Body:          io.NopCloser(bytes.NewReader(body)),
 		ContentLength: int64(len(body)),
 	}
+}
+
+// upstreamErrorResponse hands an upstream error answer to the regular error
+// handling, keeping its status, Retry-After and an OpenAI error body.
+func (t *azureBgTask) upstreamErrorResponse(pollErr *azureBgPollError) *http.Response {
+	body := pollErr.body
+	if errResult := ojson.GetBytes(body, "error"); !errResult.Exists() || !errResult.IsObject() {
+		body, _ = common.Marshal(map[string]any{
+			"error": map[string]any{
+				"message": fmt.Sprintf("azure background poll returned status %d", pollErr.status),
+				"type":    "upstream_error",
+				"code":    strconv.Itoa(pollErr.status),
+			},
+		})
+	}
+	resp := t.jsonResponse(pollErr.status, body)
+	if retryAfter := pollErr.header.Get("Retry-After"); retryAfter != "" {
+		resp.Header.Set("Retry-After", retryAfter)
+	}
+	return resp
 }
 
 func (t *azureBgTask) logDone(status string, cancelledByClient bool) {

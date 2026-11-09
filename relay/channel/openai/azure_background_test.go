@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -321,6 +322,80 @@ func TestAzureBackgroundStreamHandlerSettlesCancelledUsageOnClientGone(t *testin
 	assert.Equal(t, 120, usage.PromptTokens)
 	assert.Equal(t, 30, usage.CompletionTokens)
 	assert.Equal(t, 150, usage.TotalTokens)
+}
+
+// pollOnlyAzure answers the submit with a queued response and each poll with
+// the next scripted status code; 200 completes the response.
+func pollOnlyAzure(t *testing.T, pollStatuses ...int) (*Adaptor, *gin.Context, *relaycommon.RelayInfo, *atomic.Int64) {
+	t.Helper()
+	var polls, cancels atomic.Int64
+	fake := &fakeAzureBackground{t: t}
+	c, info, _ := newAzureBgTestContext(t, fake, false)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/cancel"):
+			cancels.Add(1)
+			_, _ = io.WriteString(w, `{"id":"resp_1","status":"cancelled"}`)
+		case r.Method == http.MethodPost:
+			_, _ = io.WriteString(w, `{"id":"resp_1","status":"queued","background":true}`)
+		default:
+			n := int(polls.Add(1)) - 1
+			status := pollStatuses[min(n, len(pollStatuses)-1)]
+			if status != http.StatusOK {
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `{"error":{"code":"x","message":"x"}}`)
+				return
+			}
+			_, _ = fmt.Fprintf(w, azureBgCompletedBody, "completed")
+		}
+	}))
+	t.Cleanup(server.Close)
+	info.ChannelBaseUrl = server.URL
+	return &Adaptor{}, c, info, &cancels
+}
+
+func TestAzureBackgroundPollWaitsOutServerErrors(t *testing.T) {
+	maxInterval := azureBgPollMax
+	azureBgPollMax = time.Microsecond
+	t.Cleanup(func() { azureBgPollMax = maxInterval })
+	adaptor, c, info, cancels := pollOnlyAzure(t, 503, 500, 502, 503, 503, 503, 200)
+
+	result, err := adaptor.DoRequest(c, info, strings.NewReader(`{"model":"gpt-6-astra","input":"hi"}`))
+	require.NoError(t, err, "server errors on polls must be waited out")
+	assert.Equal(t, http.StatusOK, result.(*http.Response).StatusCode)
+	assert.Zero(t, cancels.Load())
+}
+
+// A throttled poll fails the request with 429, leaving retries to the relay
+// settings, and cancels the upstream response.
+func TestAzureBackgroundPollThrottledFailsWith429(t *testing.T) {
+	adaptor, c, info, cancels := pollOnlyAzure(t, http.StatusTooManyRequests)
+
+	result, err := adaptor.DoRequest(c, info, strings.NewReader(`{"model":"gpt-6-astra","input":"hi"}`))
+	require.NoError(t, err)
+	resp := result.(*http.Response)
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	assert.Equal(t, int64(1), cancels.Load())
+	apiErr := service.RelayErrorHandler(context.Background(), resp, false)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusTooManyRequests, apiErr.StatusCode)
+}
+
+func TestAzureBackgroundPollGivesUpOnPersistentErrors(t *testing.T) {
+	budget := azureBgTransientBudget
+	azureBgTransientBudget = 20 * time.Millisecond
+	t.Cleanup(func() { azureBgTransientBudget = budget })
+
+	adaptor, c, info, cancels := pollOnlyAzure(t, http.StatusNotFound)
+	_, err := adaptor.DoRequest(c, info, strings.NewReader(`{"model":"gpt-6-astra","input":"hi"}`))
+	require.Error(t, err)
+	assert.Equal(t, int64(1), cancels.Load())
+
+	adaptor, c, info, cancels = pollOnlyAzure(t, http.StatusServiceUnavailable)
+	_, err = adaptor.DoRequest(c, info, strings.NewReader(`{"model":"gpt-6-astra","input":"hi"}`))
+	require.Error(t, err, "server errors that outlast the budget still end the request")
+	assert.Equal(t, int64(1), cancels.Load())
 }
 
 func TestShouldUseAzureBackground(t *testing.T) {
