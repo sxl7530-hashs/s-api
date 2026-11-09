@@ -2,8 +2,6 @@ package model
 
 import (
 	"maps"
-	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,8 +23,6 @@ type Option struct {
 	Key   string `json:"key" gorm:"primaryKey"`
 	Value string `json:"value"`
 }
-
-var claude5ForgeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
 func AllOption() ([]*Option, error) {
 	var options []*Option
@@ -242,41 +238,7 @@ func validateOptionValue(key string, value string) error {
 		if len(value) > 131072 || !strings.HasPrefix(strings.TrimSpace(value), "{") || common.UnmarshalJsonStr(value, &settings) != nil {
 			return common.NewMessage("Invalid parameters")
 		}
-		if settings.AttributionMode != "" && settings.AttributionMode != "off" && settings.AttributionMode != "remove" && settings.AttributionMode != "forge" {
-			return common.NewMessage("Invalid parameters")
-		}
-		if settings.AttributionMode != "" && settings.AttributionMode != "off" && !settings.ThinkingBindingRecover {
-			return common.NewMessage("Attribution processing requires thinking binding recovery")
-		}
-		if settings.DisplayDefault != "" && settings.DisplayDefault != "summarized" && settings.DisplayDefault != "omitted" {
-			return common.NewMessage("Invalid parameters")
-		}
-		if settings.ForgeVersion != "" && !claude5ForgeVersionPattern.MatchString(settings.ForgeVersion) {
-			return common.NewMessage("Invalid parameters")
-		}
-		if len(settings.TargetModels) > 100 || len(settings.TargetRegions) > 50 || len(settings.ThinkingBudgetEffortTable) > 20 {
-			return common.NewMessage("Invalid parameters")
-		}
-		for _, pattern := range settings.TargetModels {
-			if _, err := path.Match(strings.TrimSpace(pattern), ""); err != nil {
-				return common.NewMessage("Invalid parameters")
-			}
-			if strings.TrimSpace(pattern) == "" || len(pattern) > 256 {
-				return common.NewMessage("Invalid parameters")
-			}
-		}
-		for _, region := range settings.TargetRegions {
-			if strings.TrimSpace(region) == "" || len(region) > 64 {
-				return common.NewMessage("Invalid parameters")
-			}
-		}
-		previousBudget := 0
-		for _, entry := range settings.ThinkingBudgetEffortTable {
-			if entry.MaxBudget <= previousBudget || entry.Effort != "low" && entry.Effort != "medium" && entry.Effort != "high" && entry.Effort != "max" {
-				return common.NewMessage("Invalid parameters")
-			}
-			previousBudget = entry.MaxBudget
-		}
+		return model_setting.ValidateClaude5CompatSettings(settings)
 	}
 	if key == "global.aws_usage_metrics_enabled" && value != "true" && value != "false" {
 		return common.NewMessage("Invalid parameters")
@@ -447,6 +409,27 @@ func updateOptionMap(key string, value string) (err error) {
 	}
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
+	if key == "global.claude5_compat" && common.OptionMap[key] != value {
+		var current, previous model_setting.Claude5CompatSettings
+		if common.UnmarshalJsonStr(value, &current) == nil && model_setting.ValidateClaude5CompatSettings(current) == nil {
+			_ = common.UnmarshalJsonStr(common.OptionMap[key], &previous)
+			for _, entry := range current.FingerprintStatuses {
+				if entry.Status != "preserve_rejected" {
+					continue
+				}
+				existed := false
+				for _, old := range previous.FingerprintStatuses {
+					if old.Model == entry.Model && strings.EqualFold(old.Region, entry.Region) && old.Status == entry.Status {
+						existed = true
+						break
+					}
+				}
+				if !existed {
+					common.SysError(common.LogText("Bedrock fingerprint preserve rejected (administrator verified): model=%q region=%q; review compatibility policy", entry.Model, entry.Region))
+				}
+			}
+		}
+	}
 	common.OptionMap[key] = value
 
 	// 检查是否是模型配置 - 使用更规范的方式处理

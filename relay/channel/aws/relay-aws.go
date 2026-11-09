@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/bedrockmodel"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -78,10 +79,31 @@ func bedrockProtectionError(c *gin.Context, info *relaycommon.RelayInfo, a *Adap
 	if service.IsBedrockCoolingDown(info.ChannelId, settings) {
 		return types.NewErrorWithStatusCode(errors.New("Bedrock channel is cooling down"), types.ErrorCodeChannelBedrockCoolingDown, http.StatusTooManyRequests)
 	}
+	// Resolve configured friendly names through the same mapping and profile
+	// selection as the payload. Estimation and Redis must see the identical key.
+	protectionModel := info.UpstreamModelName
+	if settings != nil && settings.ModelRateLimitEnabled {
+		var mapping map[string]string
+		if raw := c.GetString("model_mapping"); raw != "" {
+			if err := common.UnmarshalJsonStr(raw, &mapping); err != nil {
+				return types.NewErrorWithStatusCode(errors.New("invalid Bedrock model mapping"), types.ErrorCodeChannelBedrockRateLimited, http.StatusTooManyRequests)
+			}
+		}
+		region := ""
+		if a.AwsClient != nil {
+			region = a.AwsClient.Options().Region
+		}
+		resolved, resolveErr := service.ResolveBedrockModelLimits(settings, mapping, region)
+		if resolveErr != nil {
+			return types.NewErrorWithStatusCode(resolveErr, types.ErrorCodeChannelBedrockRateLimited, http.StatusTooManyRequests)
+		}
+		settings = resolved
+		protectionModel = bedrockmodel.FinalID(info.UpstreamModelName, region)
+	}
 	// A negative estimate records RPM while marking this window's TPM unknown.
 	tokens := -1
 	if settings != nil && common.RedisEnabled && common.RDB != nil {
-		modelLimit := settings.ModelLimits[info.UpstreamModelName]
+		modelLimit := settings.ModelLimits[protectionModel]
 		requiresTokens := settings.RateLimitEnabled && settings.TPM > 0 || settings.ModelRateLimitEnabled && modelLimit.TPM > 0
 		if requiresTokens {
 			var err error
@@ -116,7 +138,7 @@ func bedrockProtectionError(c *gin.Context, info *relaycommon.RelayInfo, a *Adap
 			return nil
 		}
 	}
-	allowed, _ := service.ReserveBedrockUsage(info.ChannelId, tokens, settings, info.UpstreamModelName)
+	allowed, _ := service.ReserveBedrockUsage(info.ChannelId, tokens, settings, protectionModel)
 	if !allowed {
 		return types.NewErrorWithStatusCode(errors.New("Bedrock channel rate limit reached"), types.ErrorCodeChannelBedrockRateLimited, http.StatusTooManyRequests)
 	}
@@ -379,20 +401,17 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 	if _, exists := c.Get(claude5CompatContextKey); exists {
 		c.Set(claude5CompatContextKey, []string(nil))
 	}
+	c.Set(claude5CompatAuditKey, nil)
+	c.Set(claude5CompatBetaContextKey, false)
+	c.Set(claude5CompatCapabilityKey, "")
 	awsCli, err := newAwsClient(c, info)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeChannelAwsClientError)
 	}
 	a.AwsClient = awsCli
 
-	// 获取对应的AWS模型ID
-	awsModelId := getAwsModelID(info.UpstreamModelName)
-
-	awsRegionPrefix := getAwsRegionPrefix(awsCli.Options().Region)
-	canCrossRegion := awsModelCanCrossRegion(awsModelId, awsRegionPrefix)
-	if canCrossRegion {
-		awsModelId = awsModelCrossRegion(awsModelId, awsRegionPrefix)
-	}
+	// Quota preview, model protection, and the request must share this identity.
+	awsModelId := bedrockmodel.FinalID(info.UpstreamModelName, awsCli.Options().Region)
 
 	// init empty request.header
 	requestHeader := http.Header{}
@@ -735,6 +754,7 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types
 	defer cancel()
 
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
+	recordClaude5UpstreamResult(c, err)
 	if invokeErr := handleAwsInvokeResult(requestContext, info, err, "InvokeModel"); invokeErr != nil {
 		return invokeErr, nil
 	}
@@ -774,6 +794,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 	defer cancel()
 
 	awsResp, err := a.AwsClient.InvokeModelWithResponseStream(ctx, a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput))
+	recordClaude5UpstreamResult(c, err)
 	if err != nil {
 		return handleAwsInvokeResult(requestContext, info, err, "InvokeModelWithResponseStream"), nil
 	}
@@ -874,6 +895,7 @@ streamLoop:
 			streamErr = ctx.Err()
 		}
 		if responseErr == nil && streamErr != nil {
+			recordClaude5UpstreamResult(c, streamErr)
 			responseErr = handleAwsInvokeResult(requestContext, info, streamErr, "InvokeModelWithResponseStream")
 		}
 		if responseErr == nil && info.StreamStatus.ResponseOutcome() != string(relaycommon.ResponseOutcomeCompleted) {

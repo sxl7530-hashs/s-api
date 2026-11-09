@@ -74,7 +74,7 @@ func TestGlobalDisplayAndAwsMetricsOptionsPersistAcrossDatabaseDialects(t *testi
 				}
 			})
 			require.NoError(t, db.AutoMigrate(&Option{}))
-			compat := `{"enabled":true,"target_models":["target"],"drop_temperature":true}`
+			compat := `{"enabled":true,"target_models":["target"],"drop_temperature":true,"control_percent":20,"audit_sample_percent":25,"fingerprint_statuses":[{"model":"target","region":"us-east-1","status":"preserve_rejected"}]}`
 			mappings := `{"enabled":true,"mappings":{"sara":"Supplier 1"}}`
 			require.NoError(t, UpdateOptionsBulk(map[string]string{
 				"global.aws_usage_metrics_enabled": "true",
@@ -89,6 +89,10 @@ func TestGlobalDisplayAndAwsMetricsOptionsPersistAcrossDatabaseDialects(t *testi
 			require.NoError(t, db.Where(&Option{Key: "global.claude5_compat"}).First(&compatStored).Error)
 			assert.JSONEq(t, compat, compatStored.Value)
 			assert.True(t, modelsetting.GetClaude5CompatSettings().DropTemperature)
+			assert.Equal(t, 20, modelsetting.GetClaude5CompatSettings().ControlPercent)
+			require.NotNil(t, modelsetting.GetClaude5CompatSettings().AuditSamplePercent)
+			assert.Equal(t, 25, *modelsetting.GetClaude5CompatSettings().AuditSamplePercent)
+			assert.Equal(t, "preserve_rejected", modelsetting.GetClaude5CompatSettings().FingerprintStatuses[0].Status)
 			require.NoError(t, UpdateOptionsBulk(map[string]string{"global.claude5_compat": `{}`}))
 			assert.False(t, modelsetting.GetClaude5CompatSettings().Enabled)
 			assert.False(t, modelsetting.GetClaude5CompatSettings().DropTemperature)
@@ -119,12 +123,19 @@ func TestValidateGlobalAwsUsageAndChannelNameDisplayOptions(t *testing.T) {
 
 func TestClaude5CompatibilityOptionValidation(t *testing.T) {
 	for _, value := range []string{
+		`{"control_percent":101}`, `{"control_percent":-1}`, `{"audit_sample_percent":101}`, `{"fingerprint_statuses":[{"model":"target","region":"us-east-1","status":"bad"}]}`, `{"fingerprint_statuses":[{"model":"target","region":"us-east-1","status":"unknown"},{"model":"target","region":"US-EAST-1","status":"remove_verified"}]}`,
 		`null`, `[]`, `{"enabled":"true"}`,
 		`{"attribution_mode":"remove"}`,
 		`{"target_models":["["]}`,
 		`{"thinking_budget_effort_table":[{"max_budget":8000,"effort":"low"},{"max_budget":4000,"effort":"high"}]}`,
 		`{"thinking_budget_effort_table":[{"max_budget":0,"effort":"low"}]}`,
 		`{"forge_version":"2.1.280.123"}`,
+		`{"forge_version":"02.1.280"}`,
+		`{"attribution_mode":"forge","thinking_binding_recover":true,"fingerprint_policy":"keep_original"}`,
+		`{"thinking_enabled_map":true,"output_config_policy":"strip_all"}`,
+		`{"thinking_enabled_map":true,"strip_output_config":true,"output_config_policy":"keep_effort_only"}`,
+		`{"thinking_budget_effort_table":[{"max_budget":8000,"effort":"max"}]}`,
+		`{"beta_capabilities":[{"model":"target","region":"us-east-1","beta":"other","status":"allow"}]}`,
 	} {
 		assert.Error(t, validateOptionValue("global.claude5_compat", value), value)
 	}

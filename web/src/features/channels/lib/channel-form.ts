@@ -144,14 +144,21 @@ function isBedrockModelLimits(value: string | undefined): boolean {
       ) {
         return false
       }
-      return Object.entries(limit).every(
-        ([key, amount]) =>
+      return Object.entries(limit).every(([key, amount]) => {
+        if (key === 'resolved_model' || key === 'quota_region') {
+          return (
+            typeof amount === 'string' &&
+            amount.length <= (key === 'resolved_model' ? 512 : 64)
+          )
+        }
+        return (
           (key === 'rpm' || key === 'tpm') &&
           typeof amount === 'number' &&
           Number.isInteger(amount) &&
           amount >= 0 &&
           amount <= (key === 'rpm' ? 10_000_000 : 1_000_000_000)
-      )
+        )
+      })
     })
   } catch {
     return false
@@ -380,6 +387,26 @@ export const channelFormSchema = z
   })
   .superRefine((data, ctx) => {
     if (data.type === 33) {
+      if (
+        data.bedrock_model_rate_limit_enabled &&
+        isBedrockModelLimits(data.bedrock_model_limits)
+      ) {
+        const limits = JSON.parse(data.bedrock_model_limits || '{}') as Record<
+          string,
+          { rpm?: number; tpm?: number }
+        >
+        if (
+          Object.values(limits).some(
+            (limit) => !(Number(limit.rpm) > 0 || Number(limit.tpm) > 0)
+          )
+        ) {
+          addRequiredIssue(
+            ctx,
+            'bedrock_model_limits',
+            'Enter at least one positive RPM or TPM limit before saving.'
+          )
+        }
+      }
       if (
         data.bedrock_ramp_up_enabled &&
         (!data.bedrock_ramp_up_start_unix ||

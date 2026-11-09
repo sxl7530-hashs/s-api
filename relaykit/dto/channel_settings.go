@@ -62,8 +62,10 @@ type BedrockProtectionSettings struct {
 }
 
 type BedrockModelLimit struct {
-	RPM int `json:"rpm,omitempty"`
-	TPM int `json:"tpm,omitempty"`
+	ResolvedModel string `json:"resolved_model,omitempty"`
+	QuotaRegion   string `json:"quota_region,omitempty"`
+	RPM           int    `json:"rpm,omitempty"`
+	TPM           int    `json:"tpm,omitempty"`
 }
 
 // BindsTaskPlugin reports whether the channel is bound to the task plugin,
@@ -119,7 +121,7 @@ func (s *ChannelSettings) ValidateHTTPTransport() error {
 			return fmt.Errorf("invalid bedrock model limits")
 		}
 		for name, limit := range p.ModelLimits {
-			if strings.TrimSpace(name) == "" || name != strings.TrimSpace(name) || len(name) > 512 || limit.RPM < 0 || limit.RPM > 10_000_000 || limit.TPM < 0 || limit.TPM > 1_000_000_000 {
+			if len(limit.ResolvedModel) > 512 || len(limit.QuotaRegion) > 64 || strings.TrimSpace(name) == "" || name != strings.TrimSpace(name) || len(name) > 512 || limit.RPM < 0 || limit.RPM > 10_000_000 || limit.TPM < 0 || limit.TPM > 1_000_000_000 {
 				return fmt.Errorf("invalid bedrock model limits")
 			}
 		}

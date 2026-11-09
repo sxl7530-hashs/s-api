@@ -195,3 +195,62 @@ func TestInferencePresetSettingsAndDatabaseRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestBedrockModelQuotaMetadataDatabaseRoundTrip(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var driver gorm.Dialector
+			switch dialect {
+			case "sqlite":
+				driver = sqlite.Open(filepath.Join(t.TempDir(), "quotas.db"))
+			case "mysql":
+				dsn := os.Getenv("TEST_MYSQL_DSN")
+				if dsn == "" {
+					t.Skip("TEST_MYSQL_DSN not configured")
+				}
+				driver = mysql.Open(dsn)
+			case "postgres":
+				dsn := os.Getenv("TEST_POSTGRES_DSN")
+				if dsn == "" {
+					t.Skip("TEST_POSTGRES_DSN not configured")
+				}
+				driver = postgres.Open(dsn)
+			}
+			db, err := gorm.Open(driver, &gorm.Config{})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+			table := db.Table("bedrock_quota_metadata_channels")
+			require.NoError(t, table.AutoMigrate(&Channel{}))
+			t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable("bedrock_quota_metadata_channels")) })
+			channel := &Channel{Name: "quota-roundtrip", Type: constant.ChannelTypeAws, Key: "ak|sk|us-east-1"}
+			// Start with legacy settings lacking metadata, then persist the imported row.
+			channel.SetSetting(dto.ChannelSettings{BedrockProtection: &dto.BedrockProtectionSettings{ModelRateLimitEnabled: true, ModelLimits: map[string]dto.BedrockModelLimit{"friendly": {RPM: 120}}}})
+			require.NoError(t, table.Create(channel).Error)
+			settings := channel.GetSetting()
+			limit := settings.BedrockProtection.ModelLimits["friendly"]
+			limit.TPM = 24000
+			limit.ResolvedModel = "global.anthropic.claude-sonnet-4-6"
+			limit.QuotaRegion = "us-east-1"
+			settings.BedrockProtection.ModelLimits["friendly"] = limit
+			channel.SetSetting(settings)
+			require.NoError(t, channel.ValidateSettings())
+			require.NoError(t, table.Save(channel).Error)
+			for range 2 {
+				require.NoError(t, table.AutoMigrate(&Channel{}))
+				var loaded Channel
+				require.NoError(t, table.First(&loaded, channel.Id).Error)
+				require.NoError(t, loaded.ValidateSettings())
+				assert.Equal(t, limit, loaded.GetSetting().BedrockProtection.ModelLimits["friendly"])
+			}
+			var version string
+			query := "select version()"
+			if dialect == "sqlite" {
+				query = "select sqlite_version()"
+			}
+			require.NoError(t, db.Raw(query).Scan(&version).Error)
+			t.Logf("%s version: %s", dialect, version)
+		})
+	}
+}

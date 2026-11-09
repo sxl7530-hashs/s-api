@@ -1582,3 +1582,30 @@ func TestAwsStreamHandlerStopsAtClientCancellation(t *testing.T) {
 		t.Fatal("upstream producer did not observe the closed stream")
 	}
 }
+
+func TestBedrockFriendlyModelTPMUsesMappedTargetBeforeSending(t *testing.T) {
+	server := miniredis.RunT(t)
+	oldClient, oldEnabled := common.RDB, common.RedisEnabled
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() { require.NoError(t, client.Close()); common.RDB, common.RedisEnabled = oldClient, oldEnabled })
+	target := "global.anthropic.claude-sonnet-4-6"
+	info := newAwsTestRelayInfo()
+	info.ChannelId = 4979
+	info.UpstreamModelName = target
+	settings := &dto.BedrockProtectionSettings{ModelRateLimitEnabled: true, ModelLimits: map[string]dto.BedrockModelLimit{"claude-sonnet-4-6": {TPM: 99}}}
+	info.ChannelSetting.BedrockProtection = settings
+	c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+	c.Set("model_mapping", `{"claude-sonnet-4-6":"global.anthropic.claude-sonnet-4-6"}`)
+	a := &Adaptor{AwsClient: newAwsTestClient(awsHTTPClientFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatal("protection must not send network requests")
+		return nil, nil
+	})), AwsReq: &bedrockruntime.InvokeModelInput{ModelId: aws.String(target), Body: []byte(`{"max_tokens":100,"messages":[{"role":"user","content":"hello"}]}`)}}
+	rejected := bedrockProtectionError(c, info, a)
+	require.NotNil(t, rejected)
+	assert.Equal(t, relaytypes.ErrorCodeChannelBedrockRateLimited, rejected.GetErrorCode(), "model TPM must estimate max_tokens rather than recording unknown")
+	settings.ModelLimits["claude-sonnet-4-6"] = dto.BedrockModelLimit{TPM: 10000}
+	require.Nil(t, bedrockProtectionError(c, info, a))
+	assert.Equal(t, "0", server.HGet("bedrock:usage:v2:{4979}", "unknown"))
+	assert.NotEqual(t, "0", server.HGet("bedrock:usage:v2:{4979}", "tpm"))
+}

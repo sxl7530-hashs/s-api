@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
@@ -160,4 +160,69 @@ describe('Claude 5 compatibility statistics', () => {
     view.unmount()
     expect(signal?.aborted).toBe(true)
   })
+})
+
+test('shows cohort and rule diagnostics while keeping unmeasured timings unknown', async () => {
+  vi.mocked(getClaude5CompatStats).mockResolvedValue({
+    success: true,
+    data: {
+      ...empty,
+      cohorts: [
+        {
+          model: 'mapped',
+          region: 'us-east-1',
+          cohort: 'control',
+          requests: 2,
+          successes: 1,
+          failures: 1,
+          upstream_4xx: 0,
+          upstream_5xx: 1,
+          upstream_known: 1,
+          retried: 0,
+          retries: 0,
+          ttfb_samples: 0,
+          ttfb_p50_ms: null,
+          ttfb_p95_ms: null,
+          streams: 1,
+          stream_known: 0,
+          interrupted: 0,
+          sample_min: 25,
+          sample_max: 25,
+        },
+      ],
+      rule_states: [
+        {
+          model: 'mapped',
+          rule: 'temperature_dropped',
+          evaluated: 2,
+          matched: 1,
+          changed: 1,
+          skipped: 1,
+        },
+      ],
+      combinations: [
+        {
+          model: 'mapped',
+          output_config_policy: 'none',
+          thinking_enabled_map: false,
+          requests: 2,
+        },
+      ],
+    },
+  })
+  renderStatistics()
+  await userEvent
+    .setup()
+    .click(screen.getByRole('button', { name: 'Load rule-hit statistics' }))
+  expect(await screen.findByText('Unmodified control')).toBeVisible()
+  const row = screen
+    .getByText('Unmodified control')
+    .closest('tr') as HTMLTableRowElement
+  expect(within(row).getByText('50%')).toBeVisible()
+  expect(within(row).getByText('—')).toBeVisible()
+  expect(screen.getByText('Evaluated')).toBeVisible()
+  expect(screen.getByText('Body changed')).toBeVisible()
+  expect(screen.getByText('temperature_dropped')).toBeVisible()
+  expect(screen.getByText('Output config policy')).toBeVisible()
+  expect(screen.getByText(/Observed logs only/)).toBeVisible()
 })

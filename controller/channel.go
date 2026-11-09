@@ -322,6 +322,58 @@ func GetChannelUsage(c *gin.Context) {
 	common.ApiSuccess(c, service.GetBedrockUsage(ids))
 }
 
+// PreviewBedrockQuotas uses the editor's unsaved transport/model draft. Stored
+// credentials are loaded only for the authorized channel; nothing is persisted.
+func PreviewBedrockQuotas(c *gin.Context) {
+	var draft struct {
+		ChannelID    int    `json:"channel_id"`
+		Proxy        string `json:"proxy"`
+		Key          string `json:"key"`
+		Models       string `json:"models"`
+		ModelMapping string `json:"model_mapping"`
+	}
+	if c.ShouldBindJSON(&draft) != nil || len(draft.Key) > 131072 || len(draft.Models) > 65536 || len(draft.ModelMapping) > 131072 || len(draft.Proxy) > 4096 {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	var channel *model.Channel
+	if draft.ChannelID > 0 {
+		var err error
+		channel, err = model.GetChannelById(draft.ChannelID, true)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if channel.Type != constant.ChannelTypeAws {
+			common.ApiErrorT(c, "Invalid channel type")
+			return
+		}
+	} else {
+		channel = &model.Channel{Type: constant.ChannelTypeAws}
+	}
+	if draft.Key != "" {
+		channel.Key = draft.Key
+		channel.Keys = nil
+	}
+	settings := channel.GetSetting()
+	settings.Proxy = draft.Proxy
+	encoded, err := common.Marshal(settings)
+	if err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	settingJSON := string(encoded)
+	channel.Setting = &settingJSON
+	channel.Models = draft.Models
+	channel.ModelMapping = &draft.ModelMapping
+	result, err := service.GetBedrockModelQuotas(c.Request.Context(), channel)
+	if err != nil {
+		common.ApiErrorT(c, "Failed to query AWS quotas: {{error}}", map[string]any{"error": err.Error()})
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
 func GetBedrockQuotas(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil || id <= 0 {
@@ -616,6 +668,39 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 	}
 
+	if channel.Type == constant.ChannelTypeAws {
+		p := channel.GetSetting().BedrockProtection
+		if p != nil && p.ModelRateLimitEnabled {
+			var mapping map[string]string
+			if raw := channel.GetModelMapping(); raw != "" && common.UnmarshalJsonStr(raw, &mapping) != nil {
+				return common.NewMessage("Invalid parameters")
+			}
+			regions := make(map[string]bool)
+			for _, key := range channel.GetKeys() {
+				parts := strings.Split(key, "|")
+				if len(parts) >= 2 {
+					regions[strings.TrimSpace(parts[len(parts)-1])] = true
+				}
+			}
+			// Updates can omit keys. Validate mapping conflicts using the region of
+			// an imported row; runtime revalidates against the actual selected key.
+			if len(regions) == 0 {
+				for _, limit := range p.ModelLimits {
+					if limit.QuotaRegion != "" {
+						regions[limit.QuotaRegion] = true
+					}
+				}
+			}
+			if len(regions) == 0 {
+				regions[""] = true
+			}
+			for region := range regions {
+				if _, err := service.ResolveBedrockModelLimits(p, mapping, region); err != nil {
+					return common.NewMessage("Invalid channel settings format: {{error}}", map[string]any{"error": err.Error()})
+				}
+			}
+		}
+	}
 	setting := channel.GetSetting()
 	if channel.Type != constant.ChannelTypeNewAPI && len(setting.TaskExtendPluginKeys) > 0 {
 		return fmt.Errorf("task_extend_plugin_keys is only supported on New API channels")
@@ -1155,14 +1240,38 @@ func UpdateChannel(c *gin.Context) {
 
 	baseURLFromPluginDefault := channel.Type == constant.ChannelTypeTaskPlugin &&
 		(channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "")
-	// 使用统一的校验函数
-	if err := validateChannel(&channel.Channel, false); err != nil {
+	// Validate imported quota metadata against the effective stored credential
+	// when the editor leaves the secret unchanged.
+	originChannel, err := model.GetChannelById(channel.Id, true)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
-	originChannel, err := model.GetChannelById(channel.Id, true)
-	if err != nil {
+	validationChannel := &channel.Channel
+	if channel.Type == constant.ChannelTypeAws || channel.Type == 0 && originChannel.Type == constant.ChannelTypeAws {
+		effective := channel.Channel
+		if effective.Type == 0 {
+			effective.Type = originChannel.Type
+		}
+		if strings.TrimSpace(effective.Key) == "" {
+			effective.Key = originChannel.Key
+			effective.Keys = nil
+		}
+		if channel.KeyMode != nil && *channel.KeyMode == "append" && originChannel.ChannelInfo.IsMultiKey && strings.TrimSpace(channel.Key) != "" {
+			// Imported quotas must match every credential that remains after
+			// append, including the credentials already stored on the channel.
+			effective.Key = originChannel.Key + "\n" + channel.Key
+			effective.Keys = nil
+		}
+		if _, provided := requestData["setting"]; !provided {
+			effective.Setting = originChannel.Setting
+		}
+		if effective.ModelMapping == nil {
+			effective.ModelMapping = originChannel.ModelMapping
+		}
+		validationChannel = &effective
+	}
+	if err := validateChannel(validationChannel, false); err != nil {
 		common.ApiError(c, err)
 		return
 	}

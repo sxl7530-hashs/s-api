@@ -32,6 +32,7 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 
 import { SettingsSwitchField } from '../components/settings-form-layout'
+import { Claude5CapabilitySettings } from './claude5-capability-settings'
 import { Claude5CompatStatistics } from './claude5-compat-statistics'
 
 type Props = { value: string; onChange: (value: string) => void }
@@ -47,7 +48,6 @@ const fieldRules = [
   ['clean_empty_system', 'Clean empty system blocks'],
   ['fix_tool_result_cache_control', 'Fix tool result cache control'],
   ['strip_context_management', 'Strip unsupported context management'],
-  ['strip_output_config', 'Strip unsupported output config'],
   ['strip_container_fields', 'Strip unsupported container fields'],
   ['map_tool_choice_auto', 'Map tool choice to auto'],
   ['strip_unsupported_web_search', 'Strip unsupported web search'],
@@ -85,6 +85,16 @@ export function Claude5CompatSettings(props: Props) {
   }
   const update = (key: string, value: unknown) =>
     props.onChange(JSON.stringify({ ...settings, [key]: value }, null, 2))
+  const fieldDescriptions: Partial<
+    Record<(typeof fieldRules)[number][0], string>
+  > = {
+    map_tool_choice_auto: t(
+      'May stop the model from calling the specified tool.'
+    ),
+    strip_unsupported_web_search: t(
+      'Removes the unsupported web search tool and disables its search capability.'
+    ),
+  }
   const rules = [...thinkingRules, ...fieldRules]
   const count =
     rules.filter(([key]) => settings[key] === true).length +
@@ -176,6 +186,57 @@ export function Claude5CompatSettings(props: Props) {
               }
             />
           </CompatibilityGroup>
+          <CompatibilityGroup title={t('Rollout and audit sampling')}>
+            {(['control_percent', 'audit_sample_percent'] as const).map(
+              (key) => (
+                <div className='space-y-2' key={key}>
+                  <Label htmlFor={`${id}-${key}`}>
+                    {key === 'control_percent'
+                      ? t('Unmodified control group (%)')
+                      : t('Audit sample (%)')}
+                  </Label>
+                  <Input
+                    id={`${id}-${key}`}
+                    type='number'
+                    min={0}
+                    max={100}
+                    value={
+                      typeof settings[key] === 'number'
+                        ? settings[key]
+                        : { control_percent: 0, audit_sample_percent: 100 }[key]
+                    }
+                    onChange={(event) =>
+                      update(
+                        key,
+                        event.target.value === ''
+                          ? null
+                          : Number(event.target.value)
+                      )
+                    }
+                  />
+                </div>
+              )
+            )}
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Control requests keep the original Bedrock body. Sampling affects diagnostics only; sampled counts are not total traffic or proof of a repair.'
+              )}
+            </p>
+          </CompatibilityGroup>
+          <CompatibilityGroup title={t('Verified beta capabilities')}>
+            <Claude5CapabilitySettings
+              kind='beta'
+              value={settings.beta_capabilities}
+              onChange={(value) => update('beta_capabilities', value)}
+            />
+          </CompatibilityGroup>
+          <CompatibilityGroup title={t('Fingerprint review results')}>
+            <Claude5CapabilitySettings
+              kind='fingerprint'
+              value={settings.fingerprint_statuses}
+              onChange={(value) => update('fingerprint_statuses', value)}
+            />
+          </CompatibilityGroup>
           <CompatibilityGroup title={t('Version attribution')}>
             <Label htmlFor={`${id}-attribution`}>{t('Attribution mode')}</Label>
             <NativeSelect
@@ -223,6 +284,35 @@ export function Claude5CompatSettings(props: Props) {
                 </p>
               </div>
             )}
+            <Label htmlFor={`${id}-fingerprint`}>
+              {t('Fingerprint policy')}
+            </Label>
+            <NativeSelect
+              id={`${id}-fingerprint`}
+              value={
+                typeof settings.fingerprint_policy === 'string'
+                  ? settings.fingerprint_policy
+                  : 'preserve'
+              }
+              onChange={(event) =>
+                update('fingerprint_policy', event.target.value)
+              }
+            >
+              <NativeSelectOption value='preserve'>
+                {t('Preserve fingerprint')}
+              </NativeSelectOption>
+              <NativeSelectOption value='remove'>
+                {t('Remove fingerprint')}
+              </NativeSelectOption>
+              <NativeSelectOption value='keep_original'>
+                {t('Keep original attribution')}
+              </NativeSelectOption>
+            </NativeSelect>
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Fingerprint behavior is only used by forge mode and must be validated with Bedrock.'
+              )}
+            </p>
           </CompatibilityGroup>
           <CompatibilityGroup title={t('Thinking compatibility')}>
             {thinkingRules.map(([key, label]) => (
@@ -230,10 +320,59 @@ export function Claude5CompatSettings(props: Props) {
                 key={key}
                 controlId={`${id}-${key}`}
                 label={t(label)}
+                description={
+                  key === 'thinking_binding_recover'
+                    ? t(
+                        'Experimental. Keep disabled until the target Bedrock model is verified.'
+                      )
+                    : undefined
+                }
                 checked={settings[key] === true}
                 onCheckedChange={(value) => update(key, value)}
               />
             ))}
+            <SettingsSwitchField
+              controlId={`${id}-binding-write`}
+              label={t('Write thinking block binding control')}
+              description={t(
+                'Experimental. Keep disabled until the target Bedrock model is verified.'
+              )}
+              checked={settings.block_binding_write === true}
+              onCheckedChange={(value) => update('block_binding_write', value)}
+            />
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Experimental. Keep disabled until the target Bedrock model is verified.'
+              )}
+            </p>
+            <Label htmlFor={`${id}-capability-version`}>
+              {t('Beta capability table version')}
+            </Label>
+            <Input
+              id={`${id}-capability-version`}
+              value={
+                typeof settings.capability_table_version === 'string'
+                  ? settings.capability_table_version
+                  : 'v1'
+              }
+              onChange={(event) =>
+                update('capability_table_version', event.target.value)
+              }
+            />
+            <Button
+              type='button'
+              variant='outline'
+              onClick={() =>
+                update('capability_table_version', crypto.randomUUID())
+              }
+            >
+              {t('Clear temporary beta denials on save')}
+            </Button>
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Save settings to invalidate temporary beta denials across instances. Configure verified model and region capabilities in the JSON settings.'
+              )}
+            </p>
             <Label htmlFor={`${id}-display`}>
               {t('Default thinking display')}
             </Label>
@@ -294,7 +433,7 @@ export function Claude5CompatSettings(props: Props) {
                     )
                   }
                 >
-                  {['low', 'medium', 'high', 'max'].map((effort) => (
+                  {['low', 'medium', 'high'].map((effort) => (
                     <NativeSelectOption key={effort} value={effort}>
                       {effort}
                     </NativeSelectOption>
@@ -337,18 +476,33 @@ export function Claude5CompatSettings(props: Props) {
                 key={key}
                 controlId={`${id}-${key}`}
                 label={t(label)}
-                description={
-                  key === 'map_tool_choice_auto' ||
-                  key === 'strip_unsupported_web_search'
-                    ? t(
-                        'Changes request semantics. Enable only after validating tool behavior.'
-                      )
-                    : undefined
-                }
+                description={fieldDescriptions[key]}
                 checked={settings[key] === true}
                 onCheckedChange={(value) => update(key, value)}
               />
             ))}
+            <Label htmlFor={`${id}-output-policy`}>
+              {t('Output config policy')}
+            </Label>
+            <NativeSelect
+              id={`${id}-output-policy`}
+              value={
+                typeof settings.output_config_policy === 'string'
+                  ? settings.output_config_policy
+                  : 'none'
+              }
+              onChange={(event) =>
+                update('output_config_policy', event.target.value)
+              }
+            >
+              <NativeSelectOption value='none'>{t('None')}</NativeSelectOption>
+              <NativeSelectOption value='strip_all'>
+                {t('Remove all')}
+              </NativeSelectOption>
+              <NativeSelectOption value='keep_effort_only'>
+                {t('Keep effort only')}
+              </NativeSelectOption>
+            </NativeSelect>
           </CompatibilityGroup>
         </fieldset>
         <Collapsible

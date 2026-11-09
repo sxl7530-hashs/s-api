@@ -110,7 +110,15 @@ export interface ChannelSettings {
 
 export interface BedrockProtectionSettings {
   model_rate_limit_enabled?: boolean
-  model_limits?: Record<string, { rpm?: number; tpm?: number }>
+  model_limits?: Record<
+    string,
+    {
+      rpm?: number
+      tpm?: number
+      resolved_model?: string
+      quota_region?: string
+    }
+  >
   ramp_up_enabled?: boolean
   ramp_up_start_unix?: number
   ramp_up_days?: number
@@ -143,6 +151,12 @@ export interface ChannelUsageResponse {
 }
 
 export interface BedrockModelQuota {
+  target?: string
+  status?: string
+  scope?: string
+  rpm_code?: string
+  tpm_code?: string
+  quota_names?: string[]
   model: string
   rpm?: number
   tpm?: number
@@ -152,6 +166,7 @@ export interface BedrockQuotaResponse {
   success: boolean
   data: {
     region: string
+    queried_at?: number
     models: BedrockModelQuota[]
   }
 }

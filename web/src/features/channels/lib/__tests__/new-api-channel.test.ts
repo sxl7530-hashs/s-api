@@ -373,3 +373,51 @@ describe('New API channel task plugin extensions', () => {
     )
   })
 })
+
+describe('Bedrock imported quota form contract', () => {
+  test('accepts imported target metadata and rejects selected rows without a positive ceiling only when enabled', () => {
+    const base = {
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      type: 33,
+      name: 'aws',
+      models: 'friendly',
+      key: 'ak|sk|us-east-1',
+      group: ['default'],
+    }
+    expect(
+      channelFormSchema.safeParse({
+        ...base,
+        bedrock_model_rate_limit_enabled: true,
+        bedrock_model_limits: JSON.stringify({
+          friendly: {
+            rpm: 120,
+            tpm: 24000,
+            resolved_model: 'global.anthropic.claude-sonnet-4-6',
+            quota_region: 'us-east-1',
+          },
+        }),
+      }).success
+    ).toBe(true)
+    expect(
+      channelFormSchema.safeParse({
+        ...base,
+        bedrock_model_rate_limit_enabled: true,
+        bedrock_model_limits: '{"friendly":{}}',
+      }).success
+    ).toBe(false)
+    expect(
+      channelFormSchema.safeParse({
+        ...base,
+        bedrock_model_rate_limit_enabled: false,
+        bedrock_model_limits: '{"friendly":{}}',
+      }).success
+    ).toBe(true)
+    expect(
+      channelFormSchema.safeParse({
+        ...base,
+        bedrock_model_rate_limit_enabled: true,
+        bedrock_model_limits: '{}',
+      }).success
+    ).toBe(true)
+  })
+})

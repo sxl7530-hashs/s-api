@@ -1,6 +1,7 @@
 package model_setting
 
 import (
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -24,26 +25,152 @@ type ChannelNameDisplaySettings struct {
 }
 
 type Claude5CompatSettings struct {
-	Enabled                   bool                   `json:"enabled"`
-	TargetModels              []string               `json:"target_models"`
-	TargetRegions             []string               `json:"target_regions"`
-	ApplyToPassthroughUsers   bool                   `json:"apply_to_passthrough_users"`
-	AttributionMode           string                 `json:"attribution_mode"`
-	ForgeVersion              string                 `json:"forge_version"`
-	ThinkingBindingRecover    bool                   `json:"thinking_binding_recover"`
-	ThinkingDisabledMap       bool                   `json:"thinking_disabled_map"`
-	ThinkingEnabledMap        bool                   `json:"thinking_enabled_map"`
-	ThinkingBudgetEffortTable []ThinkingBudgetEffort `json:"thinking_budget_effort_table"`
-	ThinkingDisplayNormalize  bool                   `json:"thinking_display_normalize"`
-	DisplayDefault            string                 `json:"display_default"`
-	DropTemperature           bool                   `json:"drop_temperature"`
-	CleanEmptySystem          bool                   `json:"clean_empty_system"`
-	FixToolResultCacheControl bool                   `json:"fix_tool_result_cache_control"`
-	StripContextManagement    bool                   `json:"strip_context_management"`
-	StripOutputConfig         bool                   `json:"strip_output_config"`
-	StripContainerFields      bool                   `json:"strip_container_fields"`
-	MapToolChoiceAuto         bool                   `json:"map_tool_choice_auto"`
-	StripUnsupportedWebSearch bool                   `json:"strip_unsupported_web_search"`
+	ControlPercent            int                        `json:"control_percent"`
+	FingerprintStatuses       []Claude5FingerprintStatus `json:"fingerprint_statuses"`
+	AuditSamplePercent        *int                       `json:"audit_sample_percent,omitempty"`
+	Enabled                   bool                       `json:"enabled"`
+	TargetModels              []string                   `json:"target_models"`
+	TargetRegions             []string                   `json:"target_regions"`
+	ApplyToPassthroughUsers   bool                       `json:"apply_to_passthrough_users"`
+	AttributionMode           string                     `json:"attribution_mode"`
+	ForgeVersion              string                     `json:"forge_version"`
+	FingerprintPolicy         string                     `json:"fingerprint_policy"`
+	ThinkingBindingRecover    bool                       `json:"thinking_binding_recover"`
+	BlockBindingWrite         bool                       `json:"block_binding_write"`
+	ThinkingDisabledMap       bool                       `json:"thinking_disabled_map"`
+	ThinkingEnabledMap        bool                       `json:"thinking_enabled_map"`
+	ThinkingBudgetEffortTable []ThinkingBudgetEffort     `json:"thinking_budget_effort_table"`
+	ThinkingDisplayNormalize  bool                       `json:"thinking_display_normalize"`
+	DisplayDefault            string                     `json:"display_default"`
+	DropTemperature           bool                       `json:"drop_temperature"`
+	CleanEmptySystem          bool                       `json:"clean_empty_system"`
+	FixToolResultCacheControl bool                       `json:"fix_tool_result_cache_control"`
+	StripContextManagement    bool                       `json:"strip_context_management"`
+	StripOutputConfig         bool                       `json:"strip_output_config"`
+	OutputConfigPolicy        string                     `json:"output_config_policy"`
+	BetaCapabilities          []Claude5BetaCapability    `json:"beta_capabilities"`
+	CapabilityTableVersion    string                     `json:"capability_table_version"`
+	StripContainerFields      bool                       `json:"strip_container_fields"`
+	MapToolChoiceAuto         bool                       `json:"map_tool_choice_auto"`
+	StripUnsupportedWebSearch bool                       `json:"strip_unsupported_web_search"`
+}
+
+// Fingerprint conclusions are administrator-reviewed results, never inferred
+// from a generic upstream 400 or changed on the customer request path.
+type Claude5FingerprintStatus struct {
+	Model  string `json:"model"`
+	Region string `json:"region"`
+	Status string `json:"status"`
+}
+
+type Claude5BetaCapability struct {
+	Model  string `json:"model"`
+	Region string `json:"region"`
+	Beta   string `json:"beta"`
+	Status string `json:"status"`           // allow | deny
+	Source string `json:"source,omitempty"` // admin (default) | static
+}
+
+// ValidateClaude5CompatSettings is shared by option saves and request snapshots.
+// Runtime callers bypass this validation entirely when the feature is disabled.
+func ValidateClaude5CompatSettings(s Claude5CompatSettings) error {
+	invalid := func() error { return common.NewMessage("Invalid parameters") }
+	if s.ControlPercent < 0 || s.ControlPercent > 100 || len(s.FingerprintStatuses) > 1000 {
+		return invalid()
+	}
+	seenStatuses := make(map[string]bool)
+	for _, entry := range s.FingerprintStatuses {
+		key := entry.Model + "\x00" + strings.ToLower(entry.Region)
+		if strings.TrimSpace(entry.Model) == "" || len(entry.Model) > 256 || strings.TrimSpace(entry.Region) == "" || len(entry.Region) > 64 || seenStatuses[key] {
+			return invalid()
+		}
+		switch entry.Status {
+		case "unknown", "preserve_verified", "preserve_rejected", "remove_verified", "unavailable":
+		default:
+			return invalid()
+		}
+		seenStatuses[key] = true
+	}
+	if s.AuditSamplePercent != nil && (*s.AuditSamplePercent < 0 || *s.AuditSamplePercent > 100) {
+		return invalid()
+	}
+	if s.AttributionMode != "" && s.AttributionMode != "off" && s.AttributionMode != "remove" && s.AttributionMode != "forge" {
+		return invalid()
+	}
+	if s.AttributionMode != "" && s.AttributionMode != "off" && !s.ThinkingBindingRecover {
+		return common.NewMessage("Attribution processing requires thinking binding recovery")
+	}
+	if s.FingerprintPolicy != "" && s.FingerprintPolicy != "preserve" && s.FingerprintPolicy != "remove" && s.FingerprintPolicy != "keep_original" {
+		return invalid()
+	}
+	if s.AttributionMode == "forge" && s.FingerprintPolicy == "keep_original" {
+		return invalid()
+	}
+	policy := s.OutputConfigPolicy
+	if policy == "" {
+		if s.StripOutputConfig {
+			policy = "strip_all"
+		} else {
+			policy = "none"
+		}
+	}
+	if policy != "none" && policy != "strip_all" && policy != "keep_effort_only" {
+		return invalid()
+	}
+	if s.StripOutputConfig && policy != "strip_all" {
+		return invalid()
+	}
+	if s.ThinkingEnabledMap && policy != "keep_effort_only" {
+		return common.NewMessage("Enabled thinking mapping requires keep_effort_only output policy")
+	}
+	if s.DisplayDefault != "" && s.DisplayDefault != "summarized" && s.DisplayDefault != "omitted" {
+		return invalid()
+	}
+	if s.ForgeVersion != "" {
+		parts := strings.Split(s.ForgeVersion, ".")
+		if len(parts) != 3 {
+			return invalid()
+		}
+		for _, part := range parts {
+			if len(part) == 0 || len(part) > 9 || (len(part) > 1 && part[0] == '0') {
+				return invalid()
+			}
+			for _, digit := range part {
+				if digit < '0' || digit > '9' {
+					return invalid()
+				}
+			}
+		}
+	}
+	if len(s.TargetModels) > 100 || len(s.TargetRegions) > 50 || len(s.ThinkingBudgetEffortTable) > 20 || len(s.BetaCapabilities) > 1000 || len(s.CapabilityTableVersion) > 64 {
+		return invalid()
+	}
+	for _, pattern := range s.TargetModels {
+		if strings.TrimSpace(pattern) == "" || len(pattern) > 256 {
+			return invalid()
+		}
+		if _, err := path.Match(strings.TrimSpace(pattern), ""); err != nil {
+			return invalid()
+		}
+	}
+	for _, region := range s.TargetRegions {
+		if strings.TrimSpace(region) == "" || len(region) > 64 {
+			return invalid()
+		}
+	}
+	for _, entry := range s.BetaCapabilities {
+		if strings.TrimSpace(entry.Model) == "" || len(entry.Model) > 256 || strings.TrimSpace(entry.Region) == "" || len(entry.Region) > 64 || entry.Beta != "thinking-binding-controls-2026-08-01" || (entry.Status != "allow" && entry.Status != "deny") || (entry.Source != "" && entry.Source != "admin" && entry.Source != "static") {
+			return invalid()
+		}
+	}
+	previousBudget := 0
+	for _, entry := range s.ThinkingBudgetEffortTable {
+		if entry.MaxBudget <= previousBudget || int64(entry.MaxBudget) > 1<<53-1 || (entry.Effort != "low" && entry.Effort != "medium" && entry.Effort != "high") {
+			return invalid()
+		}
+		previousBudget = entry.MaxBudget
+	}
+	return nil
 }
 
 type ThinkingBudgetEffort struct {
@@ -152,9 +279,15 @@ func GetClaude5CompatSettings() Claude5CompatSettings {
 	if !settings.Enabled {
 		return settings
 	}
+	if settings.AuditSamplePercent != nil {
+		value := *settings.AuditSamplePercent
+		settings.AuditSamplePercent = &value
+	}
 	settings.TargetModels = append([]string(nil), settings.TargetModels...)
 	settings.TargetRegions = append([]string(nil), settings.TargetRegions...)
 	settings.ThinkingBudgetEffortTable = append([]ThinkingBudgetEffort(nil), settings.ThinkingBudgetEffortTable...)
+	settings.FingerprintStatuses = append([]Claude5FingerprintStatus(nil), settings.FingerprintStatuses...)
+	settings.BetaCapabilities = append([]Claude5BetaCapability(nil), settings.BetaCapabilities...)
 	return settings
 }
 

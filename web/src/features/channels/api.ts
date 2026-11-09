@@ -155,6 +155,23 @@ export async function getChannelUsage(
   return res.data
 }
 
+export async function previewBedrockQuotas(
+  draft: {
+    channel_id?: number
+    proxy: string
+    key?: string
+    models: string
+    model_mapping: string
+  },
+  signal?: AbortSignal
+): Promise<BedrockQuotaResponse> {
+  const res = await api.post('/api/channel/bedrock/quotas/preview', draft, {
+    signal,
+    timeout: 60_000,
+  })
+  return res.data
+}
+
 export async function getBedrockQuotas(
   channelId: number
 ): Promise<BedrockQuotaResponse> {
@@ -183,9 +200,7 @@ export async function getChannel(id: number): Promise<GetChannelResponse> {
   return res.data
 }
 
-export async function getChannelCostRatioHistory(
-  id: number
-): Promise<{
+export async function getChannelCostRatioHistory(id: number): Promise<{
   success: boolean
   message?: string
   data?: ChannelCostRatioHistory[]

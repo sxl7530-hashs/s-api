@@ -42,6 +42,41 @@ export type Claude5CompatStats = {
   requests: number
   rows: { model: string; rule: string; requests: number }[]
   buckets: { start: number; requests: number }[]
+  rule_states?: {
+    model: string
+    rule: string
+    evaluated: number
+    matched: number
+    changed: number
+    skipped: number
+  }[]
+  cohorts?: {
+    model: string
+    region: string
+    cohort: string
+    requests: number
+    successes: number
+    failures: number
+    upstream_4xx: number
+    upstream_5xx: number
+    upstream_known: number
+    retried: number
+    retries: number
+    ttfb_samples: number
+    ttfb_p50_ms: number | null
+    ttfb_p95_ms: number | null
+    streams: number
+    stream_known: number
+    interrupted: number
+    sample_min: number
+    sample_max: number
+  }[]
+  combinations?: {
+    model: string
+    output_config_policy: string
+    thinking_enabled_map: boolean
+    requests: number
+  }[]
 }
 
 export async function getClaude5CompatStats(signal?: AbortSignal) {

@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"net/http/httptest"
 	"os"
@@ -296,7 +298,23 @@ func TestBedrockSharedRedisScripts(t *testing.T) {
 	first := redis.NewClient(&redis.Options{Addr: addr})
 	second := redis.NewClient(&redis.Options{Addr: addr})
 	key := "bedrock:test:{" + common.GetUUID() + "}"
-	modelKey, actualKey := key+":model", key+":actual"
+	// Independent instances can receive different aliases for the same AWS
+	// target. They must resolve to the same atomic Redis model bucket.
+	canonical := "global.anthropic.claude-sonnet-4-6"
+	modelKeys := make([]string, 0, 2)
+	for _, alias := range []string{"claude-sonnet-4-6", canonical} {
+		resolved, err := ResolveBedrockModelLimits(&dto.BedrockProtectionSettings{
+			ModelRateLimitEnabled: true,
+			ModelLimits:           map[string]dto.BedrockModelLimit{alias: {RPM: 1, TPM: 100}},
+		}, map[string]string{"claude-sonnet-4-6": canonical}, "us-east-1")
+		require.NoError(t, err)
+		require.Contains(t, resolved.ModelLimits, canonical)
+		for target := range resolved.ModelLimits {
+			modelKeys = append(modelKeys, fmt.Sprintf("%s:model:%x", key, sha256.Sum256([]byte(target))))
+		}
+	}
+	require.Equal(t, modelKeys[0], modelKeys[1])
+	modelKey, actualKey := modelKeys[0], key+":actual"
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Second)
 		defer cleanupCancel()

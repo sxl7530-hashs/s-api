@@ -98,4 +98,129 @@ describe('Bedrock compatibility settings', () => {
     await user.click(screen.getByRole('button', { name: 'Delete' }))
     expect(savedSettings().thinking_budget_effort_table).toEqual([])
   })
+  test('keeps experimental binding writes off and invalidates temporary denials only through saved settings', async () => {
+    render(
+      <SettingsFixture initial='{"beta_capabilities":[{"model":"target","region":"us-east-1","beta":"thinking-binding-controls-2026-08-01","status":"allow"}]}' />
+    )
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'Thinking compatibility' })
+    )
+    expect(
+      screen.getByRole('switch', {
+        name: 'Write thinking block binding control',
+      })
+    ).not.toBeChecked()
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Clear temporary beta denials on save',
+      })
+    )
+    expect(savedSettings().capability_table_version).toEqual(expect.any(String))
+    expect(savedSettings().beta_capabilities).toEqual([
+      {
+        model: 'target',
+        region: 'us-east-1',
+        beta: 'thinking-binding-controls-2026-08-01',
+        status: 'allow',
+      },
+    ])
+    expect(savedSettings().enabled).toBeUndefined()
+    expect(savedSettings().block_binding_write).toBeUndefined()
+  })
+  test('edits output policy independently without silently enabling thinking conversion', async () => {
+    render(<SettingsFixture />)
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'Request field compatibility' })
+    )
+    await user.selectOptions(
+      screen.getByLabelText('Output config policy'),
+      'keep_effort_only'
+    )
+    expect(savedSettings().output_config_policy).toBe('keep_effort_only')
+    expect(savedSettings().thinking_enabled_map).toBeUndefined()
+  })
+})
+
+test('edits rollout sampling and verified capabilities without enabling compatibility', async () => {
+  render(
+    <SettingsFixture initial='{"beta_capabilities":[{"model":"target","region":"us-east-1","status":"allow","beta":"thinking-binding-controls-2026-08-01","future":"kept"}]}' />
+  )
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Rollout and audit sampling' })
+  )
+  expect(screen.getByLabelText('Unmodified control group (%)')).toHaveValue(0)
+  expect(screen.getByLabelText('Audit sample (%)')).toHaveValue(100)
+  fireEvent.change(screen.getByLabelText('Unmodified control group (%)'), {
+    target: { value: '20' },
+  })
+  fireEvent.change(screen.getByLabelText('Audit sample (%)'), {
+    target: { value: '25' },
+  })
+  expect(savedSettings().control_percent).toBe(20)
+  expect(savedSettings().audit_sample_percent).toBe(25)
+  await user.click(
+    screen.getByRole('button', { name: 'Verified beta capabilities' })
+  )
+  fireEvent.change(screen.getByLabelText('Model 1'), {
+    target: { value: 'updated-model' },
+  })
+  await user.selectOptions(screen.getByLabelText('Status 1'), 'deny')
+  expect(savedSettings().beta_capabilities).toEqual([
+    expect.objectContaining({
+      model: 'updated-model',
+      status: 'deny',
+      future: 'kept',
+    }),
+  ])
+  await user.click(screen.getByRole('button', { name: 'Add beta capability' }))
+  expect(savedSettings().beta_capabilities).toHaveLength(2)
+  await user.click(
+    screen.getAllByRole('button', { name: 'Delete' }).at(1) as HTMLElement
+  )
+  expect(savedSettings().beta_capabilities).toHaveLength(1)
+  expect(savedSettings().enabled).toBeUndefined()
+})
+
+test('records fingerprint rejection with a warning without changing forge policy', async () => {
+  render(<SettingsFixture />)
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Fingerprint review results' })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Add fingerprint review' })
+  )
+  fireEvent.change(screen.getByLabelText('Model 1'), {
+    target: { value: 'target' },
+  })
+  fireEvent.change(screen.getByLabelText('Region 1'), {
+    target: { value: 'us-east-1' },
+  })
+  await user.selectOptions(
+    screen.getByLabelText('Status 1'),
+    'preserve_rejected'
+  )
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'Fingerprint preservation was rejected'
+  )
+  expect(savedSettings().fingerprint_statuses).toEqual([
+    { model: 'target', region: 'us-east-1', status: 'preserve_rejected' },
+  ])
+  expect(savedSettings().fingerprint_policy).toBeUndefined()
+  expect(savedSettings().enabled).toBeUndefined()
 })

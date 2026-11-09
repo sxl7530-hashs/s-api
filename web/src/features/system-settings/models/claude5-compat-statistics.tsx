@@ -105,6 +105,167 @@ export function Claude5CompatStatistics() {
               )}
             </p>
           )}
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Observed logs only. Cohorts may differ in traffic mix; results do not prove causation. Missing upstream, stream or timing observations remain unknown.'
+            )}
+          </p>
+          {(query.data.cohorts?.length ?? 0) > 0 && (
+            <StaticDataTable
+              data={query.data.cohorts ?? []}
+              getRowKey={(row) =>
+                JSON.stringify([row.model, row.region, row.cohort])
+              }
+              columns={[
+                { id: 'model', header: t('Model'), cell: (row) => row.model },
+                {
+                  id: 'region',
+                  header: t('Region'),
+                  cell: (row) => row.region,
+                },
+                {
+                  id: 'cohort',
+                  header: t('Cohort'),
+                  cell: (row) =>
+                    row.cohort === 'control'
+                      ? t('Unmodified control')
+                      : t('Compatibility enabled'),
+                },
+                {
+                  id: 'requests',
+                  header: t('Requests'),
+                  cell: (row) => formatNumber(row.requests, locale),
+                },
+                {
+                  id: 'success',
+                  header: t('Success rate'),
+                  cell: (row) =>
+                    row.requests > 0
+                      ? `${formatNumber((row.successes * 100) / row.requests, locale)}%`
+                      : '—',
+                },
+                {
+                  id: 'failures',
+                  header: t('Failures'),
+                  cell: (row) => formatNumber(row.failures, locale),
+                },
+                {
+                  id: 'errors',
+                  header: t('Upstream 4xx / 5xx'),
+                  cell: (row) =>
+                    `${formatNumber(row.upstream_4xx, locale)} / ${formatNumber(row.upstream_5xx, locale)}`,
+                },
+                {
+                  id: 'known',
+                  header: t('Measured upstream requests'),
+                  cell: (row) => formatNumber(row.upstream_known, locale),
+                },
+                {
+                  id: 'retry',
+                  header: t('Retried requests / retries'),
+                  cell: (row) =>
+                    `${formatNumber(row.retried, locale)} / ${formatNumber(row.retries, locale)}`,
+                },
+                {
+                  id: 'ttfb',
+                  header: t('TTFB P50 / P95 (ms)'),
+                  cell: (row) =>
+                    row.ttfb_p50_ms !== null && row.ttfb_p95_ms !== null
+                      ? `${formatNumber(row.ttfb_p50_ms, locale)} / ${formatNumber(row.ttfb_p95_ms, locale)}`
+                      : '—',
+                },
+                {
+                  id: 'timings',
+                  header: t('Timing samples'),
+                  cell: (row) => formatNumber(row.ttfb_samples, locale),
+                },
+                {
+                  id: 'streams',
+                  header: t('Streams'),
+                  cell: (row) => formatNumber(row.streams, locale),
+                },
+                {
+                  id: 'interrupted',
+                  header: t('Interrupted / measured streams'),
+                  cell: (row) =>
+                    `${formatNumber(row.interrupted, locale)} / ${formatNumber(row.stream_known, locale)}`,
+                },
+                {
+                  id: 'sample',
+                  header: t('Audit sample (%)'),
+                  cell: (row) =>
+                    `${formatNumber(row.sample_min, locale)}–${formatNumber(row.sample_max, locale)}`,
+                },
+              ]}
+            />
+          )}
+          {(query.data.rule_states?.length ?? 0) > 0 && (
+            <StaticDataTable
+              data={query.data.rule_states ?? []}
+              getRowKey={(row) => JSON.stringify([row.model, row.rule])}
+              columns={[
+                { id: 'model', header: t('Model'), cell: (row) => row.model },
+                {
+                  id: 'rule',
+                  header: t('Compatibility rule'),
+                  cell: (row) => (
+                    <code className='text-xs break-all'>{row.rule}</code>
+                  ),
+                },
+                {
+                  id: 'evaluated',
+                  header: t('Evaluated'),
+                  cell: (row) => formatNumber(row.evaluated, locale),
+                },
+                {
+                  id: 'matched',
+                  header: t('Matched'),
+                  cell: (row) => formatNumber(row.matched, locale),
+                },
+                {
+                  id: 'changed',
+                  header: t('Body changed'),
+                  cell: (row) => formatNumber(row.changed, locale),
+                },
+                {
+                  id: 'skipped',
+                  header: t('Skipped'),
+                  cell: (row) => formatNumber(row.skipped, locale),
+                },
+              ]}
+            />
+          )}
+          {(query.data.combinations?.length ?? 0) > 0 && (
+            <StaticDataTable
+              data={query.data.combinations ?? []}
+              getRowKey={(row) =>
+                JSON.stringify([
+                  row.model,
+                  row.output_config_policy,
+                  row.thinking_enabled_map,
+                ])
+              }
+              columns={[
+                { id: 'model', header: t('Model'), cell: (row) => row.model },
+                {
+                  id: 'policy',
+                  header: t('Output config policy'),
+                  cell: (row) => row.output_config_policy,
+                },
+                {
+                  id: 'thinking',
+                  header: t('Map enabled thinking to adaptive'),
+                  cell: (row) =>
+                    row.thinking_enabled_map ? t('On') : t('Off'),
+                },
+                {
+                  id: 'requests',
+                  header: t('Requests'),
+                  cell: (row) => formatNumber(row.requests, locale),
+                },
+              ]}
+            />
+          )}
           <StaticDataTable
             data={query.data.rows}
             columns={columns}

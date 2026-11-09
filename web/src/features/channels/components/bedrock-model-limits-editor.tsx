@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Plus, Trash2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -30,10 +30,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
+
+import type { BedrockModelQuota } from '../types'
 
 type ModelLimit = {
   rpm?: number
   tpm?: number
+  resolved_model?: string
+  quota_region?: string
 }
 
 type ModelLimitRow = {
@@ -41,6 +47,9 @@ type ModelLimitRow = {
   model: string
   rpm: string
   tpm: string
+  rpmEdited?: boolean
+  tpmEdited?: boolean
+  metadata?: Pick<ModelLimit, 'resolved_model' | 'quota_region'>
 }
 
 type BedrockModelLimitsEditorProps = {
@@ -48,6 +57,9 @@ type BedrockModelLimitsEditorProps = {
   models: string[]
   onChange: (value: string) => void
   disabled: boolean
+  quotas?: BedrockModelQuota[]
+  quotaRegion?: string
+  loadingQuotas?: boolean
 }
 
 function parseModelLimitRows(value: string): ModelLimitRow[] {
@@ -66,6 +78,12 @@ function parseModelLimitRows(value: string): ModelLimitRow[] {
         {
           id,
           model,
+          rpmEdited: true,
+          tpmEdited: true,
+          metadata: {
+            resolved_model: values.resolved_model,
+            quota_region: values.quota_region,
+          },
           rpm: values.rpm === undefined ? '' : String(values.rpm),
           tpm: values.tpm === undefined ? '' : String(values.tpm),
         },
@@ -82,16 +100,17 @@ function serializeModelLimitRows(rows: ModelLimitRow[]): string {
     const model = row.model.trim()
     if (!model) continue
 
-    const limit: ModelLimit = {}
+    const limit: ModelLimit = { ...row.metadata }
     if (row.rpm !== '') limit.rpm = Number(row.rpm)
     if (row.tpm !== '') limit.tpm = Number(row.tpm)
-    if (Object.keys(limit).length > 0) limits[model] = limit
+    limits[model] = limit
   }
   return JSON.stringify(limits, null, 2)
 }
 
 export function BedrockModelLimitsEditor(props: BedrockModelLimitsEditorProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const nextId = useRef(parseModelLimitRows(props.value).length)
   const lastEmittedValue = useRef(props.value)
   const [rows, setRows] = useState(() => parseModelLimitRows(props.value))
@@ -107,12 +126,54 @@ export function BedrockModelLimitsEditor(props: BedrockModelLimitsEditorProps) {
   const usedModels = new Set(rows.map((row) => row.model).filter(Boolean))
   const availableModels = [...new Set([...props.models, ...usedModels])]
 
-  const updateRows = (nextRows: ModelLimitRow[]) => {
-    setRows(nextRows)
-    const value = serializeModelLimitRows(nextRows)
-    lastEmittedValue.current = value
-    props.onChange(value)
-  }
+  const onChange = props.onChange
+  const updateRows = useCallback(
+    (nextRows: ModelLimitRow[]) => {
+      setRows(nextRows)
+      const value = serializeModelLimitRows(nextRows)
+      lastEmittedValue.current = value
+      onChange(value)
+    },
+    [onChange]
+  )
+
+  useEffect(() => {
+    if (!props.quotas?.length) return
+    let changed = false
+    const next = rows.map((row) => {
+      const quota = props.quotas?.find(
+        (item) => item.model === row.model && item.status === 'matched'
+      )
+      if (!quota) return row
+      if (
+        row.metadata?.resolved_model &&
+        (row.metadata.resolved_model !== quota.target ||
+          row.metadata.quota_region !== props.quotaRegion)
+      ) {
+        return row
+      }
+      const rpm =
+        !row.rpmEdited && row.rpm === '' && quota.rpm && quota.rpm > 0
+          ? String(quota.rpm)
+          : row.rpm
+      const tpm =
+        !row.tpmEdited && row.tpm === '' && quota.tpm && quota.tpm > 0
+          ? String(quota.tpm)
+          : row.tpm
+      if (rpm === row.rpm && tpm === row.tpm) return row
+      changed = true
+      return {
+        ...row,
+        rpm,
+        tpm,
+        metadata: {
+          resolved_model: quota.target,
+          quota_region: props.quotaRegion,
+        },
+      }
+    })
+    if (changed) updateRows(next)
+  }, [props.quotas, props.quotaRegion, rows, updateRows])
 
   const addRow = () => {
     updateRows([...rows, { id: nextId.current++, model: '', rpm: '', tpm: '' }])
@@ -127,6 +188,7 @@ export function BedrockModelLimitsEditor(props: BedrockModelLimitsEditorProps) {
         <div />
       </div>
       {rows.map((row) => {
+        const quota = props.quotas?.find((item) => item.model === row.model)
         const rowModels = availableModels.filter(
           (model) => model === row.model || !usedModels.has(model)
         )
@@ -141,7 +203,17 @@ export function BedrockModelLimitsEditor(props: BedrockModelLimitsEditorProps) {
               onValueChange={(model) =>
                 updateRows(
                   rows.map((item) =>
-                    item.id === row.id ? { ...item, model: model ?? '' } : item
+                    item.id === row.id
+                      ? {
+                          ...item,
+                          model: model ?? '',
+                          rpm: '',
+                          tpm: '',
+                          metadata: undefined,
+                          rpmEdited: false,
+                          tpmEdited: false,
+                        }
+                      : item
                   )
                 )
               }
@@ -162,6 +234,9 @@ export function BedrockModelLimitsEditor(props: BedrockModelLimitsEditorProps) {
             <Input
               aria-label={`${t('RPM')} ${row.model || row.id + 1}`}
               type='number'
+              required={
+                !!row.model && !(Number(row.rpm) > 0 || Number(row.tpm) > 0)
+              }
               min={0}
               step={1}
               value={row.rpm}
@@ -170,7 +245,7 @@ export function BedrockModelLimitsEditor(props: BedrockModelLimitsEditorProps) {
                 updateRows(
                   rows.map((item) =>
                     item.id === row.id
-                      ? { ...item, rpm: event.target.value }
+                      ? { ...item, rpm: event.target.value, rpmEdited: true }
                       : item
                   )
                 )
@@ -179,6 +254,9 @@ export function BedrockModelLimitsEditor(props: BedrockModelLimitsEditorProps) {
             <Input
               aria-label={`${t('TPM')} ${row.model || row.id + 1}`}
               type='number'
+              required={
+                !!row.model && !(Number(row.rpm) > 0 || Number(row.tpm) > 0)
+              }
               min={0}
               step={1}
               value={row.tpm}
@@ -187,7 +265,7 @@ export function BedrockModelLimitsEditor(props: BedrockModelLimitsEditorProps) {
                 updateRows(
                   rows.map((item) =>
                     item.id === row.id
-                      ? { ...item, tpm: event.target.value }
+                      ? { ...item, tpm: event.target.value, tpmEdited: true }
                       : item
                   )
                 )
@@ -206,6 +284,92 @@ export function BedrockModelLimitsEditor(props: BedrockModelLimitsEditorProps) {
             >
               <Trash2 aria-hidden='true' />
             </Button>
+            <div className='text-muted-foreground col-span-4 space-y-1 text-xs'>
+              {props.loadingQuotas && (
+                <span>{t('Fetching AWS quotas...')}</span>
+              )}
+              {quota && (
+                <div className='flex flex-wrap items-center gap-2'>
+                  <span className='break-all'>
+                    {t('Upstream model')}: {quota.target || '—'}
+                  </span>
+                  <span>
+                    AWS RPM:{' '}
+                    {quota.rpm === undefined
+                      ? '—'
+                      : formatNumber(quota.rpm, locale)}{' '}
+                    · TPM:{' '}
+                    {quota.tpm === undefined
+                      ? '—'
+                      : formatNumber(quota.tpm, locale)}
+                  </span>
+                  {quota.status === 'matched' ? (
+                    <Button
+                      type='button'
+                      variant='ghost'
+                      size='sm'
+                      disabled={props.disabled}
+                      onClick={() =>
+                        updateRows(
+                          rows.map((item) =>
+                            item.id === row.id
+                              ? {
+                                  ...item,
+                                  rpm:
+                                    quota.rpm && quota.rpm > 0
+                                      ? String(quota.rpm)
+                                      : '',
+                                  tpm:
+                                    quota.tpm && quota.tpm > 0
+                                      ? String(quota.tpm)
+                                      : '',
+                                  rpmEdited: false,
+                                  tpmEdited: false,
+                                  metadata: {
+                                    resolved_model: quota.target,
+                                    quota_region: props.quotaRegion,
+                                  },
+                                }
+                              : item
+                          )
+                        )
+                      }
+                    >
+                      {t('Restore AWS quotas')}
+                    </Button>
+                  ) : (
+                    <span className='text-destructive'>
+                      {quota.status === 'zero_quota'
+                        ? t(
+                            'AWS reports a zero quota. Automatic import is disabled; verify access before setting limits manually.'
+                          )
+                        : t(
+                            'No unique AWS quota match. Enter limits manually.'
+                          )}
+                    </span>
+                  )}
+                  {row.metadata?.resolved_model &&
+                    (row.metadata.resolved_model !== quota.target ||
+                      row.metadata.quota_region !== props.quotaRegion) && (
+                      <span className='text-destructive'>
+                        {t(
+                          'Model target changed. Restore quotas or reselect the model.'
+                        )}
+                      </span>
+                    )}
+                </div>
+              )}
+              {row.model &&
+                row.rpm === '' &&
+                row.tpm === '' &&
+                !props.loadingQuotas && (
+                  <span className='text-destructive'>
+                    {t(
+                      'Enter at least one positive RPM or TPM limit before saving.'
+                    )}
+                  </span>
+                )}
+            </div>
           </div>
         )
       })}

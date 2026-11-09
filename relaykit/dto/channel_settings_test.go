@@ -3,6 +3,7 @@ package dto
 import (
 	"encoding/json"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -764,6 +765,8 @@ func TestBedrockProtectionValidatesModelRampAndBackoff(t *testing.T) {
 		valid    bool
 	}{
 		{"defaults off", BedrockProtectionSettings{}, true},
+		{"import metadata", BedrockProtectionSettings{ModelRateLimitEnabled: true, ModelLimits: map[string]BedrockModelLimit{"friendly": {RPM: 120, TPM: 24000, ResolvedModel: "global.anthropic.claude-sonnet-4-6", QuotaRegion: "us-east-1"}}}, true},
+		{"oversized metadata", BedrockProtectionSettings{ModelLimits: map[string]BedrockModelLimit{"friendly": {RPM: 120, QuotaRegion: strings.Repeat("x", 65)}}}, false},
 		{"model override", BedrockProtectionSettings{ModelRateLimitEnabled: true, ModelLimits: map[string]BedrockModelLimit{"opus": {RPM: 10}}}, true},
 		{"invalid model tokens", BedrockProtectionSettings{ModelLimits: map[string]BedrockModelLimit{"opus": {TPM: -1}}}, false},
 		{"ambiguous model whitespace", BedrockProtectionSettings{ModelLimits: map[string]BedrockModelLimit{" opus": {RPM: 1}}}, false},

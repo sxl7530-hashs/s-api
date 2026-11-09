@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -89,6 +90,47 @@ func TestClaude5CompatStatisticsDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, 2, stats.Requests)
 			assert.Equal(t, []Claude5RuleHit{{Model: "a", Rule: "temperature_dropped", Requests: 2}, {Model: "b", Rule: "temperature_dropped", Requests: 1}}, stats.Rows)
 			assert.Equal(t, []Claude5RuleHitBucket{{Start: 1000, Requests: 1}, {Start: 1300}, {Start: 1600, Requests: 1}, {Start: 1900}}, stats.Buckets)
+
+			// Same request fails once and succeeds after retry. Final outcome and
+			// timing must come from the final attempt; upstream errors remain observed.
+			makeMetadata := func(cohort string, retry, status int, extra string) string {
+				return fmt.Sprintf(`{"admin_info":{"claude5_compat":{"aws_model_id":"mapped","region":"us-east-1","cohort":%q,"retry_count":%d,"upstream_status":%d,"audit_sample_percent":25,"output_config_policy":"none","rule_states":{"temperature_dropped":{"rule_evaluated":true,"rule_matched":true,"body_changed":true}},%s}}}`, cohort, retry, status, extra)
+			}
+			extraLogs := []Log{
+				{CreatedAt: 2100, RequestId: "retried", Type: LogTypeError, ModelName: "alias", IsStream: true, Other: makeMetadata("compatibility", 0, 429, `"ttfb_ms":10,"stream_interrupted":true`)},
+				{CreatedAt: 2200, RequestId: "retried", Type: LogTypeConsume, ModelName: "alias", IsStream: true, Other: makeMetadata("compatibility", 1, 200, `"ttfb_ms":250,"stream_interrupted":false`)},
+				{CreatedAt: 2300, RequestId: "missing-measurements", Type: LogTypeConsume, IsStream: true, Other: makeMetadata("compatibility", 0, 0, `"ttfb_ms":null`)},
+				{CreatedAt: 2400, RequestId: "control", Type: LogTypeError, Other: makeMetadata("control", 0, 503, `"ttfb_ms":null`)},
+			}
+			require.NoError(t, db.Create(&extraLogs).Error)
+			detailed, err := GetClaude5CompatStats(t.Context(), 2000, 2500)
+			require.NoError(t, err)
+			require.Len(t, detailed.Cohorts, 2)
+			cohort := detailed.Cohorts[0]
+			assert.Equal(t, "mapped", cohort.Model)
+			assert.Equal(t, "compatibility", cohort.Cohort)
+			assert.Equal(t, 2, cohort.Requests)
+			assert.Equal(t, 2, cohort.Successes)
+			assert.Zero(t, cohort.Failures)
+			assert.Equal(t, 1, cohort.Upstream4xx)
+			assert.Equal(t, 1, cohort.UpstreamKnown)
+			assert.Equal(t, 1, cohort.Retried)
+			assert.Equal(t, 1, cohort.Retries)
+			assert.Equal(t, 1, cohort.TTFBSamples)
+			require.NotNil(t, cohort.TTFBP95)
+			assert.Equal(t, float64(250), *cohort.TTFBP95)
+			assert.Equal(t, 2, cohort.Streams)
+			assert.Equal(t, 1, cohort.StreamKnown)
+			assert.Zero(t, cohort.Interrupted)
+			assert.Equal(t, 25, cohort.SampleMin)
+			assert.Nil(t, detailed.Cohorts[1].TTFBP50)
+			assert.Equal(t, 1, detailed.Cohorts[1].Failures)
+			assert.Equal(t, 1, detailed.Cohorts[1].Upstream5xx)
+			assert.Equal(t, []Claude5RuleCombination{{Model: "mapped", Policy: "none", Requests: 2}}, detailed.Combinations)
+			require.Len(t, detailed.RuleStates, 1)
+			assert.Equal(t, 3, detailed.RuleStates[0].Evaluated)
+			assert.Equal(t, 3, detailed.RuleStates[0].Changed)
+
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			_, err = GetClaude5CompatStats(ctx, 1000, 2000)

@@ -17,10 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { type UseFormReturn, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 
 import { DateTimePicker } from '@/components/datetime-picker'
 import { sideDrawerSwitchItemClassName } from '@/components/drawer-layout'
@@ -35,10 +34,12 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
-import { handleServerError } from '@/lib/handle-server-error'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import {
+  getServerErrorMessage,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 
-import { getBedrockQuotas } from '../api'
+import { previewBedrockQuotas } from '../api'
 import type { ChannelFormValues } from '../lib/channel-form'
 import { parseModelsString } from '../lib/model-mapping-validation'
 import type { BedrockModelQuota } from '../types'
@@ -53,38 +54,82 @@ export function BedrockAdvancedSettings(props: {
   const [quotas, setQuotas] = useState<BedrockModelQuota[]>([])
   const [quotaRegion, setQuotaRegion] = useState('')
   const [isLoadingQuotas, setIsLoadingQuotas] = useState(false)
-  const [modelEnabled, rampEnabled, backoffEnabled, models] = useWatch({
+  const [quotaError, setQuotaError] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  const [
+    modelEnabled,
+    rampEnabled,
+    backoffEnabled,
+    models,
+    proxy,
+    key,
+    mapping,
+  ] = useWatch({
     control: props.form.control,
     name: [
       'bedrock_model_rate_limit_enabled',
       'bedrock_ramp_up_enabled',
       'bedrock_retry_backoff_enabled',
       'models',
+      'proxy',
+      'key',
+      'model_mapping',
     ],
   })
 
-  const handleFetchQuotas = async () => {
-    if (!props.channelId) return
-    if (!props.form.getValues('proxy')?.trim()) {
-      toast.error(
-        t('Please fill in the channel proxy before querying AWS quotas')
-      )
+  useEffect(() => {
+    setQuotas([])
+    setQuotaRegion('')
+    setQuotaError('')
+    setIsLoadingQuotas(false)
+    if (!modelEnabled || props.disabled || !proxy?.trim() || !models?.trim()) {
       return
     }
+    if (!props.channelId && !key?.trim()) return
+    const controller = new AbortController()
     setIsLoadingQuotas(true)
-    try {
-      const response = requireServerSuccess(
-        await getBedrockQuotas(props.channelId)
-      )
-      setQuotas(response.data.models)
-      setQuotaRegion(response.data.region)
-      toast.success(t('Fetched successfully'))
-    } catch (error) {
-      handleServerError(error, t('Failed to query AWS quotas'))
-    } finally {
-      setIsLoadingQuotas(false)
+    const timer = setTimeout(async () => {
+      try {
+        const response = requireServerSuccess(
+          await previewBedrockQuotas(
+            {
+              channel_id: props.channelId || undefined,
+              proxy: proxy.trim(),
+              key: key?.trim() || undefined,
+              models,
+              model_mapping: mapping || '{}',
+            },
+            controller.signal
+          )
+        )
+        if (controller.signal.aborted) return
+        setQuotas(response.data.models)
+        setQuotaRegion(response.data.region)
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setQuotaError(
+            getServerErrorMessage(error, t('Failed to query AWS quotas'))
+          )
+        }
+      } finally {
+        if (!controller.signal.aborted) setIsLoadingQuotas(false)
+      }
+    }, 400)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
     }
-  }
+  }, [
+    modelEnabled,
+    props.disabled,
+    props.channelId,
+    proxy,
+    key,
+    models,
+    mapping,
+    refresh,
+    t,
+  ])
 
   return (
     <div className='space-y-4'>
@@ -94,7 +139,7 @@ export function BedrockAdvancedSettings(props: {
             'bedrock_model_rate_limit_enabled',
             t('Bedrock model rate limits'),
             t(
-              'Use mapped upstream model names. Model limits apply in addition to the channel ceiling; unlisted models use channel limits.'
+              'Select channel models to import AWS quotas through the proxy. Limits remain editable and apply to their mapped upstream models.'
             ),
           ],
           [
@@ -162,6 +207,9 @@ export function BedrockAdvancedSettings(props: {
                   models={parseModelsString(models || '')}
                   onChange={field.onChange}
                   disabled={props.disabled}
+                  quotas={quotas}
+                  quotaRegion={quotaRegion}
+                  loadingQuotas={isLoadingQuotas}
                 />
               </FormControl>
               <FormMessage />
@@ -170,23 +218,21 @@ export function BedrockAdvancedSettings(props: {
         />
       )}
 
-      {props.channelId && (
-        <div className='border-border/60 space-y-3 rounded-md border p-3'>
-          <div className='flex items-start justify-between gap-3'>
-            <div className='space-y-0.5'>
-              <div className='text-sm font-medium'>{t('AWS model quotas')}</div>
-              <p className='text-muted-foreground text-xs'>
-                {t(
-                  'Read-only RPM and TPM quotas from AWS Service Quotas through this channel proxy.'
-                )}
-              </p>
-            </div>
+      {modelEnabled && (
+        <div className='border-border/60 space-y-2 rounded-md border p-3'>
+          <div className='flex items-center justify-between gap-3'>
+            <div className='text-sm font-medium'>{t('AWS model quotas')}</div>
             <Button
               type='button'
               variant='outline'
               size='sm'
-              onClick={handleFetchQuotas}
-              disabled={props.disabled || isLoadingQuotas}
+              onClick={() => setRefresh((value) => value + 1)}
+              disabled={
+                props.disabled ||
+                isLoadingQuotas ||
+                !proxy?.trim() ||
+                (!props.channelId && !key?.trim())
+              }
             >
               <RefreshCw
                 className={
@@ -194,37 +240,33 @@ export function BedrockAdvancedSettings(props: {
                 }
                 aria-hidden='true'
               />
-              {isLoadingQuotas ? t('Fetching...') : t('Fetch')}
+              {isLoadingQuotas ? t('Fetching...') : t('Refresh')}
             </Button>
           </div>
-          {quotas.length > 0 && (
-            <div className='overflow-x-auto'>
-              <table className='w-full text-sm'>
-                <thead>
-                  <tr className='text-muted-foreground border-b text-left text-xs'>
-                    <th className='py-2 pr-3 font-medium'>{t('Model')}</th>
-                    <th className='py-2 pr-3 font-medium'>{t('RPM')}</th>
-                    <th className='py-2 font-medium'>{t('TPM')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {quotas.map((quota) => (
-                    <tr key={quota.model} className='border-b last:border-0'>
-                      <td className='py-2 pr-3 font-mono text-xs'>
-                        {quota.model}
-                      </td>
-                      <td className='py-2 pr-3 tabular-nums'>
-                        {quota.rpm ?? '—'}
-                      </td>
-                      <td className='py-2 tabular-nums'>{quota.tpm ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className='text-muted-foreground mt-2 text-xs'>
-                {t('AWS region')}: {quotaRegion}
-              </p>
-            </div>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'AWS quotas fill empty limits only. Refresh preserves manual values; restore quotas explicitly to replace them.'
+            )}
+          </p>
+          {!proxy?.trim() && (
+            <p role='status' className='text-destructive text-xs'>
+              {t('Please fill in the channel proxy before querying AWS quotas')}
+            </p>
+          )}
+          {!props.channelId && !key?.trim() && (
+            <p role='status' className='text-muted-foreground text-xs'>
+              {t('Enter AWS credentials before querying quotas.')}
+            </p>
+          )}
+          {quotaError && (
+            <p role='alert' className='text-destructive text-xs break-words'>
+              {quotaError}
+            </p>
+          )}
+          {quotaRegion && (
+            <p className='text-muted-foreground text-xs'>
+              {t('AWS region')}: {quotaRegion}
+            </p>
           )}
         </div>
       )}

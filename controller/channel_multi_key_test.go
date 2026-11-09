@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -126,4 +127,101 @@ func TestMultiKeyEnableRestoresOnlyExhaustedChannels(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestBedrockQuotaUpdateValidatesStoredRegionWithoutReplacingSecret(t *testing.T) {
+	setupTaskPluginBindChannelTest(t)
+	setting := `{"bedrock_protection":{"model_rate_limit_enabled":true,"model_limits":{"friendly":{"rpm":120,"resolved_model":"global.anthropic.claude-sonnet-4-6","quota_region":"us-east-1"}}}}`
+	mapping := `{"friendly":"global.anthropic.claude-sonnet-4-6"}`
+	channel := model.Channel{Type: 33, Status: common.ChannelStatusEnabled, Name: "aws-quota", Models: "friendly", Group: "default", Key: "test-ak|test-sk|us-east-1", Setting: &setting, ModelMapping: &mapping}
+	require.NoError(t, channel.Insert())
+	for _, region := range []string{"eu-west-1", "us-east-1"} {
+		draft := strings.ReplaceAll(setting, "us-east-1", region)
+		body, err := common.Marshal(map[string]any{"id": channel.Id, "type": 33, "name": channel.Name, "models": "friendly", "group": "default", "key": "", "setting": draft, "model_mapping": mapping})
+		require.NoError(t, err)
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Set("id", 1)
+		ctx.Set("role", common.RoleRootUser)
+		ctx.Request = httptest.NewRequest(http.MethodPut, "/api/channel", bytes.NewReader(body))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		UpdateChannel(ctx)
+		if region == "eu-west-1" {
+			assert.Contains(t, recorder.Body.String(), `"success":false`)
+			assert.Contains(t, recorder.Body.String(), "region changed")
+		} else {
+			assert.Contains(t, recorder.Body.String(), `"success":true`)
+		}
+		stored, err := model.GetChannelById(channel.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, "test-ak|test-sk|us-east-1", stored.Key)
+		assert.NotContains(t, recorder.Body.String(), "test-sk")
+	}
+}
+
+func TestBedrockQuotaUpdateCannotBypassTargetValidationWithPartialPatch(t *testing.T) {
+	setupTaskPluginBindChannelTest(t)
+	setting := `{"bedrock_protection":{"model_rate_limit_enabled":true,"model_limits":{"friendly":{"rpm":120,"resolved_model":"global.anthropic.claude-sonnet-4-6","quota_region":"us-east-1"}}}}`
+	mapping := `{"friendly":"global.anthropic.claude-sonnet-4-6"}`
+	channel := model.Channel{Type: 33, Status: common.ChannelStatusEnabled, Name: "aws-quota", Models: "friendly", Group: "default", Key: "test-ak|test-sk|us-east-1", Setting: &setting, ModelMapping: &mapping}
+	require.NoError(t, channel.Insert())
+	body, err := common.Marshal(map[string]any{"id": channel.Id, "model_mapping": `{"friendly":"global.anthropic.claude-opus-4-6-v1"}`})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 1)
+	ctx.Set("role", common.RoleRootUser)
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/channel", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	UpdateChannel(ctx)
+	assert.Contains(t, recorder.Body.String(), `"success":false`)
+	assert.Contains(t, recorder.Body.String(), "target changed")
+	stored, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, mapping, stored.GetModelMapping())
+}
+
+func TestBedrockQuotaAppendValidatesExistingCredentialRegions(t *testing.T) {
+	setupTaskPluginBindChannelTest(t)
+	setting := `{"bedrock_protection":{"model_rate_limit_enabled":true,"model_limits":{"friendly":{"rpm":120,"resolved_model":"global.anthropic.claude-sonnet-4-6","quota_region":"us-east-1"}}}}`
+	mapping := `{"friendly":"global.anthropic.claude-sonnet-4-6"}`
+	channel := model.Channel{Type: 33, Status: common.ChannelStatusEnabled, Name: "aws-quota-append", Models: "friendly", Group: "default", Key: "old-ak|old-sk|eu-west-1", Setting: &setting, ModelMapping: &mapping, ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 1}}
+	require.NoError(t, channel.Insert())
+	body, err := common.Marshal(map[string]any{"id": channel.Id, "type": 33, "key_mode": "append", "key": "new-ak|new-sk|us-east-1", "setting": setting, "model_mapping": mapping})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 1)
+	ctx.Set("role", common.RoleRootUser)
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/channel", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	UpdateChannel(ctx)
+	assert.Contains(t, recorder.Body.String(), `"success":false`)
+	assert.Contains(t, recorder.Body.String(), "region changed")
+	stored, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "old-ak|old-sk|eu-west-1", stored.Key)
+}
+
+func TestBedrockQuotaPreviewDoesNotPersistDraftOrReturnCredentials(t *testing.T) {
+	setupTaskPluginBindChannelTest(t)
+	mapping := `{"friendly":"global.anthropic.claude-sonnet-4-6"}`
+	channel := model.Channel{Type: 33, Name: "aws-preview", Key: "saved-ak|saved-sk|us-east-1", Models: "friendly", ModelMapping: &mapping}
+	require.NoError(t, channel.Insert())
+	body, err := common.Marshal(map[string]any{"channel_id": channel.Id, "key": "draft-ak|draft-sk|eu-west-1", "models": "draft-model", "model_mapping": "{}", "proxy": ""})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/bedrock/quotas/preview", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	PreviewBedrockQuotas(ctx)
+	assert.Contains(t, recorder.Body.String(), "please fill in the channel proxy")
+	for _, secret := range []string{"saved-ak", "saved-sk", "draft-ak", "draft-sk"} {
+		assert.NotContains(t, recorder.Body.String(), secret)
+	}
+	stored, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, channel.Key, stored.Key)
+	assert.Equal(t, channel.Models, stored.Models)
+	assert.Equal(t, mapping, stored.GetModelMapping())
 }
