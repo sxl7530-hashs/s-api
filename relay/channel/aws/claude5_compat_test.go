@@ -18,8 +18,141 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/smithy-go"
 	"github.com/go-redis/redis/v8"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestClaude5StringSystemFinalAwsBody(t *testing.T) {
+	useClaude5Redis(t)
+	global := model_setting.GetGlobalSettings()
+	previous := global.Claude5Compat
+	t.Cleanup(func() { global.Claude5Compat = previous })
+	for _, mode := range []string{"off", "remove", "forge"} {
+		for _, clean := range []bool{false, true} {
+			for _, stream := range []bool{false, true} {
+				for _, system := range []string{"business instructions", "  x-anthropic-billing-header: cc_version=2.1.215.6d4; cc_entrypoint=cli;\nKeep business instructions.  ", ""} {
+					t.Run(fmt.Sprintf("mode=%s/clean=%v/stream=%v/system=%q", mode, clean, stream, system), func(t *testing.T) {
+						global.Claude5Compat = model_setting.Claude5CompatSettings{Enabled: true, TargetModels: []string{"*"}, AttributionMode: mode, ThinkingBindingRecover: true, BlockBindingWrite: true, ThinkingEnabledMap: true, CleanEmptySystem: clean, DropTemperature: true}
+						input := mustClaude5Raw(map[string]any{"system": system, "temperature": 0, "max_tokens": 128, "messages": []any{map[string]any{"role": "user", "content": "hello"}}})
+						c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+						info := newAwsTestRelayInfo()
+						info.ChannelType = constant.ChannelTypeAws
+						info.UpstreamModelName = "anthropic.claude-sonnet-4-6"
+						info.ApiKey = "test-access|test-secret|us-west-1"
+						info.IsStream = stream
+						info.AwsPassthroughCompatibility = true
+						a := &Adaptor{}
+						_, err := doAwsClientRequest(c, info, a, strings.NewReader(string(input)))
+						require.NoError(t, err)
+						var body []byte
+						switch request := a.AwsReq.(type) {
+						case *bedrockruntime.InvokeModelInput:
+							require.False(t, stream)
+							body = request.Body
+						case *bedrockruntime.InvokeModelWithResponseStreamInput:
+							require.True(t, stream)
+							body = request.Body
+						default:
+							t.Fatalf("unexpected operation %T", a.AwsReq)
+						}
+						var payload map[string]any
+						require.NoError(t, common.Unmarshal(body, &payload))
+						assert.Equal(t, system, payload["system"])
+						assert.NotContains(t, payload, "temperature")
+						assert.Contains(t, c.GetStringSlice(claude5CompatContextKey), "temperature_dropped")
+						value, _ := c.Get(claude5CompatAuditKey)
+						audit, ok := value.(map[string]any)
+						require.True(t, ok)
+						assert.NotContains(t, audit, "config_error")
+						assert.NotContains(t, audit, "error_code")
+						if mode != "off" {
+							assert.Equal(t, "system_string", audit["attribution_skip_reason"])
+						}
+						if clean {
+							assert.Equal(t, "system_string", audit["system_cleanup_skip_reason"])
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestClaude5FailureDiagnosticsAndAtomicRollback(t *testing.T) {
+	useClaude5Redis(t)
+	global := model_setting.GetGlobalSettings()
+	previous := global.Claude5Compat
+	t.Cleanup(func() { global.Claude5Compat = previous })
+	for _, tc := range []struct {
+		name, body, stage, code string
+		configure               func(*model_setting.Claude5CompatSettings)
+	}{
+		{"attribution invalid system", `{"system":42,"temperature":0}`, "attribution", "system_invalid_type", func(s *model_setting.Claude5CompatSettings) { s.AttributionMode = "remove" }},
+		{"system prevalidation", `{"system":false,"temperature":0}`, "system_validation", "system_invalid_type", func(s *model_setting.Claude5CompatSettings) { s.CleanEmptySystem = true }},
+		{"thinking object", `{"thinking":null,"temperature":0}`, "thinking_validation", "thinking_invalid_type", nil},
+		{"thinking type", `{"thinking":{"type":false},"temperature":0}`, "thinking_validation", "thinking_type_invalid", nil},
+		{"budget type", `{"thinking":{"type":"enabled","budget_tokens":1024.0},"temperature":0}`, "thinking_validation", "budget_not_integer", nil},
+		{"budget bound", `{"thinking":{"budget_tokens":9007199254740992},"temperature":0}`, "thinking_validation", "budget_out_of_range", nil},
+		{"adaptive type", `{"thinking":{"adaptive":null},"temperature":0}`, "thinking_validation", "adaptive_invalid_type", nil},
+		{"messages type", `{"messages":42,"temperature":0}`, "message_validation", "messages_invalid_type", nil},
+		{"messages entry", `{"messages":[null],"temperature":0}`, "message_validation", "messages_invalid_array", nil},
+		{"content entry", `{"messages":[{"content":[null]}],"temperature":0}`, "message_validation", "content_invalid_blocks", nil},
+		{"beta entry", `{"anthropic_beta":[null],"messages":[{"content":[{"type":"redacted_thinking","data":"private"}]}],"temperature":0}`, "binding_recovery", "beta_invalid_entry", nil},
+		{"binding type", `{"thinking":{"block_binding":false},"messages":[{"content":[{"type":"thinking","thinking":"private"}]}],"temperature":0}`, "binding_recovery", "binding_invalid_type", nil},
+		{"decode excludes prompt", `{"system":"private-prompt",`, "request_decode", "processing_failed", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := model_setting.Claude5CompatSettings{Enabled: true, TargetModels: []string{"*"}, DropTemperature: true, ThinkingBindingRecover: true, BlockBindingWrite: true}
+			if tc.configure != nil {
+				tc.configure(&s)
+			}
+			global.Claude5Compat = s
+			c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+			got, err := applyClaude5Compat(c, nil, "anthropic.claude-sonnet-4-6", "us-west-1", []byte(tc.body))
+			require.NoError(t, err)
+			assert.Equal(t, tc.body, string(got))
+			value, _ := c.Get(claude5CompatAuditKey)
+			audit, ok := value.(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, true, audit["config_error"])
+			assert.Equal(t, false, audit["body_changed"])
+			assert.Equal(t, tc.stage, audit["error_stage"])
+			assert.Equal(t, tc.code, audit["error_code"])
+			encoded, err := common.Marshal(audit)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), "private")
+		})
+	}
+}
+
+func TestClaude5StringSystemPreservesThinkingToolHistory(t *testing.T) {
+	useClaude5Redis(t)
+	global := model_setting.GetGlobalSettings()
+	previous := global.Claude5Compat
+	t.Cleanup(func() { global.Claude5Compat = previous })
+	global.Claude5Compat = model_setting.Claude5CompatSettings{Enabled: true, TargetModels: []string{"*"}, AttributionMode: "remove", ThinkingBindingRecover: true, BlockBindingWrite: true, ThinkingEnabledMap: true, CleanEmptySystem: true, DropTemperature: true}
+	body := []byte(`{"system":"Keep business instructions.","temperature":0,"thinking":{"type":"enabled","budget_tokens":1024},"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"private","signature":"signature"},{"type":"tool_use","id":"tool-1","name":"lookup","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"result"}]}]}`)
+	var original map[string]any
+	require.NoError(t, common.Unmarshal(body, &original))
+	for _, model := range []string{"anthropic.claude-sonnet-4-6", "anthropic.claude-opus-4-6-v1"} {
+		t.Run(model, func(t *testing.T) {
+			c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+			got, err := applyClaude5Compat(c, nil, model, "us-west-1", body)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(got, &payload))
+			assert.Equal(t, original["system"], payload["system"])
+			assert.Equal(t, original["messages"], payload["messages"])
+			assert.NotContains(t, payload, "temperature")
+			thinking, ok := payload["thinking"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, "enabled", thinking["type"])
+			assert.Equal(t, map[string]any{"prefix_mismatch_behavior": "drop_block"}, thinking["block_binding"])
+			assert.Contains(t, payload["anthropic_beta"], claude5CompatBetaName)
+			assert.NotContains(t, c.GetStringSlice(claude5CompatContextKey), "config_error")
+		})
+	}
+}
 
 func TestClaude5CompatAppliedToBothAwsOperations(t *testing.T) {
 	settings := model_setting.GetGlobalSettings()
@@ -384,7 +517,7 @@ func TestClaude5V39AtomicBoundaries(t *testing.T) {
 			s.AttributionMode = "remove"
 			s.ThinkingBindingRecover = true
 		}, unchanged: true},
-		{name: "system string rolls back", body: `{"system":"business instructions","temperature":1}`, configure: func(s *model_setting.Claude5CompatSettings) { s.CleanEmptySystem = true }, unchanged: true},
+		{name: "system string preserves independent cleaning", body: `{"system":"business instructions","temperature":1}`, configure: func(s *model_setting.Claude5CompatSettings) { s.CleanEmptySystem = true }, absent: "temperature", contains: "business instructions"},
 		{name: "missing system does not block cleaning", body: `{"temperature":1}`, absent: "temperature"},
 		{name: "duplicate attribution skips only attribution", body: `{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.215;"},{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.318;"}],"temperature":1}`, configure: func(s *model_setting.Claude5CompatSettings) {
 			s.AttributionMode = "remove"

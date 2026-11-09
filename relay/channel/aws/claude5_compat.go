@@ -98,7 +98,75 @@ func applyClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID, re
 	return result, nil
 }
 
-func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID, region string, body []byte) ([]byte, error) {
+// Diagnostics use controlled identifiers and never include request content.
+func claude5CompatErrorCode(err error) string {
+	switch err.Error() {
+	case "system must be an array":
+		return "system_invalid_type"
+	case "invalid system array":
+		return "system_invalid_array"
+	case "thinking must be an object", "invalid thinking object":
+		return "thinking_invalid_type"
+	case "thinking.type must be a string":
+		return "thinking_type_invalid"
+	case "thinking.budget_tokens must be a non-negative integer":
+		return "budget_not_integer"
+	case "thinking.budget_tokens is outside safe integer range":
+		return "budget_out_of_range"
+	case "thinking.adaptive must be an object":
+		return "adaptive_invalid_type"
+	case "messages must be an array":
+		return "messages_invalid_type"
+	case "invalid messages array":
+		return "messages_invalid_array"
+	case "message content must be a block array":
+		return "content_invalid_blocks"
+	case "invalid thinking block binding":
+		return "binding_invalid_type"
+	case "invalid prefix mismatch behavior":
+		return "binding_behavior_invalid"
+	case "invalid mismatch behavior alias":
+		return "binding_alias_invalid"
+	case "invalid anthropic_beta array":
+		return "beta_invalid_array"
+	case "invalid anthropic_beta entry":
+		return "beta_invalid_entry"
+	case "conflicting thinking display fields":
+		return "display_conflict"
+	case "output_config must be an object when mapping effort":
+		return "output_config_invalid_type"
+	case "invalid forge version":
+		return "forge_version_invalid"
+	case "unable to replace Claude attribution version":
+		return "attribution_version_replace_failed"
+	case "Claude attribution compatibility requires thinking binding recovery":
+		return "binding_required"
+	case "invalid Claude compatibility target pattern":
+		return "target_pattern_invalid"
+	case "Claude compatibility expects a JSON object":
+		return "request_invalid_type"
+	case "final Claude compatibility body is not a JSON object":
+		return "result_invalid_type"
+	default:
+		return "processing_failed"
+	}
+}
+
+func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID, region string, body []byte) (result []byte, transformErr error) {
+	stage := "configuration"
+	defer func() {
+		if c == nil || transformErr == nil {
+			return
+		}
+		value, _ := c.Get(claude5CompatAuditKey)
+		audit, _ := value.(map[string]any)
+		if audit == nil {
+			audit = make(map[string]any)
+			c.Set(claude5CompatAuditKey, audit)
+		}
+		audit["error_stage"] = stage
+		audit["error_code"] = claude5CompatErrorCode(transformErr)
+	}()
 	if c != nil {
 		c.Set(claude5CompatAuditKey, nil)
 		c.Set("claude5_compat_attribution", "")
@@ -181,6 +249,7 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 		c.Set(claude5CompatAuditKey, audit)
 	}
 
+	stage = "request_decode"
 	var request map[string]claude5JSON
 	if err := common.Unmarshal(body, &request); err != nil {
 		return nil, err
@@ -258,6 +327,7 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 			audit["version_change"] = change
 		}
 	}()
+	stage = "attribution"
 	if settings.AttributionMode == "remove" || settings.AttributionMode == "forge" {
 		states.evaluate("attribution_removed", false)
 		states.evaluate("attribution_forged", false)
@@ -285,6 +355,7 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 		}
 	}
 
+	stage = "message_validation"
 	var messages []map[string]claude5JSON
 	messagesValid := false
 	readThinkingMessages := settings.ThinkingBindingRecover
@@ -306,6 +377,7 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 			}
 		}
 	}
+	stage = "thinking_validation"
 	if settings.ThinkingDisabledMap || settings.ThinkingEnabledMap || settings.ThinkingDisplayNormalize || settings.ThinkingBindingRecover {
 		states.evaluate("thinking_disabled_mapped", false)
 		states.evaluate("thinking_enabled_mapped", false)
@@ -339,11 +411,13 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 			}
 		}
 	}
+	stage = "system_validation"
 	if (settings.AttributionMode == "remove" || settings.AttributionMode == "forge") || settings.CleanEmptySystem {
-		if rawSystem, exists := request["system"]; exists && common.GetJsonType(rawSystem) != "array" {
+		if rawSystem, exists := request["system"]; exists && common.GetJsonType(rawSystem) != "array" && common.GetJsonType(rawSystem) != "string" {
 			return nil, fmt.Errorf("system must be an array")
 		}
 	}
+	stage = "message_validation"
 	hasThinkingBlock := false
 	if messagesValid && readThinkingMessages {
 		for _, message := range messages {
@@ -365,6 +439,7 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 		}
 	}
 
+	stage = "thinking_mapping"
 	if err := applyClaude5ThinkingMapping(request, settings, modelID, &changed); err != nil {
 		return nil, err
 	}
@@ -376,6 +451,7 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 			state.Matched = hasThinkingBlock
 		}
 	}
+	stage = "binding_recovery"
 	if settings.ThinkingBindingRecover && hasThinkingBlock {
 		capability := bindingCapability
 		if capability == "" {
@@ -426,12 +502,14 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 			changed = appendUnique(changed, status)
 		}
 	}
+	stage = "output_config"
 	_, hasOutput := request["output_config"]
 	states.evaluate("output_config_stripped", hasOutput)
 	states.evaluate("output_config_normalized", hasOutput)
 	if err := applyClaude5OutputConfigPolicy(request, settings.OutputConfigPolicy, &changed); err != nil {
 		return nil, err
 	}
+	stage = "message_cleaning"
 	states.evaluate("container_fields_stripped", false)
 	states.evaluate("tool_result_cache_control_moved", false)
 	if messagesValid && readMessageFields {
@@ -489,6 +567,10 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 		}
 	}
 
+	stage = "system_cleanup"
+	if settings.CleanEmptySystem && common.GetJsonType(request["system"]) == "string" {
+		audit["system_cleanup_skip_reason"] = "system_string"
+	}
 	if err := applyClaude5FieldCleaning(request, settings, &changed, states); err != nil {
 		return nil, err
 	}
@@ -517,6 +599,7 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 		}
 		return body, nil
 	}
+	stage = "request_encode"
 	encoded, err := common.Marshal(request)
 	if err != nil {
 		return nil, err
@@ -537,6 +620,16 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 func applyClaude5Attribution(c *gin.Context, request map[string]claude5JSON, settings model_setting.Claude5CompatSettings, changed *[]string) error {
 	raw, ok := request["system"]
 	if !ok {
+		return nil
+	}
+	if common.GetJsonType(raw) == "string" {
+		if c != nil {
+			if value, ok := c.Get(claude5CompatAuditKey); ok {
+				if audit, ok := value.(map[string]any); ok {
+					audit["attribution_skip_reason"] = "system_string"
+				}
+			}
+		}
 		return nil
 	}
 	if common.GetJsonType(raw) != "array" {
@@ -1373,6 +1466,9 @@ func applyClaude5FieldCleaning(request map[string]claude5JSON, settings model_se
 func cleanClaude5System(request map[string]claude5JSON, changed *[]string) error {
 	raw, ok := request["system"]
 	if !ok {
+		return nil
+	}
+	if common.GetJsonType(raw) == "string" {
 		return nil
 	}
 	if common.GetJsonType(raw) != "array" {
