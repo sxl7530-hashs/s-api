@@ -12,7 +12,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -27,51 +29,53 @@ func TestClaude5StringSystemFinalAwsBody(t *testing.T) {
 	global := model_setting.GetGlobalSettings()
 	previous := global.Claude5Compat
 	t.Cleanup(func() { global.Claude5Compat = previous })
-	for _, mode := range []string{"off", "remove", "forge"} {
-		for _, clean := range []bool{false, true} {
-			for _, stream := range []bool{false, true} {
-				for _, system := range []string{"business instructions", "  x-anthropic-billing-header: cc_version=2.1.215.6d4; cc_entrypoint=cli;\nKeep business instructions.  ", ""} {
-					t.Run(fmt.Sprintf("mode=%s/clean=%v/stream=%v/system=%q", mode, clean, stream, system), func(t *testing.T) {
-						global.Claude5Compat = model_setting.Claude5CompatSettings{Enabled: true, TargetModels: []string{"*"}, AttributionMode: mode, ThinkingBindingRecover: true, BlockBindingWrite: true, ThinkingEnabledMap: true, CleanEmptySystem: clean, DropTemperature: true}
-						input := mustClaude5Raw(map[string]any{"system": system, "temperature": 0, "max_tokens": 128, "messages": []any{map[string]any{"role": "user", "content": "hello"}}})
-						c := newAwsTestContext(httptest.NewRecorder(), t.Context())
-						info := newAwsTestRelayInfo()
-						info.ChannelType = constant.ChannelTypeAws
-						info.UpstreamModelName = "anthropic.claude-sonnet-4-6"
-						info.ApiKey = "test-access|test-secret|us-west-1"
-						info.IsStream = stream
-						info.AwsPassthroughCompatibility = true
-						a := &Adaptor{}
-						_, err := doAwsClientRequest(c, info, a, strings.NewReader(string(input)))
-						require.NoError(t, err)
-						var body []byte
-						switch request := a.AwsReq.(type) {
-						case *bedrockruntime.InvokeModelInput:
-							require.False(t, stream)
-							body = request.Body
-						case *bedrockruntime.InvokeModelWithResponseStreamInput:
-							require.True(t, stream)
-							body = request.Body
-						default:
-							t.Fatalf("unexpected operation %T", a.AwsReq)
-						}
-						var payload map[string]any
-						require.NoError(t, common.Unmarshal(body, &payload))
-						assert.Equal(t, system, payload["system"])
-						assert.NotContains(t, payload, "temperature")
-						assert.Contains(t, c.GetStringSlice(claude5CompatContextKey), "temperature_dropped")
-						value, _ := c.Get(claude5CompatAuditKey)
-						audit, ok := value.(map[string]any)
-						require.True(t, ok)
-						assert.NotContains(t, audit, "config_error")
-						assert.NotContains(t, audit, "error_code")
-						if mode != "off" {
-							assert.Equal(t, "system_string", audit["attribution_skip_reason"])
-						}
-						if clean {
-							assert.Equal(t, "system_string", audit["system_cleanup_skip_reason"])
-						}
-					})
+	for _, compatibility := range []bool{false, true} {
+		for _, mode := range []string{"off", "remove", "forge"} {
+			for _, clean := range []bool{false, true} {
+				for _, stream := range []bool{false, true} {
+					for _, system := range []string{"business instructions", "  x-anthropic-billing-header: cc_version=2.1.215.6d4; cc_entrypoint=cli;\nKeep business instructions.  ", ""} {
+						t.Run(fmt.Sprintf("compat=%v/mode=%s/clean=%v/stream=%v/system=%q", compatibility, mode, clean, stream, system), func(t *testing.T) {
+							global.Claude5Compat = model_setting.Claude5CompatSettings{Enabled: true, TargetModels: []string{"*"}, AttributionMode: mode, ThinkingBindingRecover: true, BlockBindingWrite: true, ThinkingEnabledMap: true, CleanEmptySystem: clean, DropTemperature: true}
+							input := mustClaude5Raw(map[string]any{"system": system, "temperature": 0, "max_tokens": 128, "messages": []any{map[string]any{"role": "user", "content": "hello"}}})
+							c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+							info := newAwsTestRelayInfo()
+							info.ChannelType = constant.ChannelTypeAws
+							info.UpstreamModelName = "anthropic.claude-sonnet-4-6"
+							info.ApiKey = "test-access|test-secret|us-west-1"
+							info.IsStream = stream
+							info.AwsPassthroughCompatibility = compatibility
+							a := &Adaptor{}
+							_, err := doAwsClientRequest(c, info, a, strings.NewReader(string(input)))
+							require.NoError(t, err)
+							var body []byte
+							switch request := a.AwsReq.(type) {
+							case *bedrockruntime.InvokeModelInput:
+								require.False(t, stream)
+								body = request.Body
+							case *bedrockruntime.InvokeModelWithResponseStreamInput:
+								require.True(t, stream)
+								body = request.Body
+							default:
+								t.Fatalf("unexpected operation %T", a.AwsReq)
+							}
+							var payload map[string]any
+							require.NoError(t, common.Unmarshal(body, &payload))
+							assert.Equal(t, system, payload["system"])
+							assert.NotContains(t, payload, "temperature")
+							assert.Contains(t, c.GetStringSlice(claude5CompatContextKey), "temperature_dropped")
+							value, _ := c.Get(claude5CompatAuditKey)
+							audit, ok := value.(map[string]any)
+							require.True(t, ok)
+							assert.NotContains(t, audit, "config_error")
+							assert.NotContains(t, audit, "error_code")
+							if mode != "off" {
+								assert.Equal(t, "system_string", audit["attribution_skip_reason"])
+							}
+							if clean {
+								assert.Equal(t, "system_string", audit["system_cleanup_skip_reason"])
+							}
+						})
+					}
 				}
 			}
 		}
@@ -121,6 +125,22 @@ func TestClaude5FailureDiagnosticsAndAtomicRollback(t *testing.T) {
 			encoded, err := common.Marshal(audit)
 			require.NoError(t, err)
 			assert.NotContains(t, string(encoded), "private")
+			info := newAwsTestRelayInfo()
+			info.ChannelType = constant.ChannelTypeAws
+			other := model.NewLogOther()
+			service.AppendRelayLogAdminInfo(c, info, other)
+			snapshot := other.Snapshot()
+			admin, ok := snapshot["admin_info"].(map[string]any)
+			require.True(t, ok)
+			metadata, ok := admin["claude5_compat"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, tc.stage, metadata["error_stage"])
+			assert.Equal(t, tc.code, metadata["error_code"])
+			assert.NotContains(t, snapshot, "claude5_compat")
+			encoded, err = common.Marshal(snapshot)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), "private")
+
 		})
 	}
 }
