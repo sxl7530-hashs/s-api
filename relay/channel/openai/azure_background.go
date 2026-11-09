@@ -31,8 +31,10 @@ import (
 // ordinary *http.Response. A client that disconnects first gets the upstream
 // response cancelled and is billed for the usage reported at cancel time.
 const (
+	// Polls start fast so short responses return quickly, then settle at the
+	// max interval, which bounds the poll rate: concurrency / 5 GETs per second.
 	azureBgPollInitialInterval = 500 * time.Millisecond
-	azureBgPollMaxInterval     = 2 * time.Second
+	azureBgPollMaxInterval     = 5 * time.Second
 	// Must stay below the nginx proxy_read_timeout (1800s) in front of the API.
 	azureBgTotalTimeout    = 25 * time.Minute
 	azureBgCleanupTimeout  = 15 * time.Second
@@ -461,7 +463,9 @@ type azureBgStream struct {
 }
 
 func newAzureBgStream(t *azureBgTask, body io.ReadCloser) *azureBgStream {
-	return &azureBgStream{task: t, body: body, buf: make([]byte, 32*1024)}
+	// SSE lines are short and the scanner downstream buffers its own reads, so
+	// a small read buffer keeps thousands of concurrent streams cheap.
+	return &azureBgStream{task: t, body: body, buf: make([]byte, 4*1024)}
 }
 
 func (s *azureBgStream) Read(p []byte) (int, error) {
