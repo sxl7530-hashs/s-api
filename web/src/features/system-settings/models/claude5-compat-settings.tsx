@@ -38,8 +38,7 @@ import { Claude5CompatStatistics } from './claude5-compat-statistics'
 type Props = { value: string; onChange: (value: string) => void }
 
 const thinkingRules = [
-  ['thinking_binding_recover', 'Recover thinking block bindings'],
-  ['thinking_disabled_map', 'Map disabled thinking to between_tools'],
+  ['thinking_disabled_map', 'Adapt disabled thinking by model'],
   ['thinking_enabled_map', 'Map enabled thinking to adaptive'],
   ['thinking_display_normalize', 'Normalize adaptive thinking display'],
 ] as const
@@ -83,8 +82,37 @@ export function Claude5CompatSettings(props: Props) {
   } catch {
     valid = false
   }
-  const update = (key: string, value: unknown) =>
-    props.onChange(JSON.stringify({ ...settings, [key]: value }, null, 2))
+  let capabilityPolicy = 'official'
+  if (settings.enabled === true || settings.thinking_binding_recover === true) {
+    capabilityPolicy = 'legacy'
+  }
+  if (
+    typeof settings.binding_capability_policy === 'string' &&
+    settings.binding_capability_policy
+  ) {
+    capabilityPolicy = settings.binding_capability_policy
+  }
+  let outputPolicy =
+    settings.strip_output_config === true ? 'strip_all' : 'none'
+  if (
+    typeof settings.output_config_policy === 'string' &&
+    settings.output_config_policy
+  ) {
+    outputPolicy = settings.output_config_policy
+  }
+  const update = (key: string, value: unknown) => {
+    const next = { ...settings, [key]: value }
+    if (key === 'output_config_policy' && 'strip_output_config' in settings) {
+      next.strip_output_config = value === 'strip_all'
+    }
+    if (
+      key !== 'binding_capability_policy' &&
+      !settings.binding_capability_policy
+    ) {
+      next.binding_capability_policy = capabilityPolicy
+    }
+    props.onChange(JSON.stringify(next, null, 2))
+  }
   const fieldDescriptions: Partial<
     Record<(typeof fieldRules)[number][0], string>
   > = {
@@ -98,6 +126,7 @@ export function Claude5CompatSettings(props: Props) {
   const rules = [...thinkingRules, ...fieldRules]
   const count =
     rules.filter(([key]) => settings[key] === true).length +
+    (settings.thinking_binding_recover === true ? 1 : 0) +
     (settings.attribution_mode === 'remove' ||
     settings.attribution_mode === 'forge'
       ? 1
@@ -174,17 +203,11 @@ export function Claude5CompatSettings(props: Props) {
                 'Separate entries with commas. Empty model list matches nothing; empty region list allows all regions.'
               )}
             </p>
-            <SettingsSwitchField
-              controlId={`${id}-direct`}
-              label={t('Apply to AWS direct passthrough users')}
-              description={t(
-                'When enabled, direct passthrough requests can be modified by the selected rules.'
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'AWS direct passthrough users always bypass compatibility rules.'
               )}
-              checked={settings.apply_to_passthrough_users === true}
-              onCheckedChange={(value) =>
-                update('apply_to_passthrough_users', value)
-              }
-            />
+            </p>
           </CompatibilityGroup>
           <CompatibilityGroup title={t('Rollout and audit sampling')}>
             {(['control_percent', 'audit_sample_percent'] as const).map(
@@ -223,13 +246,7 @@ export function Claude5CompatSettings(props: Props) {
               )}
             </p>
           </CompatibilityGroup>
-          <CompatibilityGroup title={t('Verified beta capabilities')}>
-            <Claude5CapabilitySettings
-              kind='beta'
-              value={settings.beta_capabilities}
-              onChange={(value) => update('beta_capabilities', value)}
-            />
-          </CompatibilityGroup>
+
           <CompatibilityGroup title={t('Fingerprint review results')}>
             <Claude5CapabilitySettings
               kind='fingerprint'
@@ -314,23 +331,45 @@ export function Claude5CompatSettings(props: Props) {
               )}
             </p>
           </CompatibilityGroup>
-          <CompatibilityGroup title={t('Thinking compatibility')}>
-            {thinkingRules.map(([key, label]) => (
-              <SettingsSwitchField
-                key={key}
-                controlId={`${id}-${key}`}
-                label={t(label)}
-                description={
-                  key === 'thinking_binding_recover'
-                    ? t(
-                        'Experimental. Keep disabled until the target Bedrock model is verified.'
-                      )
-                    : undefined
-                }
-                checked={settings[key] === true}
-                onCheckedChange={(value) => update(key, value)}
-              />
-            ))}
+          <CompatibilityGroup title={t('Thinking binding recovery')}>
+            <SettingsSwitchField
+              controlId={`${id}-binding-recover`}
+              label={t('Recover thinking block bindings')}
+              checked={settings.thinking_binding_recover === true}
+              onCheckedChange={(value) =>
+                update('thinking_binding_recover', value)
+              }
+            />
+            <Label htmlFor={`${id}-binding-policy`}>
+              {t('Binding capability policy')}
+            </Label>
+            <NativeSelect
+              id={`${id}-binding-policy`}
+              value={capabilityPolicy}
+              onChange={(event) =>
+                update('binding_capability_policy', event.target.value)
+              }
+            >
+              <NativeSelectOption value='official'>
+                {t('Official model capabilities')}
+              </NativeSelectOption>
+              <NativeSelectOption value='strict'>
+                {t('Explicit allowlist only')}
+              </NativeSelectOption>
+              <NativeSelectOption value='legacy'>
+                {t('Legacy compatibility')}
+              </NativeSelectOption>
+            </NativeSelect>
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Existing enabled settings retain legacy behavior. New settings use official capabilities; unknown models are not assumed supported.'
+              )}
+            </p>
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Dropping mismatched thinking blocks can reduce cache hits and increase output tokens. Corrupted signatures are not repaired.'
+              )}
+            </p>
             <SettingsSwitchField
               controlId={`${id}-binding-write`}
               label={t('Write thinking block binding control')}
@@ -370,7 +409,41 @@ export function Claude5CompatSettings(props: Props) {
             </Button>
             <p className='text-muted-foreground text-xs'>
               {t(
-                'Save settings to invalidate temporary beta denials across instances. Configure verified model and region capabilities in the JSON settings.'
+                'Save to invalidate temporary beta denials across instances. Administrator overrides take precedence over official capabilities.'
+              )}
+            </p>
+            <CompatibilityGroup title={t('Verified beta capabilities')}>
+              <Claude5CapabilitySettings
+                kind='beta'
+                value={settings.beta_capabilities}
+                onChange={(value) => update('beta_capabilities', value)}
+              />
+            </CompatibilityGroup>
+          </CompatibilityGroup>
+          <CompatibilityGroup title={t('Thinking compatibility')}>
+            {thinkingRules.map(([key, label]) => (
+              <SettingsSwitchField
+                key={key}
+                controlId={`${id}-${key}`}
+                label={t(label)}
+                checked={settings[key] === true}
+                onCheckedChange={(value) => update(key, value)}
+              />
+            ))}
+            <SettingsSwitchField
+              controlId={`${id}-thinking-downgrade`}
+              label={t('Allow thinking semantic downgrade')}
+              description={t(
+                'Allows adaptive thinking when the model cannot honor disabled thinking. This can increase latency and token usage.'
+              )}
+              checked={settings.allow_thinking_downgrade === true}
+              onCheckedChange={(value) =>
+                update('allow_thinking_downgrade', value)
+              }
+            />
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Thinking conversion follows the target model. Supported 4.6 requests and unknown models remain unchanged; client effort takes precedence.'
               )}
             </p>
             <Label htmlFor={`${id}-display`}>
@@ -481,21 +554,21 @@ export function Claude5CompatSettings(props: Props) {
                 onCheckedChange={(value) => update(key, value)}
               />
             ))}
+          </CompatibilityGroup>
+          <CompatibilityGroup title={t('Output configuration')}>
             <Label htmlFor={`${id}-output-policy`}>
               {t('Output config policy')}
             </Label>
             <NativeSelect
               id={`${id}-output-policy`}
-              value={
-                typeof settings.output_config_policy === 'string'
-                  ? settings.output_config_policy
-                  : 'none'
-              }
+              value={outputPolicy}
               onChange={(event) =>
                 update('output_config_policy', event.target.value)
               }
             >
-              <NativeSelectOption value='none'>{t('None')}</NativeSelectOption>
+              <NativeSelectOption value='none'>
+                {t('Preserve output configuration')}
+              </NativeSelectOption>
               <NativeSelectOption value='strip_all'>
                 {t('Remove all')}
               </NativeSelectOption>
@@ -503,6 +576,13 @@ export function Claude5CompatSettings(props: Props) {
                 {t('Keep effort only')}
               </NativeSelectOption>
             </NativeSelect>
+            {outputPolicy !== 'none' && (
+              <p role='alert' className='text-destructive text-xs'>
+                {t(
+                  'Removes structured output and other output configuration fields. Enable only for a verified model requirement.'
+                )}
+              </p>
+            )}
           </CompatibilityGroup>
         </fieldset>
         <Collapsible

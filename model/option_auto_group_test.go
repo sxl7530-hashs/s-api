@@ -74,7 +74,7 @@ func TestGlobalDisplayAndAwsMetricsOptionsPersistAcrossDatabaseDialects(t *testi
 				}
 			})
 			require.NoError(t, db.AutoMigrate(&Option{}))
-			compat := `{"enabled":true,"target_models":["target"],"drop_temperature":true,"control_percent":20,"audit_sample_percent":25,"fingerprint_statuses":[{"model":"target","region":"us-east-1","status":"preserve_rejected"}]}`
+			compat := `{"enabled":true,"target_models":["target"],"thinking_enabled_map":true,"output_config_policy":"none","binding_capability_policy":"official","allow_thinking_downgrade":true,"drop_temperature":true,"control_percent":20,"audit_sample_percent":25,"fingerprint_statuses":[{"model":"target","region":"us-east-1","status":"preserve_rejected"}]}`
 			mappings := `{"enabled":true,"mappings":{"sara":"Supplier 1"}}`
 			require.NoError(t, UpdateOptionsBulk(map[string]string{
 				"global.aws_usage_metrics_enabled": "true",
@@ -89,6 +89,10 @@ func TestGlobalDisplayAndAwsMetricsOptionsPersistAcrossDatabaseDialects(t *testi
 			require.NoError(t, db.Where(&Option{Key: "global.claude5_compat"}).First(&compatStored).Error)
 			assert.JSONEq(t, compat, compatStored.Value)
 			assert.True(t, modelsetting.GetClaude5CompatSettings().DropTemperature)
+			assert.True(t, modelsetting.GetClaude5CompatSettings().ThinkingEnabledMap)
+			assert.True(t, modelsetting.GetClaude5CompatSettings().AllowThinkingDowngrade)
+			assert.Equal(t, "none", modelsetting.GetClaude5CompatSettings().OutputConfigPolicy)
+			assert.Equal(t, "official", modelsetting.GetClaude5CompatSettings().BindingCapabilityPolicy)
 			assert.Equal(t, 20, modelsetting.GetClaude5CompatSettings().ControlPercent)
 			require.NotNil(t, modelsetting.GetClaude5CompatSettings().AuditSamplePercent)
 			assert.Equal(t, 25, *modelsetting.GetClaude5CompatSettings().AuditSamplePercent)
@@ -96,6 +100,8 @@ func TestGlobalDisplayAndAwsMetricsOptionsPersistAcrossDatabaseDialects(t *testi
 			require.NoError(t, UpdateOptionsBulk(map[string]string{"global.claude5_compat": `{}`}))
 			assert.False(t, modelsetting.GetClaude5CompatSettings().Enabled)
 			assert.False(t, modelsetting.GetClaude5CompatSettings().DropTemperature)
+			assert.False(t, modelsetting.GetClaude5CompatSettings().AllowThinkingDowngrade)
+			assert.Empty(t, modelsetting.GetClaude5CompatSettings().BindingCapabilityPolicy)
 			// Replacing the JSON value must remove stale map entries, not merge them.
 			updated := `{"enabled":false,"mappings":{}}`
 			require.NoError(t, UpdateOptionsBulk(map[string]string{"global.channel_name_display": updated}))
@@ -123,7 +129,7 @@ func TestValidateGlobalAwsUsageAndChannelNameDisplayOptions(t *testing.T) {
 
 func TestClaude5CompatibilityOptionValidation(t *testing.T) {
 	for _, value := range []string{
-		`{"control_percent":101}`, `{"control_percent":-1}`, `{"audit_sample_percent":101}`, `{"fingerprint_statuses":[{"model":"target","region":"us-east-1","status":"bad"}]}`, `{"fingerprint_statuses":[{"model":"target","region":"us-east-1","status":"unknown"},{"model":"target","region":"US-EAST-1","status":"remove_verified"}]}`,
+		`{"binding_capability_policy":"automatic"}`, `{"control_percent":101}`, `{"control_percent":-1}`, `{"audit_sample_percent":101}`, `{"fingerprint_statuses":[{"model":"target","region":"us-east-1","status":"bad"}]}`, `{"fingerprint_statuses":[{"model":"target","region":"us-east-1","status":"unknown"},{"model":"target","region":"US-EAST-1","status":"remove_verified"}]}`,
 		`null`, `[]`, `{"enabled":"true"}`,
 		`{"attribution_mode":"remove"}`,
 		`{"target_models":["["]}`,
@@ -139,7 +145,7 @@ func TestClaude5CompatibilityOptionValidation(t *testing.T) {
 	} {
 		assert.Error(t, validateOptionValue("global.claude5_compat", value), value)
 	}
-	for _, value := range []string{`{}`, `{"enabled":true,"drop_temperature":true}`, `{"attribution_mode":"remove","thinking_binding_recover":true}`, `{"target_models":["*claude-opus-5*"],"thinking_budget_effort_table":[{"max_budget":8000,"effort":"low"},{"max_budget":32000,"effort":"high"}]}`} {
+	for _, value := range []string{`{"thinking_enabled_map":true}`, `{"thinking_enabled_map":true,"output_config_policy":"none"}`, `{"binding_capability_policy":"official"}`, `{"binding_capability_policy":"legacy"}`, `{"binding_capability_policy":"strict"}`, `{}`, `{"enabled":true,"drop_temperature":true}`, `{"attribution_mode":"remove","thinking_binding_recover":true}`, `{"target_models":["*claude-opus-5*"],"thinking_budget_effort_table":[{"max_budget":8000,"effort":"low"},{"max_budget":32000,"effort":"high"}]}`} {
 		require.NoError(t, validateOptionValue("global.claude5_compat", value), value)
 	}
 }

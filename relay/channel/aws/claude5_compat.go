@@ -118,23 +118,16 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 	if !settings.Enabled {
 		return body, nil
 	}
-	if info != nil && info.UserSetting.AwsDirectPassthrough && !settings.ApplyToPassthroughUsers {
+	if info != nil && info.UserSetting.AwsDirectPassthrough {
 		return body, nil
 	}
 
-	// Keep the legacy field only as a migration alias.  An old configuration
-	// that combines it with thinking mapping is ambiguous and must fail open;
-	// silently choosing keep_effort_only would produce a partial conversion.
+	// An omitted output policy preserves legacy request fields. Cleanup remains
+	// independent from thinking conversion; only strip_all conflicts with it.
 	if settings.OutputConfigPolicy == "" {
+		settings.OutputConfigPolicy = "none"
 		if settings.StripOutputConfig {
-			if settings.ThinkingEnabledMap {
-				return body, fmt.Errorf("legacy strip_output_config conflicts with thinking mapping")
-			}
 			settings.OutputConfigPolicy = "strip_all"
-		} else if settings.ThinkingEnabledMap {
-			return body, fmt.Errorf("thinking mapping requires keep_effort_only output policy")
-		} else {
-			settings.OutputConfigPolicy = "none"
 		}
 	}
 	if settings.ForgeVersion == "" {
@@ -197,6 +190,7 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 	}
 
 	changed := make([]string, 0, 12)
+	bindingCapability := ""
 	states := make(claude5RuleStates)
 	for _, rule := range []struct {
 		name    string
@@ -270,8 +264,24 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 		if !settings.ThinkingBindingRecover {
 			return nil, fmt.Errorf("Claude attribution compatibility requires thinking binding recovery")
 		}
+		originalSystem := request["system"]
 		if err := applyClaude5Attribution(c, request, settings, &changed); err != nil {
 			return nil, err
+		}
+		if slices.Contains(changed, "attribution_removed") || slices.Contains(changed, "attribution_forged") {
+			// Check even the first turn, before there is thinking history. Otherwise
+			// an unavailable beta would cause different prefixes on later turns.
+			bindingCapability = claude5BetaCapabilityForRequest(c, settings, modelID, region)
+			if bindingCapability != "supported" {
+				request["system"] = originalSystem
+				changed = slices.DeleteFunc(changed, func(rule string) bool {
+					return rule == "attribution_removed" || rule == "attribution_forged"
+				})
+				changed = appendUnique(changed, "diag_attribution_skipped_binding_unavailable")
+				if c != nil {
+					c.Set("claude5_compat_version_change", nil)
+				}
+			}
 		}
 	}
 
@@ -355,7 +365,7 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 		}
 	}
 
-	if err := applyClaude5ThinkingMapping(request, settings, &changed); err != nil {
+	if err := applyClaude5ThinkingMapping(request, settings, modelID, &changed); err != nil {
 		return nil, err
 	}
 	// B2 must run before B1.  In particular, B1 must see the final thinking
@@ -367,17 +377,28 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 		}
 	}
 	if settings.ThinkingBindingRecover && hasThinkingBlock {
-		capability := claude5BetaCapabilityForRequest(c, settings, modelID, region)
+		capability := bindingCapability
+		if capability == "" {
+			capability = claude5BetaCapabilityForRequest(c, settings, modelID, region)
+		}
 		if capability == "supported" {
+			writeBinding := settings.BlockBindingWrite
+			var thinking map[string]claude5JSON
+			_ = common.Unmarshal(request["thinking"], &thinking)
+			var kind string
+			_ = common.Unmarshal(thinking["type"], &kind)
+			if kind == "between_tools" || kind == "disabled" {
+				writeBinding = false
+			}
 			if c != nil {
-				if settings.BlockBindingWrite {
+				if writeBinding {
 					c.Set("claude5_compat_b1_status", "binding_written")
 				} else {
 					c.Set("claude5_compat_b1_status", "beta_only")
 				}
 			}
 			previousBetas := request["anthropic_beta"]
-			bindingChanged, injected, err := addThinkingBindingRecovery(request, settings.BlockBindingWrite)
+			bindingChanged, injected, err := addThinkingBindingRecovery(request, writeBinding)
 			if err != nil {
 				if c != nil {
 					c.Set("claude5_compat_b1_status", "b1_type_conflict")
@@ -737,6 +758,12 @@ func parseClaude5Attribution(text string) string {
 			return "mixed"
 		}
 		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		// Known metadata values are single tokens. Whitespace or control
+		// characters inside a value can hide merged business instructions;
+		// preserve the whole block instead of deleting or rewriting it.
+		if strings.ContainsFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+			return "mixed"
+		}
 		if key != "cc_version" && key != "cc_entrypoint" {
 			return "mixed"
 		}
@@ -822,6 +849,20 @@ func addThinkingBindingRecovery(request map[string]claude5JSON, writeBinding boo
 			return false, false, fmt.Errorf("invalid thinking object")
 		}
 	}
+	if raw, exists := thinking["block_binding"]; exists {
+		var binding map[string]claude5JSON
+		if common.GetJsonType(raw) != "object" || common.Unmarshal(raw, &binding) != nil {
+			return false, false, fmt.Errorf("invalid thinking block binding")
+		}
+		for _, key := range []string{"prefix_mismatch_behavior", "mismatch_behavior"} {
+			if rawValue, exists := binding[key]; exists {
+				var value string
+				if common.Unmarshal(rawValue, &value) != nil || (value != "error" && value != "drop_block") {
+					return false, false, fmt.Errorf("invalid prefix mismatch behavior")
+				}
+			}
+		}
+	}
 	changed := false
 	if writeBinding {
 		if thinking == nil {
@@ -835,6 +876,14 @@ func addThinkingBindingRecovery(request map[string]claude5JSON, writeBinding boo
 		}
 		if binding == nil {
 			binding = make(map[string]claude5JSON)
+		}
+		if alias, ok := binding["mismatch_behavior"]; ok {
+			var value string
+			if common.Unmarshal(alias, &value) != nil || (value != "error" && value != "drop_block") {
+				return false, false, fmt.Errorf("invalid mismatch behavior alias")
+			}
+			delete(binding, "mismatch_behavior")
+			changed = true
 		}
 		if existing, ok := binding["prefix_mismatch_behavior"]; ok {
 			var value string
@@ -896,6 +945,10 @@ func claude5BetaCapabilityForRequest(c *gin.Context, settings model_setting.Clau
 		setClaude5CompatDiagnostic(c, "diag_b1_request_cancelled")
 		return "unknown"
 	}
+	if len(model_setting.GetGlobalSettings().FilterAwsBetas([]string{claude5CompatBetaName})) == 0 {
+		setClaude5CompatDiagnostic(c, "b1_skipped_beta_filtered")
+		return "unsupported"
+	}
 	adminStatus, staticStatus := "", ""
 	allowed := false
 	for _, entry := range settings.BetaCapabilities {
@@ -920,24 +973,34 @@ func claude5BetaCapabilityForRequest(c *gin.Context, settings model_setting.Clau
 	if adminStatus == "deny" {
 		return "unsupported"
 	}
+	if !allowed && staticStatus == "deny" {
+		return "unsupported"
+	}
+	policy := settings.BindingCapabilityPolicy
+	if policy == "" {
+		policy = "legacy" // Missing in pre-policy settings: preserve opt-in behavior.
+	}
+	if policy == "legacy" || (policy == "official" && claudeThinkingProfileForModel(modelID).binding) {
+		allowed = true
+	}
+	if !allowed {
+		return "unknown"
+	}
+	key := claude5BetaCapabilityKey(modelID, region, settings.CapabilityTableVersion)
+	if c != nil {
+		c.Set(claude5CompatCapabilityKey, key)
+	}
+	if denied, ok := getClaude5BetaDenyCache(key); ok && denied {
+		return "unsupported"
+	}
 	if common.RedisEnabled && common.RDB != nil {
-		key := claude5BetaCapabilityKey(modelID, region, settings.CapabilityTableVersion)
-		if c != nil {
-			c.Set(claude5CompatCapabilityKey, key)
-		}
 		if denied, ok := getClaude5BetaDenyCache(key); ok {
 			if denied {
 				return "unsupported"
 			}
-			if allowed {
-				return "supported"
-			}
-			if staticStatus == "deny" {
-				return "unsupported"
-			}
-			return "unknown"
+			return "supported"
 		}
-		ctx, cancel := context.WithTimeout(requestContext, 300*time.Millisecond)
+		ctx, cancel := context.WithTimeout(requestContext, 30*time.Millisecond)
 		value, err := common.RDB.Get(ctx, key).Result()
 		cancel()
 		if requestContext.Err() != nil {
@@ -948,29 +1011,21 @@ func claude5BetaCapabilityForRequest(c *gin.Context, settings model_setting.Clau
 			setClaude5BetaDenyCache(key, true)
 			return "unsupported"
 		} else if err != nil && err != redis.Nil {
-			setClaude5CompatDiagnostic(c, "b1_capability_read_error", "b1_skipped_redis_error")
-			return "redis_error"
+			setClaude5CompatDiagnostic(c, "b1_capability_read_error")
 		} else {
 			setClaude5BetaDenyCache(key, false)
-			// A concurrent rejection takes precedence over this earlier GET.
-			if denied, ok := getClaude5BetaDenyCache(key); ok && denied {
-				return "unsupported"
-			}
+		}
+		if denied, ok := getClaude5BetaDenyCache(key); ok && denied {
+			return "unsupported"
 		}
 	} else if !common.RedisEnabled {
 		setClaude5CompatDiagnostic(c, "diag_b1_redis_disabled")
-		return "unknown"
+		return "supported"
 	} else {
-		setClaude5CompatDiagnostic(c, "b1_capability_read_error", "b1_skipped_redis_error")
-		return "redis_error"
-	}
-	if allowed {
+		setClaude5CompatDiagnostic(c, "b1_capability_read_error")
 		return "supported"
 	}
-	if staticStatus == "deny" {
-		return "unsupported"
-	}
-	return "unknown"
+	return "supported"
 }
 
 func claude5BetaCapabilityKey(modelID, region, version string) string {
@@ -1032,21 +1087,24 @@ func recordClaude5BetaRejection(c *gin.Context, err error) {
 	region, _ := c.Get(claude5CompatRegionContextKey)
 	_, modelOK := modelID.(string)
 	_, regionOK := region.(string)
-	if !modelOK || !regionOK || !common.RedisEnabled || common.RDB == nil {
+	if !modelOK || !regionOK {
 		setClaude5CompatDiagnostic(c, "b1_capability_write_error")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
 	key := c.GetString(claude5CompatCapabilityKey)
 	if key == "" {
 		return
 	}
-	if err := common.RDB.SetNX(ctx, key, "unsupported", 24*time.Hour).Err(); err != nil {
+	setClaude5BetaDenyCache(key, true)
+	if !common.RedisEnabled || common.RDB == nil {
 		setClaude5CompatDiagnostic(c, "b1_capability_write_error")
 		return
 	}
-	setClaude5BetaDenyCache(key, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := common.RDB.SetNX(ctx, key, "unsupported", 24*time.Hour).Err(); err != nil {
+		setClaude5CompatDiagnostic(c, "b1_capability_write_error")
+	}
 }
 
 var claude5BetaDenyCache = struct {
@@ -1092,7 +1150,44 @@ func setClaude5BetaDenyCache(key string, denied bool) {
 	claude5BetaDenyCache.entries[key] = claude5BetaDenyCacheEntry{denied: denied, expires: time.Now().Add(60 * time.Second)}
 }
 
-func applyClaude5ThinkingMapping(request map[string]claude5JSON, settings model_setting.Claude5CompatSettings, changed *[]string) error {
+// These are exact model capabilities documented by AWS, not generation-prefix
+// guesses. Unknown models remain untouched. Cross-region profiles share the
+// foundation model's schema; administrators can override beta support per region.
+// https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html
+// https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-thinking-block-binding.html
+type claudeThinkingProfile struct {
+	adaptiveOnly     bool
+	disabledMode     string
+	disabledHighOnly bool
+	binding          bool
+}
+
+func claudeThinkingProfileForModel(modelID string) claudeThinkingProfile {
+	for _, prefix := range []string{"global.", "us.", "eu.", "apac.", "au.", "jp."} {
+		if suffix, ok := strings.CutPrefix(modelID, prefix); ok {
+			modelID = suffix
+			break
+		}
+	}
+	switch modelID {
+	case "anthropic.claude-sonnet-5-5":
+		return claudeThinkingProfile{adaptiveOnly: true, disabledMode: "between_tools", binding: true}
+	case "anthropic.claude-opus-5-5", "anthropic.claude-fable-5-1":
+		return claudeThinkingProfile{adaptiveOnly: true, binding: true}
+	case "anthropic.claude-haiku-5-5":
+		return claudeThinkingProfile{adaptiveOnly: true, disabledMode: "disabled", disabledHighOnly: true, binding: true}
+	case "anthropic.claude-opus-5":
+		return claudeThinkingProfile{adaptiveOnly: true, disabledMode: "disabled", disabledHighOnly: true}
+	case "anthropic.claude-sonnet-5", "anthropic.claude-opus-4-7", "anthropic.claude-opus-4-8":
+		return claudeThinkingProfile{adaptiveOnly: true, disabledMode: "disabled"}
+	case "anthropic.claude-fable-5", "anthropic.claude-mythos-5", "anthropic.claude-mythos-5-1":
+		return claudeThinkingProfile{adaptiveOnly: true}
+	default:
+		return claudeThinkingProfile{}
+	}
+}
+
+func applyClaude5ThinkingMapping(request map[string]claude5JSON, settings model_setting.Claude5CompatSettings, modelID string, changed *[]string) error {
 	if !settings.ThinkingDisabledMap && !settings.ThinkingEnabledMap && !settings.ThinkingDisplayNormalize {
 		return nil
 	}
@@ -1110,11 +1205,30 @@ func applyClaude5ThinkingMapping(request map[string]claude5JSON, settings model_
 		}
 	}
 	before := len(*changed)
+	profile := claudeThinkingProfileForModel(modelID)
 	if kind == "disabled" && settings.ThinkingDisabledMap {
-		thinking["type"] = mustClaude5Raw("between_tools")
-		delete(thinking, "budget_tokens")
-		*changed = appendUnique(*changed, "thinking_disabled_mapped")
-	} else if kind == "enabled" && settings.ThinkingEnabledMap {
+		target := ""
+		var output map[string]claude5JSON
+		_ = common.Unmarshal(request["output_config"], &output)
+		var effort string
+		_ = common.Unmarshal(output["effort"], &effort)
+		if profile.disabledMode == "between_tools" {
+			if effort == "" || effort == "low" || effort == "medium" || effort == "high" {
+				target = "between_tools"
+			}
+		}
+		if target == "" && profile.adaptiveOnly && (profile.disabledMode != "disabled" || (profile.disabledHighOnly && (effort == "xhigh" || effort == "max"))) && settings.AllowThinkingDowngrade {
+			target = "adaptive"
+		}
+		if target != "" {
+			thinking["type"] = mustClaude5Raw(target)
+			delete(thinking, "budget_tokens")
+			delete(thinking, "display")
+			delete(thinking, "adaptive")
+			*changed = appendUnique(*changed, "thinking_disabled_mapped")
+			kind = target
+		}
+	} else if kind == "enabled" && settings.ThinkingEnabledMap && profile.adaptiveOnly {
 		var budget int
 		budgetValid := common.Unmarshal(thinking["budget_tokens"], &budget) == nil && budget > 0
 		thinking["type"] = mustClaude5Raw("adaptive")
@@ -1123,12 +1237,20 @@ func applyClaude5ThinkingMapping(request map[string]claude5JSON, settings model_
 		for _, entry := range settings.ThinkingBudgetEffortTable {
 			if budgetValid && budget <= entry.MaxBudget {
 				var output map[string]claude5JSON
-				_ = common.Unmarshal(request["output_config"], &output)
+				if raw, exists := request["output_config"]; exists {
+					if common.GetJsonType(raw) != "object" || common.Unmarshal(raw, &output) != nil {
+						return fmt.Errorf("output_config must be an object when mapping effort")
+					}
+				}
 				if output == nil {
 					output = make(map[string]claude5JSON)
 				}
-				output["effort"] = mustClaude5Raw(entry.Effort)
-				request["output_config"] = mustClaude5Raw(output)
+				// An explicit client effort takes precedence over the approximate
+				// budget mapping. Never discard format or other output fields.
+				if _, exists := output["effort"]; !exists {
+					output["effort"] = mustClaude5Raw(entry.Effort)
+					request["output_config"] = mustClaude5Raw(output)
+				}
 				matched = true
 				break
 			}
@@ -1140,20 +1262,35 @@ func applyClaude5ThinkingMapping(request map[string]claude5JSON, settings model_
 		kind = "adaptive"
 	}
 	if kind == "adaptive" && settings.ThinkingDisplayNormalize {
+		rawDisplay, exists := thinking["display"]
 		var adaptive map[string]claude5JSON
-		_ = common.Unmarshal(thinking["adaptive"], &adaptive)
-		if adaptive == nil {
-			adaptive = make(map[string]claude5JSON)
+		if raw, legacy := thinking["adaptive"]; legacy {
+			if common.Unmarshal(raw, &adaptive) != nil {
+				return fmt.Errorf("thinking.adaptive must be an object")
+			}
+			if legacyDisplay, found := adaptive["display"]; found {
+				if exists && !bytes.Equal(rawDisplay, legacyDisplay) {
+					return fmt.Errorf("conflicting thinking display fields")
+				}
+				rawDisplay, exists = legacyDisplay, true
+				delete(adaptive, "display")
+				if len(adaptive) == 0 {
+					delete(thinking, "adaptive")
+				} else {
+					thinking["adaptive"] = mustClaude5Raw(adaptive)
+				}
+				thinking["display"] = rawDisplay
+				*changed = appendUnique(*changed, "thinking_display_normalized")
+			}
 		}
 		var display string
-		_ = common.Unmarshal(adaptive["display"], &display)
-		if len(adaptive["display"]) > 0 && display != "summarized" && display != "omitted" {
+		_ = common.Unmarshal(rawDisplay, &display)
+		if exists && display != "summarized" && display != "omitted" {
 			fallback := settings.DisplayDefault
 			if fallback != "omitted" {
 				fallback = "summarized"
 			}
-			adaptive["display"] = mustClaude5Raw(fallback)
-			thinking["adaptive"] = mustClaude5Raw(adaptive)
+			thinking["display"] = mustClaude5Raw(fallback)
 			*changed = appendUnique(*changed, "thinking_display_normalized")
 		}
 	}
@@ -1174,7 +1311,7 @@ func applyClaude5OutputConfigPolicy(request map[string]claude5JSON, policy strin
 			var output map[string]claude5JSON
 			if common.GetJsonType(raw) == "object" && common.Unmarshal(raw, &output) == nil {
 				var effort string
-				if common.GetJsonType(output["effort"]) == "string" && common.Unmarshal(output["effort"], &effort) == nil && (effort == "low" || effort == "medium" || effort == "high") {
+				if common.GetJsonType(output["effort"]) == "string" && common.Unmarshal(output["effort"], &effort) == nil && (effort == "low" || effort == "medium" || effort == "high" || effort == "xhigh" || effort == "max") {
 					if len(output) == 1 {
 						return nil
 					}

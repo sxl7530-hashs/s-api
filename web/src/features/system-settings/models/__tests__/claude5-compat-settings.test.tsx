@@ -35,6 +35,7 @@ describe('Bedrock compatibility settings', () => {
     expect(savedSettings()).toEqual({
       future_option: 'preserve',
       enabled: true,
+      binding_capability_policy: 'official',
     })
     await user.click(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
@@ -56,16 +57,11 @@ describe('Bedrock compatibility settings', () => {
     })
     expect(savedSettings().target_models).toEqual(['*claude-opus-5*', 'target'])
     expect(
-      screen.getByRole('switch', {
+      screen.queryByRole('switch', {
         name: 'Apply to AWS direct passthrough users',
       })
-    ).not.toBeChecked()
-    await user.click(
-      screen.getByRole('switch', {
-        name: 'Apply to AWS direct passthrough users',
-      })
-    )
-    expect(savedSettings().apply_to_passthrough_users).toBe(true)
+    ).not.toBeInTheDocument()
+    expect(savedSettings().apply_to_passthrough_users).toBeUndefined()
   })
   test('exposes version warnings and independently configures thinking budget mappings', async () => {
     render(<SettingsFixture />)
@@ -89,6 +85,9 @@ describe('Bedrock compatibility settings', () => {
       { max_budget: 8000, effort: 'medium' },
     ])
     await user.click(
+      screen.getByRole('button', { name: 'Thinking binding recovery' })
+    )
+    await user.click(
       screen.getByRole('switch', { name: 'Recover thinking block bindings' })
     )
     expect(savedSettings().thinking_binding_recover).toBe(true)
@@ -107,7 +106,7 @@ describe('Bedrock compatibility settings', () => {
       screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
     )
     await user.click(
-      screen.getByRole('button', { name: 'Thinking compatibility' })
+      screen.getByRole('button', { name: 'Thinking binding recovery' })
     )
     expect(
       screen.getByRole('switch', {
@@ -138,7 +137,7 @@ describe('Bedrock compatibility settings', () => {
       screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
     )
     await user.click(
-      screen.getByRole('button', { name: 'Request field compatibility' })
+      screen.getByRole('button', { name: 'Output configuration' })
     )
     await user.selectOptions(
       screen.getByLabelText('Output config policy'),
@@ -170,6 +169,9 @@ test('edits rollout sampling and verified capabilities without enabling compatib
   })
   expect(savedSettings().control_percent).toBe(20)
   expect(savedSettings().audit_sample_percent).toBe(25)
+  await user.click(
+    screen.getByRole('button', { name: 'Thinking binding recovery' })
+  )
   await user.click(
     screen.getByRole('button', { name: 'Verified beta capabilities' })
   )
@@ -223,4 +225,104 @@ test('records fingerprint rejection with a warning without changing forge policy
   ])
   expect(savedSettings().fingerprint_policy).toBeUndefined()
   expect(savedSettings().enabled).toBeUndefined()
+})
+
+test('new configurations use official capabilities while enabled legacy settings retain the legacy strategy', async () => {
+  render(
+    <SettingsFixture initial='{"enabled":true,"thinking_binding_recover":true,"future_option":"kept"}' />
+  )
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Thinking binding recovery' })
+  )
+  expect(screen.getByLabelText('Binding capability policy')).toHaveValue(
+    'legacy'
+  )
+  await user.selectOptions(
+    screen.getByLabelText('Binding capability policy'),
+    'strict'
+  )
+  expect(savedSettings()).toMatchObject({
+    enabled: true,
+    thinking_binding_recover: true,
+    binding_capability_policy: 'strict',
+    future_option: 'kept',
+  })
+})
+
+test('thinking mapping preserves output fields by default and semantic downgrade stays opt in', async () => {
+  render(<SettingsFixture />)
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Thinking compatibility' })
+  )
+  await user.click(
+    screen.getByRole('switch', { name: 'Map enabled thinking to adaptive' })
+  )
+  expect(savedSettings().thinking_enabled_map).toBe(true)
+  expect(savedSettings().output_config_policy).toBeUndefined()
+  expect(
+    screen.getByRole('switch', { name: 'Allow thinking semantic downgrade' })
+  ).not.toBeChecked()
+  await user.click(
+    screen.getByRole('switch', { name: 'Allow thinking semantic downgrade' })
+  )
+  expect(savedSettings().allow_thinking_downgrade).toBe(true)
+  await user.click(screen.getByRole('button', { name: 'Output configuration' }))
+  expect(screen.getByLabelText('Output config policy')).toHaveValue('none')
+  await user.selectOptions(
+    screen.getByLabelText('Output config policy'),
+    'keep_effort_only'
+  )
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'Removes structured output'
+  )
+})
+
+test('configuring recovery before enabling a new feature retains official capabilities', async () => {
+  render(<SettingsFixture />)
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Thinking binding recovery' })
+  )
+  await user.click(
+    screen.getByRole('switch', { name: 'Recover thinking block bindings' })
+  )
+  expect(savedSettings().binding_capability_policy).toBe('official')
+  await user.click(
+    screen.getByRole('switch', { name: 'Enable Claude 5 compatibility' })
+  )
+  expect(savedSettings().binding_capability_policy).toBe('official')
+})
+
+test('replacing legacy output cleanup clears its alias while preserving other settings', async () => {
+  render(
+    <SettingsFixture initial='{"enabled":true,"strip_output_config":true,"future_option":"kept"}' />
+  )
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
+  )
+  await user.click(screen.getByRole('button', { name: 'Output configuration' }))
+  expect(screen.getByLabelText('Output config policy')).toHaveValue('strip_all')
+  await user.selectOptions(
+    screen.getByLabelText('Output config policy'),
+    'none'
+  )
+  expect(savedSettings()).toMatchObject({
+    strip_output_config: false,
+    output_config_policy: 'none',
+    binding_capability_policy: 'legacy',
+    future_option: 'kept',
+  })
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })

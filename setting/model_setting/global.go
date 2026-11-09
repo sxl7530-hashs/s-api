@@ -31,13 +31,15 @@ type Claude5CompatSettings struct {
 	Enabled                   bool                       `json:"enabled"`
 	TargetModels              []string                   `json:"target_models"`
 	TargetRegions             []string                   `json:"target_regions"`
-	ApplyToPassthroughUsers   bool                       `json:"apply_to_passthrough_users"`
+	ApplyToPassthroughUsers   bool                       `json:"apply_to_passthrough_users"` // Deprecated: direct passthrough always bypasses compatibility.
 	AttributionMode           string                     `json:"attribution_mode"`
 	ForgeVersion              string                     `json:"forge_version"`
 	FingerprintPolicy         string                     `json:"fingerprint_policy"`
 	ThinkingBindingRecover    bool                       `json:"thinking_binding_recover"`
 	BlockBindingWrite         bool                       `json:"block_binding_write"`
 	ThinkingDisabledMap       bool                       `json:"thinking_disabled_map"`
+	AllowThinkingDowngrade    bool                       `json:"allow_thinking_downgrade"`
+	BindingCapabilityPolicy   string                     `json:"binding_capability_policy"`
 	ThinkingEnabledMap        bool                       `json:"thinking_enabled_map"`
 	ThinkingBudgetEffortTable []ThinkingBudgetEffort     `json:"thinking_budget_effort_table"`
 	ThinkingDisplayNormalize  bool                       `json:"thinking_display_normalize"`
@@ -120,8 +122,11 @@ func ValidateClaude5CompatSettings(s Claude5CompatSettings) error {
 	if s.StripOutputConfig && policy != "strip_all" {
 		return invalid()
 	}
-	if s.ThinkingEnabledMap && policy != "keep_effort_only" {
-		return common.NewMessage("Enabled thinking mapping requires keep_effort_only output policy")
+	if s.ThinkingEnabledMap && policy == "strip_all" {
+		return common.NewMessage("Thinking mapping cannot remove the entire output configuration")
+	}
+	if s.BindingCapabilityPolicy != "" && s.BindingCapabilityPolicy != "legacy" && s.BindingCapabilityPolicy != "official" && s.BindingCapabilityPolicy != "strict" {
+		return invalid()
 	}
 	if s.DisplayDefault != "" && s.DisplayDefault != "summarized" && s.DisplayDefault != "omitted" {
 		return invalid()
