@@ -370,6 +370,8 @@ export const channelFormSchema = z
     aws_key_type: z.enum(['ak_sk', 'api_key']).optional(), // AWS specific
     aws_api_type: z.enum(['invoke_model', 'mantle']).optional(),
     azure_responses_version: z.string().optional(), // Azure specific
+    // Azure specific; undefined means the channel follows the global default
+    azure_force_background: z.boolean().optional(),
     // Field passthrough controls (stored in settings JSON)
     allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
     disable_store: z.boolean().optional(), // OpenAI only
@@ -758,6 +760,7 @@ export function transformChannelToFormDefaults(
   let vertexKeyType: 'json' | 'api_key' = 'json'
   let vertexProjectId = ''
   let azureResponsesVersion = ''
+  let azureForceBackground: boolean | undefined
   let isEnterpriseAccount = false
   let awsKeyType: 'ak_sk' | 'api_key' = 'ak_sk'
   let awsApiType: 'invoke_model' | 'mantle' = 'invoke_model'
@@ -781,6 +784,10 @@ export function transformChannelToFormDefaults(
       vertexKeyType = parsed.vertex_key_type || 'json'
       vertexProjectId = parsed.vertex_project_id || ''
       azureResponsesVersion = parsed.azure_responses_version || ''
+      azureForceBackground =
+        typeof parsed.azure_force_background === 'boolean'
+          ? parsed.azure_force_background
+          : undefined
       isEnterpriseAccount = parsed.openrouter_enterprise === true
       awsKeyType = parsed.aws_key_type || 'ak_sk'
       awsApiType = parsed.aws_api_type || 'invoke_model'
@@ -844,6 +851,7 @@ export function transformChannelToFormDefaults(
     vertex_key_type: vertexKeyType,
     vertex_project_id: vertexProjectId,
     azure_responses_version: azureResponsesVersion,
+    azure_force_background: azureForceBackground,
     aws_key_type: awsKeyType,
     aws_api_type: awsApiType,
     allow_service_tier: allowServiceTier,
@@ -967,6 +975,16 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.azure_responses_version = formData.azure_responses_version
   } else if ('azure_responses_version' in settingsObj) {
     delete settingsObj.azure_responses_version
+  }
+  // An Azure channel keeps an explicit choice; one never set follows the
+  // global default.
+  if (
+    formData.type === 3 &&
+    typeof formData.azure_force_background === 'boolean'
+  ) {
+    settingsObj.azure_force_background = formData.azure_force_background
+  } else {
+    delete settingsObj.azure_force_background
   }
 
   // Add enterprise account setting for OpenRouter (type 20)

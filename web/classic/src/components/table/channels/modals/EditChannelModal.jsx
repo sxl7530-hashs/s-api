@@ -402,6 +402,32 @@ const EditChannelModal = (props) => {
     }
   }, [isEdit]);
 
+  // Azure 渠道「强制后台模式」的全局默认值；null 表示尚未加载
+  const [azureBackgroundDefault, setAzureBackgroundDefault] = useState(null);
+  useEffect(() => {
+    if (!props.visible) return;
+    API.get('/api/channel/azure_background_default')
+      .then((res) => {
+        if (res?.data?.success) {
+          setAzureBackgroundDefault(res.data.data?.enabled === true);
+        }
+      })
+      .catch(() => {});
+  }, [props.visible]);
+  // 未设置过该开关的渠道（以及新建渠道）按全局默认值显示
+  useEffect(() => {
+    if (
+      azureBackgroundDefault !== null &&
+      inputs.type === 3 &&
+      typeof inputs.azure_force_background !== 'boolean'
+    ) {
+      setInputs((prev) => ({
+        ...prev,
+        azure_force_background: azureBackgroundDefault,
+      }));
+    }
+  }, [azureBackgroundDefault, inputs.type, inputs.azure_force_background]);
+
   const handleOpenIonetDeployment = () => {
     if (!ionetMetadata?.deployment_id) {
       return;
@@ -891,6 +917,10 @@ const EditChannelModal = (props) => {
           const parsedSettings = JSON.parse(data.settings);
           data.azure_responses_version =
             parsedSettings.azure_responses_version || '';
+          data.azure_force_background =
+            typeof parsedSettings.azure_force_background === 'boolean'
+              ? parsedSettings.azure_force_background
+              : undefined;
           // 读取 Vertex 密钥格式
           data.vertex_key_type = parsedSettings.vertex_key_type || 'json';
           // 读取 AWS 密钥格式和区域
@@ -1771,6 +1801,17 @@ const EditChannelModal = (props) => {
       settings.aws_key_type = localInputs.aws_key_type || 'ak_sk';
     }
 
+    // type === 3 (Azure): 新建时显式保存强制后台模式（默认取全局值，可手动关闭）；
+    // 编辑时只有切换过开关才会写入 settings，未设置的渠道继续跟随全局默认值
+    if (localInputs.type === 3) {
+      if (!isEdit) {
+        settings.azure_force_background =
+          localInputs.azure_force_background === true;
+      }
+    } else if ('azure_force_background' in settings) {
+      delete settings.azure_force_background;
+    }
+
     // type === 41 (Vertex): 始终保存 vertex_key_type 到 settings，避免编辑时被重置
     if (localInputs.type === 41) {
       settings.vertex_key_type = localInputs.vertex_key_type || 'json';
@@ -1833,6 +1874,8 @@ const EditChannelModal = (props) => {
     delete localInputs.system_prompt;
     delete localInputs.system_prompt_override;
     delete localInputs.is_enterprise_account;
+    // 顶层的 azure_force_background 已写入 settings，不应发送给后端
+    delete localInputs.azure_force_background;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
     // 顶层的 aws_key_type 不应发送给后端
@@ -3294,6 +3337,23 @@ const EditChannelModal = (props) => {
                                 )
                               }
                               showClear
+                            />
+                          </div>
+                          <div>
+                            <Form.Switch
+                              field='azure_force_background'
+                              label={t('强制后台模式（background）')}
+                              checkedText={t('开')}
+                              uncheckedText={t('关')}
+                              onChange={(value) =>
+                                handleChannelOtherSettingsChange(
+                                  'azure_force_background',
+                                  value,
+                                )
+                              }
+                              extraText={t(
+                                '开启后，该渠道所有请求以 background=true 提交，由网关轮询结果，客户端仍按普通同步请求收到响应。默认值取自全局模型配置中的「Azure 渠道默认开启强制后台模式」。',
+                              )}
                             />
                           </div>
                         </>

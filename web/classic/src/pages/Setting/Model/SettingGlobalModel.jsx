@@ -70,6 +70,7 @@ const defaultGlobalSettingInputs = {
   'global.pass_through_request_enabled': false,
   'global.thinking_model_blacklist': '[]',
   'global.chat_completions_to_responses_policy': '{}',
+  'global.azure_force_background_enabled': false,
   'general_setting.ping_interval_enabled': false,
   'general_setting.ping_interval_seconds': 60,
 };
@@ -351,6 +352,32 @@ export default function SettingGlobalModel(props) {
                       {t('格式化 JSON')}
                     </Button>
                   </div>
+                </Col>
+              </Row>
+            </Form.Section>
+
+            <Form.Section
+              text={
+                <span style={{ fontSize: 14, fontWeight: 600 }}>
+                  {t('Azure 强制后台模式')}
+                </span>
+              }
+            >
+              <Row>
+                <Col span={24}>
+                  <Form.Switch
+                    label={t('Azure 渠道默认开启强制后台模式')}
+                    field={'global.azure_force_background_enabled'}
+                    onChange={(value) =>
+                      setInputs({
+                        ...inputs,
+                        'global.azure_force_background_enabled': value,
+                      })
+                    }
+                    extraText={t(
+                      'Azure 渠道「强制后台模式」开关的默认值：新建 Azure 渠道默认按此开启，未设置过该开关的渠道也跟随此值。开启的渠道所有请求以 background=true 提交，由网关轮询结果，客户端仍按普通同步请求收到响应。',
+                    )}
+                  />
                 </Col>
               </Row>
             </Form.Section>

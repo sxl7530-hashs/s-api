@@ -96,6 +96,7 @@ const schema = z.object({
     aws_beta_blacklist: jsonString,
     thinking_model_blacklist: jsonString,
     chat_completions_to_responses_policy: jsonString,
+    azure_force_background_enabled: z.boolean(),
     aws_usage_metrics_enabled: z.boolean(),
     claude5_compat: jsonString,
   }),
@@ -115,6 +116,7 @@ type FlatGlobalModelSettings = {
   'global.aws_beta_blacklist': string
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
+  'global.azure_force_background_enabled': boolean
   'global.aws_usage_metrics_enabled': boolean
   'global.claude5_compat': string
   'general_setting.ping_interval_enabled': boolean
@@ -141,6 +143,8 @@ const flattenGlobalValues = (
     values.global.chat_completions_to_responses_policy,
     '{}'
   ),
+  'global.azure_force_background_enabled':
+    values.global.azure_force_background_enabled,
   'global.aws_usage_metrics_enabled': values.global.aws_usage_metrics_enabled,
   'global.claude5_compat': normalizeJsonText(
     values.global.claude5_compat,
@@ -451,6 +455,32 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
               )}
             />
           </div>
+
+          <Separator />
+
+          <FormField
+            control={form.control}
+            name='global.azure_force_background_enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Azure Force Background Mode')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Default for the Force background mode switch of Azure channels: new Azure channels start with it, and channels that never set it follow it. Enabled channels submit every request with background=true and the gateway polls for the result; clients still receive a normal synchronous response.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
 
           <Separator />
 

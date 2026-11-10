@@ -65,6 +65,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/ops", permission: authz.ChannelRead, handler: controller.GetChannelOps},
 	{method: http.MethodGet, path: "/usage", permission: authz.ChannelRead, handler: controller.GetChannelUsage},
 	{method: http.MethodGet, path: "/name-display", permission: authz.ChannelRead, handler: controller.GetChannelNameDisplay},
+	{method: http.MethodGet, path: "/azure_background_default", permission: authz.ChannelRead, handler: controller.GetAzureBackgroundDefault},
 	{method: http.MethodPost, path: "/bedrock/quotas/preview", permission: authz.ChannelSensitiveWrite, handler: controller.PreviewBedrockQuotas},
 	{method: http.MethodGet, path: "/:id/bedrock/quotas", permission: authz.ChannelOperate, handler: controller.GetBedrockQuotas},
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},

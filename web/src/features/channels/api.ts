@@ -98,6 +98,15 @@ export type TaskPluginOption = {
   upstreams?: string[] | null
 }
 
+// The global default of the Azure channel force background switch.
+export async function getAzureBackgroundDefault(): Promise<boolean> {
+  const response = await api.get<{
+    success: boolean
+    data: { enabled: boolean }
+  }>('/api/channel/azure_background_default')
+  return requireServerSuccess(response.data).data.enabled === true
+}
+
 export async function getTaskPluginOptions(): Promise<TaskPluginOption[]> {
   const response = await api.get<{
     success: boolean

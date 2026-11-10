@@ -240,6 +240,7 @@ export type ModelSettings = {
   'global.aws_beta_blacklist': string
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
+  'global.azure_force_background_enabled': boolean
   'general_setting.ping_interval_enabled': boolean
   'general_setting.ping_interval_seconds': number
   'gemini.safety_settings': string

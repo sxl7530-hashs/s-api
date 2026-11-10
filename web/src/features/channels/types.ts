@@ -173,6 +173,7 @@ export interface BedrockQuotaResponse {
 
 export interface ChannelOtherSettings {
   azure_responses_version?: string
+  azure_force_background?: boolean
   vertex_key_type?: 'json' | 'api_key'
   vertex_project_id?: string
   openrouter_enterprise?: boolean

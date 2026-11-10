@@ -201,6 +201,8 @@ const (
 )
 
 type ChannelOtherSettings struct {
+	// AzureForceBackground: Azure 渠道是否强制 background 提交、网关轮询后同步返回；未设置时跟随全局默认值
+	AzureForceBackground                  *bool                 `json:"azure_force_background,omitempty"`
 	AzureResponsesVersion                 string                `json:"azure_responses_version,omitempty"`
 	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"`   // "json" or "api_key"
 	VertexProjectID                       string                `json:"vertex_project_id,omitempty"` // 仅当 vertex_key_type=api_key 时使用；JSON 模式下从 service account 解析

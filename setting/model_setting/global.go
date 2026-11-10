@@ -220,6 +220,10 @@ type GlobalSettings struct {
 	// family whitelist but whose names already end in an effort word.
 	EffortTailModelIDs               []string                         `json:"effort_tail_model_ids"`
 	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
+	// AzureForceBackgroundEnabled is the default of the Azure channel setting
+	// azure_force_background: new Azure channels start with it, and channels
+	// that never set it follow it.
+	AzureForceBackgroundEnabled bool `json:"azure_force_background_enabled"`
 	// AwsBetaFilterEnabled strips anthropic-beta values listed in AwsBetaBlacklist
 	// before forwarding to AWS Bedrock (AWS channels only); toggle via settings.
 	AwsBetaFilterEnabled   bool                  `json:"aws_beta_filter_enabled"`
