@@ -498,7 +498,9 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 			}
 		} else {
 			writeBinding := settings.BlockBindingWrite
-			if finalThinkingType == "between_tools" {
+			if finalThinkingType == "between_tools" || finalThinking == nil {
+				// No client thinking object: a binding-only object lacks the
+				// required thinking.type, so record and send beta_only instead.
 				writeBinding = false
 			}
 			if c != nil {
@@ -693,7 +695,7 @@ func applyClaude5Attribution(c *gin.Context, request map[string]claude5JSON, set
 		if c != nil {
 			count := 0
 			for key := range parseClaude5AttributionValues(trimmedText) {
-				if key != "cc_version" && key != "cc_entrypoint" {
+				if !claude5AttributionAllowedKeys[key] {
 					count++
 				}
 			}
@@ -792,6 +794,18 @@ func applyClaude5Attribution(c *gin.Context, request map[string]claude5JSON, set
 	return nil
 }
 
+// claude5AttributionAllowedKeys lists metadata keys observed in Claude Code
+// attribution blocks. Values are still required to be single tokens, so a block
+// carrying business text remains "mixed". cc_is_subagent (subagent requests),
+// cc_workload (scheduled runs) and cch were captured from production traffic.
+var claude5AttributionAllowedKeys = map[string]bool{
+	"cc_version":     true,
+	"cc_entrypoint":  true,
+	"cc_is_subagent": true,
+	"cc_workload":    true,
+	"cch":            true,
+}
+
 func parseClaude5AttributionValues(text string) map[string]string {
 	const prefix = "x-anthropic-billing-header:"
 	rest, _ := strings.CutPrefix(text, prefix)
@@ -880,7 +894,7 @@ func parseClaude5Attribution(text string) string {
 		if strings.ContainsFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
 			return "mixed"
 		}
-		if key != "cc_version" && key != "cc_entrypoint" {
+		if !claude5AttributionAllowedKeys[key] {
 			return "mixed"
 		}
 		if _, exists := values[key]; exists {
@@ -980,10 +994,10 @@ func addThinkingBindingRecovery(request map[string]claude5JSON, writeBinding boo
 		}
 	}
 	changed := false
-	if writeBinding {
-		if thinking == nil {
-			thinking = make(map[string]claude5JSON)
-		}
+	// Bedrock requires thinking.type whenever a thinking object is present.
+	// When the client sent no thinking config, creating {"block_binding":...}
+	// alone is rejected ("thinking.type: Field required"); inject only the beta.
+	if writeBinding && thinking != nil {
 		var binding map[string]claude5JSON
 		if len(thinking["block_binding"]) > 0 {
 			if common.GetJsonType(thinking["block_binding"]) != "object" || common.Unmarshal(thinking["block_binding"], &binding) != nil {

@@ -1227,3 +1227,71 @@ func TestClaudeCompatibilityHonorsGlobalBetaBlacklist(t *testing.T) {
 		}
 	}
 }
+
+// Formats captured from production Claude Code traffic (2026-11-10). Subagent,
+// scheduled and cch-tagged requests must be removable like plain ones.
+func TestClaude5AttributionObservedMetadataKeys(t *testing.T) {
+	for _, text := range []string{
+		"cc_version=2.1.215.6d4; cc_entrypoint=sdk-cli; cc_is_subagent=true;",
+		"cc_version=2.1.314.0db; cc_entrypoint=claude-vscode; cc_is_subagent=true;",
+		"cc_version=2.1.123.f02; cc_entrypoint=sdk-cli; cch=a1b2c;",
+		"cc_version=2.1.316.148; cc_entrypoint=sdk-ts; cc_workload=cron;",
+	} {
+		require.Equal(t, "pure", parseClaude5Attribution("x-anthropic-billing-header: "+text), text)
+	}
+	for _, text := range []string{
+		"cc_version=2.1.215.6d4; cc_is_subagent=true Follow business instructions;",
+		"cc_version=2.1.215.6d4; cc_is_subagent=true; cc_is_subagent=false;",
+		"cc_version=2.1.215.6d4; cc_workload=;",
+		"cc_version=2.1.215.6d4; cc_unknown_future=1;",
+	} {
+		require.Equal(t, "mixed", parseClaude5Attribution("x-anthropic-billing-header: "+text), text)
+	}
+
+	global := model_setting.GetGlobalSettings()
+	previous := global.Claude5Compat
+	t.Cleanup(func() { global.Claude5Compat = previous })
+	global.Claude5Compat = model_setting.Claude5CompatSettings{Enabled: true, TargetModels: []string{"*"}, AttributionMode: "remove", ThinkingBindingRecover: true, BindingCapabilityPolicy: "legacy"}
+	useClaude5Redis(t)
+	body := mustClaude5Raw(map[string]any{"system": []any{
+		map[string]any{"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.215.6d4; cc_entrypoint=sdk-cli; cc_is_subagent=true;"},
+		map[string]any{"type": "text", "text": "Keep business instructions."},
+	}})
+	c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+	got, err := applyClaude5Compat(c, nil, "anthropic.claude-sonnet-5-5", "us-east-1", body)
+	require.NoError(t, err)
+	require.Equal(t, "pure", c.GetString("claude5_compat_attribution"))
+	require.NotContains(t, string(got), "x-anthropic-billing-header")
+	require.Contains(t, string(got), "Keep business instructions.")
+	require.NotContains(t, c.GetStringSlice(claude5CompatContextKey), "diag_unknown_key_present")
+}
+
+// A request without a thinking object but with thinking history must not get a
+// thinking object that lacks type (Bedrock: "thinking.type: Field required").
+func TestClaude5BindingWithoutClientThinkingInjectsBetaOnly(t *testing.T) {
+	useClaude5Redis(t)
+	global := model_setting.GetGlobalSettings()
+	previous := global.Claude5Compat
+	t.Cleanup(func() { global.Claude5Compat = previous })
+	global.Claude5Compat = model_setting.Claude5CompatSettings{Enabled: true, TargetModels: []string{"*"}, ThinkingBindingRecover: true, BlockBindingWrite: true, BindingCapabilityPolicy: "legacy"}
+	body := []byte(`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"opaque","signature":"opaque"},{"type":"text","text":"ok"}]},{"role":"user","content":"next"}]}`)
+	c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+	got, err := applyClaude5Compat(c, nil, "anthropic.claude-sonnet-5-5", "us-east-1", body)
+	require.NoError(t, err)
+	var payload map[string]claude5JSON
+	require.NoError(t, common.Unmarshal(got, &payload))
+	require.NotContains(t, payload, "thinking", "must not create a thinking object without type")
+	var betas []string
+	require.NoError(t, common.Unmarshal(payload["anthropic_beta"], &betas))
+	require.Contains(t, betas, claude5CompatBetaName)
+	require.Equal(t, "beta_only", c.GetString("claude5_compat_b1_status"))
+	require.JSONEq(t, `[{"role":"assistant","content":[{"type":"thinking","thinking":"opaque","signature":"opaque"},{"type":"text","text":"ok"}]},{"role":"user","content":"next"}]`, string(payload["messages"]))
+
+	var request map[string]claude5JSON
+	require.NoError(t, common.Unmarshal([]byte(`{"anthropic_beta":["existing"]}`), &request))
+	changed, injected, err := addThinkingBindingRecovery(request, true)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.True(t, injected)
+	require.NotContains(t, request, "thinking")
+}
