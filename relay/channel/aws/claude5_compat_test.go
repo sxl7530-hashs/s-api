@@ -280,6 +280,57 @@ func TestClaude5ThinkingMappingPreservesRecovery(t *testing.T) {
 	}
 }
 
+func TestClaude5DisabledBindingCleanup(t *testing.T) {
+	useClaude5Redis(t)
+	global := model_setting.GetGlobalSettings()
+	previous := global.Claude5Compat
+	t.Cleanup(func() { global.Claude5Compat = previous })
+	for _, writeBinding := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disabled/write_binding=%v", writeBinding), func(t *testing.T) {
+			global.Claude5Compat = model_setting.Claude5CompatSettings{
+				Enabled: true, TargetModels: []string{"anthropic.claude-sonnet-4-6"},
+				ThinkingBindingRecover: true, BlockBindingWrite: writeBinding,
+				BetaCapabilities: []model_setting.Claude5BetaCapability{{Model: "anthropic.claude-sonnet-4-6", Region: "us-west-1", Beta: claude5CompatBetaName, Status: "allow"}},
+			}
+			body := []byte(`{"thinking":{"type":"disabled","block_binding":{"prefix_mismatch_behavior":"drop_block"},"budget_tokens":64,"display":"full"},"anthropic_beta":["client-beta","thinking-binding-controls-2026-08-01"],"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"opaque","signature":"opaque"}]}]}`)
+			c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+			got, err := applyClaude5Compat(c, nil, "anthropic.claude-sonnet-4-6", "us-west-1", body)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(got, &payload))
+			thinking := payload["thinking"].(map[string]any)
+			require.Equal(t, "disabled", thinking["type"])
+			require.NotContains(t, thinking, "block_binding")
+			require.Equal(t, float64(64), thinking["budget_tokens"])
+			require.Equal(t, "full", thinking["display"])
+			require.Equal(t, []any{"client-beta", claude5CompatBetaName}, payload["anthropic_beta"])
+			value, ok := c.Get(claude5CompatAuditKey)
+			require.True(t, ok)
+			audit := value.(map[string]any)
+			require.Equal(t, "client_supplied_disabled", audit["block_binding_strip_reason"])
+			require.Equal(t, []string{"budget_tokens", "display"}, audit["disabled_extra_fields"])
+			require.False(t, c.GetBool(claude5CompatBetaContextKey), "a client-supplied beta must not be recorded as gateway-injected")
+		})
+	}
+
+	for _, kind := range []string{"adaptive", "enabled", "between_tools"} {
+		t.Run(kind+"/binding_preserved", func(t *testing.T) {
+			global.Claude5Compat = model_setting.Claude5CompatSettings{
+				Enabled: true, TargetModels: []string{"anthropic.claude-sonnet-4-6"},
+				ThinkingBindingRecover: true, BlockBindingWrite: true,
+				BetaCapabilities: []model_setting.Claude5BetaCapability{{Model: "anthropic.claude-sonnet-4-6", Region: "us-west-1", Beta: claude5CompatBetaName, Status: "allow"}},
+			}
+			body := []byte(`{"thinking":{"type":"` + kind + `","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"opaque","signature":"opaque"}]}]}`)
+			got, err := applyClaude5Compat(nil, nil, "anthropic.claude-sonnet-4-6", "us-west-1", body)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(got, &payload))
+			thinking := payload["thinking"].(map[string]any)
+			require.Equal(t, map[string]any{"prefix_mismatch_behavior": "drop_block"}, thinking["block_binding"])
+		})
+	}
+}
+
 func TestClaude5CompatibilityScopeAndIndependentRules(t *testing.T) {
 	settings := model_setting.GetGlobalSettings()
 	previous := settings.Claude5Compat

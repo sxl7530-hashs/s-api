@@ -443,6 +443,30 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 	if err := applyClaude5ThinkingMapping(request, settings, modelID, &changed); err != nil {
 		return nil, err
 	}
+	var finalThinking map[string]claude5JSON
+	var finalThinkingType string
+	if rawThinking, exists := request["thinking"]; exists && common.GetJsonType(rawThinking) == "object" {
+		if common.Unmarshal(rawThinking, &finalThinking) == nil {
+			_ = common.Unmarshal(finalThinking["type"], &finalThinkingType)
+		}
+	}
+	if finalThinkingType == "disabled" {
+		if _, supplied := finalThinking["block_binding"]; supplied {
+			delete(finalThinking, "block_binding")
+			request["thinking"] = mustClaude5Raw(finalThinking)
+			changed = appendUnique(changed, "block_binding_stripped")
+			audit["block_binding_strip_reason"] = "client_supplied_disabled"
+		}
+		var extras []string
+		for _, key := range []string{"budget_tokens", "display", "adaptive"} {
+			if _, exists := finalThinking[key]; exists {
+				extras = append(extras, key)
+			}
+		}
+		if len(extras) > 0 {
+			audit["disabled_extra_fields"] = extras
+		}
+	}
 	// B2 must run before B1.  In particular, B1 must see the final thinking
 	// shape and must never be overwritten by a later mapping pass.
 	betaInjected := false
@@ -457,13 +481,24 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 		if capability == "" {
 			capability = claude5BetaCapabilityForRequest(c, settings, modelID, region)
 		}
-		if capability == "supported" {
+		if capability != "supported" {
+			status := "b1_capability_unknown"
+			if capability == "unsupported" {
+				status = "b1_skipped_unsupported"
+			} else if capability == "redis_error" {
+				status = "b1_skipped_redis_error"
+			}
+			if c != nil {
+				c.Set("claude5_compat_b1_status", status)
+			}
+			changed = appendUnique(changed, status)
+		} else if finalThinkingType == "disabled" {
+			if c != nil {
+				c.Set("claude5_compat_b1_status", "disabled_skipped")
+			}
+		} else {
 			writeBinding := settings.BlockBindingWrite
-			var thinking map[string]claude5JSON
-			_ = common.Unmarshal(request["thinking"], &thinking)
-			var kind string
-			_ = common.Unmarshal(thinking["type"], &kind)
-			if kind == "between_tools" || kind == "disabled" {
+			if finalThinkingType == "between_tools" {
 				writeBinding = false
 			}
 			if c != nil {
@@ -488,18 +523,6 @@ func transformClaude5Compat(c *gin.Context, info *relaycommon.RelayInfo, modelID
 			if bindingChanged {
 				changed = appendUnique(changed, "thinking_binding_recovered")
 			}
-		} else {
-			status := "b1_capability_unknown"
-			if capability == "unsupported" {
-				status = "b1_skipped_unsupported"
-			}
-			if capability == "redis_error" {
-				status = "b1_skipped_redis_error"
-			}
-			if c != nil {
-				c.Set("claude5_compat_b1_status", status)
-			}
-			changed = appendUnique(changed, status)
 		}
 	}
 	stage = "output_config"
