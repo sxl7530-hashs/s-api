@@ -6,6 +6,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -167,6 +168,7 @@ func main() {
 		model.InitBatchUpdater()
 	}
 
+	host := os.Getenv("HOST")
 	var pprofServer *http.Server
 	if common.GetEnvOrDefaultBool("ENABLE_PPROF", false) {
 		pprofMux := http.NewServeMux()
@@ -228,7 +230,7 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:    ":" + port,
+		Addr:    net.JoinHostPort(host, port),
 		Handler: server,
 	}
 
@@ -240,7 +242,7 @@ func main() {
 
 	time.Sleep(100 * time.Millisecond)
 
-	common.LogStartupSuccess(startTime, port)
+	common.LogStartupSuccess(startTime, host, port)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
