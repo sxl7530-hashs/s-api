@@ -699,8 +699,8 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 		if err != nil {
 			return nil, errors.Wrap(err, "get request body bytes fail")
 		}
-		// Only model and stream are removed: the rest keeps the client's bytes
-		// and key order. The Doc reads body in place and never changes it.
+		// Preserve client fields and key order. Direct passthrough still needs
+		// the Bedrock protocol version when global AWS compatibility is enabled.
 		if !ojson.ValidBytes(body) || !ojson.GetBytesNoCopy(body, "@this").IsObject() {
 			return nil, errors.New("pass-through unmarshal request body fail: request body must be a JSON object")
 		}
@@ -708,6 +708,12 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 		for _, key := range []string{"model", "stream"} {
 			if err := relaycommon.DeleteJSONMember(data, key); err != nil {
 				return nil, errors.Wrap(err, "pass-through unmarshal request body fail")
+			}
+		}
+		if model_setting.GetGlobalSettings().AwsPassthroughCompatibilityEnabled &&
+			info.UserSetting.AwsDirectPassthrough && !data.Get("anthropic_version").Exists() {
+			if err := relaycommon.SetJSONMember(data, "", "anthropic_version", "bedrock-2023-05-31"); err != nil {
+				return nil, errors.Wrap(err, "set Bedrock anthropic version fail")
 			}
 		}
 		return data.Bytes(), nil

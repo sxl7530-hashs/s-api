@@ -273,17 +273,24 @@ func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
 		common.RDB, common.RedisEnabled = previousClient, previousEnabled
 	})
 	for _, key := range []string{"test-key|us-east-1", "access-key|secret-key|us-east-1"} {
-		for _, mode := range []string{"off", "metrics", "protection", "compatibility"} {
+		for _, mode := range []string{"off", "metrics", "protection", "compatibility", "direct"} {
 			for _, stream := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/stream=%t", key, mode, stream), func(t *testing.T) {
 					service.FlushBedrockActualUsage()
 					server.FlushAll()
 					previous := model_setting.GetGlobalSettings().AwsUsageMetricsEnabled
+					previousCompatibility := model_setting.GetGlobalSettings().AwsPassthroughCompatibilityEnabled
 					model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = mode != "off"
-					t.Cleanup(func() { model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = previous })
+					model_setting.GetGlobalSettings().AwsPassthroughCompatibilityEnabled = mode == "direct"
+					t.Cleanup(func() {
+						model_setting.GetGlobalSettings().AwsUsageMetricsEnabled = previous
+						model_setting.GetGlobalSettings().AwsPassthroughCompatibilityEnabled = previousCompatibility
+					})
 					info := newAwsTestRelayInfo()
 					info.ApiKey, info.ChannelId, info.IsStream = key, 97, stream
 					info.AwsPassthroughCompatibility = mode == "compatibility"
+					info.UserSetting.AwsDirectPassthrough = mode == "direct"
+					info.ChannelSetting.PassThroughBodyEnabled = mode == "direct"
 					info.UseRuntimeHeadersOverride = true
 					info.RuntimeHeadersOverride = map[string]any{
 						"X-Channel-Tag": "custom-value", "Authorization": "invalid", "X-Amz-Date": "invalid", "Host": "invalid",
@@ -298,7 +305,10 @@ func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
 					c.Request.Header.Set("X-Amzn-Bedrock-GuardrailIdentifier", "test-guardrail")
 					c.Request.Header.Set("X-Client-Secret", "must-not-forward")
 					a := &Adaptor{}
-					_, err := a.DoRequest(c, info, strings.NewReader(`{"max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`))
+					const body = `{"max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`
+					c.Request.Body = io.NopCloser(strings.NewReader(body))
+					t.Cleanup(func() { common.CleanupBodyStorage(c) })
+					_, err := a.DoRequest(c, info, strings.NewReader(body))
 					require.NoError(t, err)
 
 					if mode != "off" {
@@ -316,6 +326,11 @@ func TestBedrockHeadersAndPhysicalAttemptMetrics(t *testing.T) {
 						}
 						options.HTTPClient = awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
 							attempts++
+							payload, err := io.ReadAll(request.Body)
+							require.NoError(t, err)
+							var data map[string]json.RawMessage
+							require.NoError(t, common.Unmarshal(payload, &data))
+							assert.Equal(t, `"bedrock-2023-05-31"`, string(data["anthropic_version"]), "every SDK attempt must send the protocol version")
 							assert.Equal(t, "custom-value", request.Header.Get("X-Channel-Tag"))
 							assert.Equal(t, "DISABLED", request.Header.Get("X-Amzn-Bedrock-Trace"))
 							assert.Empty(t, request.Header.Get("X-Forwarded-For"))
@@ -885,6 +900,89 @@ func TestBuildAwsRequestBodyPassThroughDropsRepeatedModelAndStream(t *testing.T)
 
 	require.NoError(t, err)
 	assert.Equal(t, `{"max_tokens":8}`, string(body))
+}
+
+func TestAwsDirectPassthroughAnthropicVersion(t *testing.T) {
+	settings := model_setting.GetGlobalSettings()
+	originalGlobalPassthrough := settings.PassThroughRequestEnabled
+	originalCompatibility := settings.AwsPassthroughCompatibilityEnabled
+	t.Cleanup(func() {
+		settings.PassThroughRequestEnabled = originalGlobalPassthrough
+		settings.AwsPassthroughCompatibilityEnabled = originalCompatibility
+	})
+	for _, tc := range []struct {
+		name               string
+		globalPassthrough  bool
+		channelPassthrough bool
+		compatibility      bool
+		direct             bool
+		version            string
+		wantVersion        string
+	}{
+		{name: "channel passthrough fills missing", channelPassthrough: true, compatibility: true, direct: true, wantVersion: `"bedrock-2023-05-31"`},
+		{name: "global passthrough fills missing", globalPassthrough: true, compatibility: true, direct: true, wantVersion: `"bedrock-2023-05-31"`},
+		{name: "existing version preserved", channelPassthrough: true, compatibility: true, direct: true, version: `"client-version"`, wantVersion: `"client-version"`},
+		{name: "explicit null preserved", channelPassthrough: true, compatibility: true, direct: true, version: `null`, wantVersion: `null`},
+		{name: "explicit empty preserved", channelPassthrough: true, compatibility: true, direct: true, version: `""`, wantVersion: `""`},
+		{name: "global compatibility disabled", channelPassthrough: true, direct: true},
+		{name: "user direct disabled compatibility path", channelPassthrough: true, compatibility: true, wantVersion: `"bedrock-2023-05-31"`},
+		{name: "non passthrough retains conversion", compatibility: true, direct: true, wantVersion: `"bedrock-2023-05-31"`},
+	} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%v", tc.name, stream), func(t *testing.T) {
+				settings.PassThroughRequestEnabled = tc.globalPassthrough
+				settings.AwsPassthroughCompatibilityEnabled = tc.compatibility
+				body := `{"model":"client-alias","stream":true,"max_tokens":128,"temperature":0,"messages":[{"role":"user","content":"hello"}],"thinking":{"type":"disabled"},"future":{"number":9007199254740993,"enabled":false}}`
+				if tc.version != "" {
+					body = strings.TrimSuffix(body, "}") + `,"anthropic_version":` + tc.version + `}`
+				}
+				c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+				c.Request.Body = io.NopCloser(strings.NewReader(body))
+				t.Cleanup(func() { common.CleanupBodyStorage(c) })
+				info := newAwsTestRelayInfo()
+				info.ApiKey = "access-key|secret-key|us-east-1"
+				info.IsStream = stream
+				info.UserSetting.AwsDirectPassthrough = tc.direct
+				info.ChannelSetting.PassThroughBodyEnabled = tc.channelPassthrough
+				info.AwsPassthroughCompatibility = (tc.globalPassthrough || tc.channelPassthrough) && tc.compatibility && !tc.direct
+				a := &Adaptor{}
+				_, err := doAwsClientRequest(c, info, a, strings.NewReader(body))
+				require.NoError(t, err)
+				var outbound []byte
+				var model string
+				if stream {
+					req, ok := a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput)
+					require.True(t, ok)
+					outbound, model = req.Body, aws.ToString(req.ModelId)
+				} else {
+					req, ok := a.AwsReq.(*bedrockruntime.InvokeModelInput)
+					require.True(t, ok)
+					outbound, model = req.Body, aws.ToString(req.ModelId)
+				}
+				var payload map[string]json.RawMessage
+				require.NoError(t, common.Unmarshal(outbound, &payload))
+				assert.Equal(t, tc.wantVersion, string(payload["anthropic_version"]))
+				assert.Equal(t, "us."+awsTestModel, model)
+				assert.NotContains(t, payload, "model")
+				assert.NotContains(t, payload, "stream")
+				assert.Equal(t, "0", string(payload["temperature"]))
+				assert.JSONEq(t, `{"type":"disabled"}`, string(payload["thinking"]))
+				if tc.globalPassthrough || tc.channelPassthrough {
+					assert.Equal(t, `{"number":9007199254740993,"enabled":false}`, string(payload["future"]))
+				}
+				if tc.direct && (tc.globalPassthrough || tc.channelPassthrough) {
+					storage, err := common.GetBodyStorage(c)
+					require.NoError(t, err)
+					original, err := storage.Bytes()
+					require.NoError(t, err)
+					assert.Equal(t, body, string(original), "retry source body must remain unchanged")
+					repeated, err := buildAwsRequestBody(c, info, nil)
+					require.NoError(t, err)
+					assert.Equal(t, outbound, repeated, "retry must produce the same payload")
+				}
+			})
+		}
+	}
 }
 
 func TestDoAwsClientRequest_PreservesSafeguards(t *testing.T) {
