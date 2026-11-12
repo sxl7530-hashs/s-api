@@ -20,8 +20,7 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 import z from 'zod'
 
 import { Pricing } from '@/features/pricing'
-import { getFreshModuleAccess } from '@/lib/nav-modules'
-import { noIndexHead, seoHead } from '@/lib/seo'
+import { getModuleAccessForGuard } from '@/lib/nav-modules'
 import { useAuthStore } from '@/stores/auth-store'
 
 const pricingSearchSchema = z.object({
@@ -38,15 +37,9 @@ const pricingSearchSchema = z.object({
 })
 
 export const Route = createFileRoute('/pricing/')({
-  head: async () => {
-    const access = await getFreshModuleAccess('pricing')
-    return access.enabled && !access.requireAuth
-      ? seoHead('AI API 价格与模型计费', undefined, '/pricing/')
-      : noIndexHead
-  },
   validateSearch: pricingSearchSchema,
-  beforeLoad: async ({ location }) => {
-    const access = await getFreshModuleAccess('pricing')
+  beforeLoad: async ({ context, location }) => {
+    const access = await getModuleAccessForGuard(context.queryClient, 'pricing')
     if (!access.enabled) {
       throw redirect({ to: '/' })
     }

@@ -60,16 +60,9 @@ import {
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Sheet,
   SheetContent,
@@ -86,6 +79,7 @@ import {
 } from '@/components/ui/tooltip'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import { updateChannel } from '../../api'
 import {
@@ -99,6 +93,8 @@ import type {
   SearchChannelsResponse,
 } from '../../types'
 import { useChannels } from '../channels-provider'
+import { getDisplayedChannelName } from '../../lib/channel-name-display'
+import { useChannelNameDisplay } from '../../hooks/use-channel-name-display'
 
 type ChannelTestDialogProps = {
   open: boolean
@@ -198,10 +194,6 @@ const endpointTypeOptions: Array<{ value: string; label: string }> = [
   },
   { value: 'embeddings', label: 'Embeddings (/v1/embeddings)' },
 ]
-
-const endpointSelectContentClass = 'w-[460px] max-w-[calc(100vw-2rem)]'
-const endpointSelectItemClass =
-  'items-start py-2 [&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:shrink [&_[data-slot=select-item-text]]:whitespace-normal'
 
 const STREAM_INCOMPATIBLE_ENDPOINTS = new Set([
   'embeddings',
@@ -327,6 +319,7 @@ function ChannelTestDialogContent({
 }: ChannelTestDialogContentProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const { settings: nameDisplaySettings } = useChannelNameDisplay()
   const currentChannelId = currentRow.id
   const batchStopRequestedRef = useRef(false)
   const batchProgressToastIdRef = useRef<ReturnType<
@@ -558,7 +551,7 @@ function ChannelTestDialogContent({
         await handleTestChannel(
           currentRow.id,
           {
-            channelName: currentRow.name,
+            channelName: getDisplayedChannelName(currentRow.name, nameDisplaySettings),
             testModel: model,
             endpointType: endpointType === 'auto' ? undefined : endpointType,
             stream: effectiveStreamTest || undefined,
@@ -803,14 +796,10 @@ function ChannelTestDialogContent({
         refreshChannelLists()
         setIsDeleteFailedDialogOpen(false)
       } else {
-        toast.error(response.message || t('Failed to delete failed models'))
+        handleServerError(response, t('Failed to delete failed models'))
       }
     } catch (error: unknown) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : t('Failed to delete failed models')
-      )
+      handleServerError(error, t('Failed to delete failed models'))
     } finally {
       setIsDeletingFailed(false)
     }
@@ -980,10 +969,10 @@ function ChannelTestDialogContent({
         title={
           <span className='inline-flex max-w-full min-w-0 items-center gap-1.5'>
             <span className='shrink-0'>{t('Test Channel Connection')}:</span>
-            <span className='min-w-0 truncate'>{currentRow.name}</span>
+            <span className='min-w-0 truncate'>{getDisplayedChannelName(currentRow.name, nameDisplaySettings)}</span>
           </span>
         }
-        contentClassName='max-h-[90vh] overflow-hidden sm:max-w-4xl'
+        contentClassName='max-h-[min(90dvh,var(--dialog-available-height))] overflow-y-auto sm:max-w-4xl'
         contentHeight='auto'
         bodyClassName='space-y-4'
         footer={
@@ -996,36 +985,14 @@ function ChannelTestDialogContent({
           <div className='grid gap-4 md:grid-cols-2'>
             <div className='grid gap-2'>
               <Label htmlFor='endpoint-type'>{t('Endpoint Type')}</Label>
-              <Select
-                items={endpointSelectItems}
+              <Combobox
+                options={endpointSelectItems}
                 value={endpointType}
                 onValueChange={handleEndpointTypeChange}
-              >
-                <SelectTrigger id='endpoint-type' className='w-full min-w-0'>
-                  <SelectValue
-                    className='min-w-0 truncate'
-                    placeholder={t('Auto detect (default)')}
-                  />
-                </SelectTrigger>
-                <SelectContent
-                  alignItemWithTrigger={false}
-                  className={endpointSelectContentClass}
-                >
-                  <SelectGroup>
-                    {endpointSelectItems.map((option) => (
-                      <SelectItem
-                        key={option.value}
-                        value={option.value}
-                        className={endpointSelectItemClass}
-                      >
-                        <span className='min-w-0 leading-snug break-words whitespace-normal'>
-                          {option.label}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+                id='endpoint-type'
+                className='w-full min-w-0'
+                placeholder={t('Auto detect (default)')}
+              />
               <p className='text-muted-foreground text-xs'>
                 {t(
                   'Override the endpoint used for testing. Leave empty to auto detect.'

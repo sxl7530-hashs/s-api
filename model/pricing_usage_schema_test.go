@@ -2,13 +2,18 @@ package model
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +35,8 @@ func TestPricingCarriesTaskUsageSchemaAndRefreshesWithPluginGeneration(t *testin
 	resetPricingEndpointTestTables(t)
 	const pluginKey = "pricing-usage-probe"
 	initialSource := pricingUsagePluginSource("1.0.0", `{
-  seconds: {type: "number", unit: "second", description: "Estimated duration."}
+  seconds: {type: "number", unit: "second", description: "Estimated duration."},
+  action: {enum:["video"],enumLabels:{video:{en:"Generate video",zh:"生成视频"}}}
 }`)
 	_, err := jsplugin.DefaultRegistry.Register(initialSource, jsplugin.Options{})
 	require.NoError(t, err)
@@ -45,6 +51,7 @@ func TestPricingCarriesTaskUsageSchemaAndRefreshesWithPluginGeneration(t *testin
 	require.Contains(t, initialPricing, "ordinary-model")
 	assert.Equal(t, "second", initialPricing["pricing-usage-model"].BillingUsageSchema["seconds"].Unit)
 	assert.Equal(t, "Estimated duration.", initialPricing["pricing-usage-model"].BillingUsageSchema["seconds"].Description["en"])
+	assert.Equal(t, "生成视频", initialPricing["pricing-usage-model"].BillingUsageSchema["action"].EnumLabels["video"]["zh"])
 	assert.Nil(t, initialPricing["ordinary-model"].BillingUsageSchema)
 
 	updatedSource := pricingUsagePluginSource("1.1.0", `{
@@ -136,4 +143,312 @@ func pricingByModel(pricings []Pricing) map[string]Pricing {
 		result[pricing.ModelName] = pricing
 	}
 	return result
+}
+
+func TestPricingUsageProfilesAndAliases(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	require.NoError(t, DB.AutoMigrate(&Option{}))
+	const key = "pricing-profiles"
+	const source = `
+export const meta = {
+ apiVersion:1,key:"pricing-profiles",name:"Pricing Profiles",version:"1.0.0",author:{name:"Test"},
+ models:["profile-image","profile-video"],fetchMode:"per_task",
+ usageSchema:{fallback:{type:"number",unit:"count"}},
+ usageExamples:[{label:"default",facts:{fallback:1}}],
+ usageProfiles:[
+  {models:["profile-image"],schema:{image_count:{type:"number",unit:"count"}}},
+  {models:["profile-video"],schema:{seconds:{type:"number",unit:"second"}},examples:[{label:"5 seconds",facts:{seconds:5}}]}
+ ]
+};
+export function buildSubmitRequest(){return {};}
+export function parseSubmitResponse(){return {};}
+export function buildQueryRequest(){return {};}
+export function parseTaskResult(){return {};}
+`
+	_, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister(key) })
+	for index, mapping := range []string{
+		`{"image-alias":"profile-image","video-alias":"profile-video","ambiguous-alias":"profile-image"}`,
+		`{"ambiguous-alias":"profile-video"}`,
+	} {
+		id := 920 + index
+		require.NoError(t, DB.Create(&Channel{
+			Id: id, Type: constant.ChannelTypeTaskPlugin, Status: 1, Name: fmt.Sprintf("channel-%d", id),
+			Models: "profile-image,profile-video,image-alias,video-alias,ambiguous-alias", ModelMapping: &mapping,
+		}).Error)
+		for _, name := range []string{"profile-image", "profile-video", "image-alias", "video-alias", "ambiguous-alias"} {
+			insertPricingEndpointAbility(t, id, name)
+		}
+	}
+	InitChannelCache()
+	pricing := pricingByModel(GetPricing())
+	names := []string{"profile-image", "profile-video", "image-alias", "video-alias", "ambiguous-alias"}
+	snapshot, err := GetModelPricingSnapshot(names)
+	require.NoError(t, err)
+	entries := make(map[string]ModelPricingEntry, len(snapshot.Entries))
+	for _, entry := range snapshot.Entries {
+		entries[entry.ModelName] = entry
+	}
+	for _, tc := range []struct {
+		name, field, unit string
+		wantExamples      int
+	}{
+		{"profile-image", "image_count", "count", 0},
+		{"profile-video", "seconds", "second", 1},
+		{"image-alias", "image_count", "count", 0},
+		{"video-alias", "seconds", "second", 1},
+		{"ambiguous-alias", "fallback", "count", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			expected := map[string]jsplugin.UsageFieldSchema{tc.field: {Type: "number", Unit: tc.unit}}
+			assert.Equal(t, expected, pricing[tc.name].BillingUsageSchema)
+			assert.Equal(t, expected, entries[tc.name].UsageSchema)
+			assert.Len(t, pricing[tc.name].BillingUsageExamples, tc.wantExamples)
+			require.NoError(t, ValidateModelPricing(tc.name, PricingValues{"billing_setting.billing_expr": `u("` + tc.field + `")`}))
+			require.ErrorContains(t, ValidateModelPricing(tc.name, PricingValues{"billing_setting.billing_expr": `u("missing")`}), "not declared")
+		})
+	}
+	require.ErrorContains(t, ValidateModelPricing("profile-image", PricingValues{"billing_setting.billing_expr": `u("seconds")`}), "not declared")
+	require.ErrorContains(t, ValidateModelPricing("video-alias", PricingValues{"billing_setting.billing_expr": `u("image_count")`}), "not declared")
+
+	saved := config.GlobalConfig.ExportAllConfigs()
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(saved)) })
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_expr":          `{"profile-image":"u(\"image_count\")"}`,
+		billing_setting.PluginBillingExprOption: `{"pricing-profiles::profile-image":"u(\"image_count\") * 2"}`,
+	}))
+	updated := strings.Replace(source, `version:"1.0.0"`, `version:"1.1.0"`, 1)
+	updated = strings.Replace(updated, `image_count:{type:"number",unit:"count"}`, `images:{type:"number",unit:"count"}`, 1)
+	_, err = jsplugin.DefaultRegistry.Register(updated, jsplugin.Options{})
+	require.NoError(t, err)
+	// Stored prices that read a fact the narrowed profile dropped stay saveable
+	// while unchanged; edited ones must follow the new profile.
+	stored := PricingValues{"billing_setting.billing_expr": `u("image_count")`, billing_setting.PluginBillingExprOption: map[string]any{key: `u("image_count") * 2`}}
+	require.NoError(t, ValidateModelPricing("profile-image", stored))
+	require.ErrorContains(t, ValidateModelPricing("profile-image", PricingValues{"billing_setting.billing_expr": `u("image_count") * 3`}), "not declared")
+	stored[billing_setting.PluginBillingExprOption] = map[string]any{key: `u("image_count") * 3`}
+	require.ErrorContains(t, ValidateModelPricing("profile-image", stored), "not declared")
+	InvalidatePricingCache()
+	refreshed := pricingByModel(GetPricing())
+	assert.Equal(t, map[string]jsplugin.UsageFieldSchema{"images": {Type: "number", Unit: "count"}}, refreshed["image-alias"].BillingUsageSchema)
+	assert.Equal(t, "second", refreshed["profile-video"].BillingUsageSchema["seconds"].Unit)
+}
+
+func TestPricingSharedPluginVariantsUseEachSchemaAndExpression(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	saved := config.GlobalConfig.ExportAllConfigs()
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(saved)) })
+	for _, spec := range []struct{ key, field, unit string }{{"pricing-alpha", "seconds", "second"}, {"pricing-beta", "credits", "credit"}} {
+		source := strings.ReplaceAll(pricingUsagePluginSource("1.0.0", `{`+spec.field+`:{type:"number",unit:"`+spec.unit+`"}}`), "pricing-usage-probe", spec.key)
+		_, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+		require.NoError(t, err)
+		t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister(spec.key) })
+	}
+	insertPricingEndpointChannel(t, 930, constant.ChannelTypeTaskPlugin, dto.ChannelOtherSettings{})
+	insertPricingEndpointAbility(t, 930, "pricing-usage-model")
+	const expression = `tier("base", u("seconds") * 0.4)`
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode":          `{"pricing-usage-model":"tiered_expr"}`,
+		"billing_setting.billing_expr":          `{"pricing-usage-model":"tier(\"base\", u(\"seconds\") * 0.4)"}`,
+		billing_setting.PluginBillingExprOption: `{}`,
+	}))
+	prices := pricingByModel(GetPricing())
+	variants := prices["pricing-usage-model"].BillingPluginVariants
+	require.Len(t, variants, 2)
+	assert.Equal(t, "pricing-alpha", variants[0].PluginKey)
+	assert.Equal(t, "pricing-beta", variants[1].PluginKey)
+	assert.Equal(t, expression, variants[0].BillingExpr)
+	assert.Empty(t, variants[1].BillingExpr)
+	assert.Equal(t, "credit", variants[1].BillingUsageSchema["credits"].Unit)
+	assert.Equal(t, expression, prices["pricing-usage-model"].BillingExpr)
+	assert.Contains(t, prices["pricing-usage-model"].BillingUsageSchema, "seconds")
+	draft := PricingValues{"billing_setting.billing_expr": expression}
+	require.ErrorContains(t, ValidateModelPricing("pricing-usage-model", draft), "plugin pricing-beta")
+	draft[billing_setting.PluginBillingExprOption] = map[string]any{"pricing-beta": `tier("beta", u("credits") * 2)`}
+	require.NoError(t, ValidateModelPricing("pricing-usage-model", draft))
+	for _, invalid := range []any{map[string]any{"missing": "1"}, map[string]any{"pricing-beta": float64(1)}, map[string]any{"pricing-beta": `u("seconds")`}, map[string]any(nil), []any{}, "invalid"} {
+		draft[billing_setting.PluginBillingExprOption] = invalid
+		assert.Error(t, ValidateModelPricing("pricing-usage-model", draft))
+	}
+	draft = PricingValues{
+		"billing_setting.billing_expr":          "invalid expression(",
+		billing_setting.PluginBillingExprOption: map[string]any{"pricing-alpha": expression, "pricing-beta": `u("credits")`},
+	}
+	require.ErrorContains(t, ValidateModelPricing("pricing-usage-model", draft), "compile")
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		billing_setting.PluginBillingExprOption: `{"pricing-beta::pricing-usage-model":"tier(\"beta\", u(\"credits\") * 2)"}`,
+	}))
+	InvalidatePricingCache()
+	priced := pricingByModel(GetPricing())["pricing-usage-model"].BillingPluginVariants
+	require.Len(t, priced, 2)
+	assert.Equal(t, `tier("beta", u("credits") * 2)`, priced[1].BillingExpr)
+	previousPrice := ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(previousPrice)) })
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"pricing-usage-model":0.25}`))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"billing_setting.billing_mode": `{"pricing-usage-model":"ratio"}`}))
+	InvalidatePricingCache()
+	mixed := pricingByModel(GetPricing())["pricing-usage-model"].BillingPluginVariants
+	require.Len(t, mixed, 2)
+	assert.Equal(t, billing_setting.BillingModeRatio, mixed[0].BillingMode)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, mixed[1].BillingMode)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{billing_setting.PluginBillingExprOption: `{}`}))
+	InvalidatePricingCache()
+	perCall := pricingByModel(GetPricing())["pricing-usage-model"]
+	assert.Empty(t, perCall.BillingPluginVariants)
+	assert.Equal(t, 1, perCall.QuotaType)
+	assert.Equal(t, 0.25, perCall.ModelPrice)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		billing_setting.PluginBillingExprOption: `{"pricing-beta::pricing-usage-model":"tier(\"beta\", u(\"credits\") * 2)"}`,
+	}))
+	require.NoError(t, jsplugin.DefaultRegistry.Unregister("pricing-alpha"))
+	InvalidatePricingCache()
+	single := pricingByModel(GetPricing())["pricing-usage-model"]
+	require.Len(t, single.BillingPluginVariants, 1)
+	assert.Equal(t, "pricing-beta", single.BillingPluginVariants[0].PluginKey)
+	assert.Equal(t, `tier("beta", u("credits") * 2)`, single.BillingPluginVariants[0].BillingExpr)
+	encoded, err := common.Marshal(single)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), "billing_plugin_variants")
+}
+
+// Prices saved while a plugin fit stop fitting when it changes: a dropped model
+// leaves its provider price stale, and a new provider without the usage the
+// model expression reads cannot charge it. Unpriced models are listed too,
+// including those whose only expression prices ordinary channels. Only stale
+// prices count for a model no enabled channel serves under any spelling.
+func TestModelPricingIssuesFollowPluginChanges(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	require.NoError(t, DB.AutoMigrate(&Option{}))
+	saved := config.GlobalConfig.ExportAllConfigs()
+	t.Cleanup(func() {
+		require.NoError(t, DB.Where(commonKeyCol+" IN ?", modelPricingOptionKeys).Delete(&Option{}).Error)
+		require.NoError(t, config.GlobalConfig.LoadFromDB(saved))
+	})
+	pluginSource := func(key, name, version, models, usageSchema string) string {
+		source := strings.ReplaceAll(pricingUsagePluginSource(version, usageSchema), "pricing-usage-probe", key)
+		source = strings.Replace(source, "Pricing Usage Probe", name, 1)
+		return strings.Replace(source, `["pricing-usage-model"]`, models, 1)
+	}
+	savePricing := func(options map[string]string) {
+		for key, value := range options {
+			require.NoError(t, DB.Save(&Option{Key: key, Value: value}).Error)
+		}
+		require.NoError(t, config.GlobalConfig.LoadFromDB(options))
+	}
+	const seconds = `{seconds:{type:"number",unit:"second"}}`
+	_, err := jsplugin.DefaultRegistry.Register(pluginSource("issue-alpha", "Alpha", "1.0.0", `["issue-priced","issue-per-call","issue-unpriced","issue-ordinary","issue-shared","issue-dropped","issue-idle"]`, seconds), jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister("issue-alpha") })
+	savePricing(map[string]string{
+		"ModelPrice":                            `{"issue-per-call":0.3}`,
+		"billing_setting.billing_mode":          `{"issue-priced":"tiered_expr","issue-ordinary":"tiered_expr","issue-shared":"tiered_expr"}`,
+		"billing_setting.billing_expr":          `{"issue-priced":"u(\"seconds\") * 0.1","issue-ordinary":"tier(\"image\", fixed(0.02)) * image_count","issue-shared":"u(\"seconds\") * 0.2"}`,
+		billing_setting.PluginBillingExprOption: `{"issue-alpha::issue-dropped":"u(\"seconds\") * 0.5"}`,
+	})
+	unpriced := ModelPricingIssue{ModelName: "issue-unpriced", PluginKey: "issue-alpha", PluginName: "Alpha", Reason: ModelPricingIssueUnconfigured}
+	ordinary := ModelPricingIssue{ModelName: "issue-ordinary", PluginKey: "issue-alpha", PluginName: "Alpha", Reason: ModelPricingIssueUnconfigured}
+	// Other tests leave their plugins in the shared registry.
+	ownIssues := func() []ModelPricingIssue {
+		issues, err := GetModelPricingIssues("")
+		require.NoError(t, err)
+		return slices.DeleteFunc(issues, func(issue ModelPricingIssue) bool { return !strings.HasPrefix(issue.PluginKey, "issue-") })
+	}
+
+	assert.Empty(t, ownIssues(), "no channel serves the models yet")
+
+	// Channels serve declared models under their own spelling, a case variant
+	// or a channel alias; a disabled ability serves nothing.
+	mapping := `{"ordinary-alias":"issue-ordinary"}`
+	require.NoError(t, DB.Create(&Channel{
+		Id: 940, Type: constant.ChannelTypeTaskPlugin, Key: "key-940", Status: common.ChannelStatusEnabled, Name: "channel-940",
+		Models: "ordinary-alias", ModelMapping: &mapping,
+	}).Error)
+	for _, name := range []string{"issue-priced", "issue-per-call", "Issue-Unpriced", "ordinary-alias", "issue-shared"} {
+		insertPricingEndpointAbility(t, 940, name)
+	}
+	require.NoError(t, DB.Create(&Ability{Group: "default", Model: "issue-idle", ChannelId: 940, Enabled: false}).Error)
+	InitChannelCache()
+
+	assert.Equal(t, []ModelPricingIssue{ordinary, unpriced}, ownIssues())
+
+	// Beta also declares the dropped model, which no channel serves: its
+	// unpriced variant is not an issue, while Alpha's stale price still is.
+	_, err = jsplugin.DefaultRegistry.Register(pluginSource("issue-alpha", "Alpha", "1.1.0", `["issue-priced","issue-per-call","issue-unpriced","issue-ordinary","issue-shared","issue-idle"]`, seconds), jsplugin.Options{})
+	require.NoError(t, err)
+	_, err = jsplugin.DefaultRegistry.Register(pluginSource("issue-beta", "Beta", "1.0.0", `["issue-shared","issue-dropped"]`, `{credits:{type:"number",unit:"credit"}}`), jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister("issue-beta") })
+	incompatible := ModelPricingIssue{ModelName: "issue-shared", PluginKey: "issue-beta", PluginName: "Beta", Reason: ModelPricingIssueIncompatible}
+
+	assert.Equal(t, []ModelPricingIssue{
+		{ModelName: "issue-dropped", PluginKey: "issue-alpha", PluginName: "Alpha", Reason: ModelPricingIssueStale},
+		ordinary,
+		incompatible,
+		unpriced,
+	}, ownIssues())
+	issues, err := GetModelPricingIssues("issue-beta")
+	require.NoError(t, err)
+	assert.Equal(t, []ModelPricingIssue{incompatible}, issues)
+
+	// A provider price that reads the provider's own usage replaces the model
+	// expression for that provider only.
+	savePricing(map[string]string{
+		billing_setting.PluginBillingExprOption: `{"issue-alpha::issue-dropped":"u(\"seconds\") * 0.5","issue-beta::issue-shared":"u(\"credits\") * 2"}`,
+	})
+	issues, err = GetModelPricingIssues("issue-beta")
+	require.NoError(t, err)
+	assert.Empty(t, issues)
+}
+
+// The full snapshot lists a built-in price, with its expression as the editor
+// default, once the price is saved or an enabled channel serves the model. A
+// request for named models keeps every built-in default.
+func TestModelPricingSnapshotListsUsedBuiltinPrices(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	require.NoError(t, DB.AutoMigrate(&Option{}))
+	clearPricing := func() {
+		require.NoError(t, DB.Where(commonKeyCol+" IN ?", modelPricingOptionKeys).Delete(&Option{}).Error)
+	}
+	clearPricing()
+	t.Cleanup(clearPricing)
+	require.NoError(t, DB.Create(&Option{Key: "billing_setting.billing_mode", Value: `{"deepseek-v4-pro":"tiered_expr"}`}).Error)
+	insertPricingEndpointAbility(t, 950, "gpt-image-2")
+	require.NoError(t, DB.Create(&Ability{Group: "default", Model: "gpt-image-2.5-flare", ChannelId: 950, Enabled: false}).Error)
+
+	full, err := GetModelPricingSnapshot(nil)
+	require.NoError(t, err)
+	listed := make(map[string]bool, len(full.Entries))
+	for _, entry := range full.Entries {
+		listed[entry.ModelName] = true
+	}
+	var modes, expressions, namedExpressions map[string]string
+	require.NoError(t, common.UnmarshalJsonStr(full.Options["billing_setting.billing_mode"], &modes))
+	require.NoError(t, common.UnmarshalJsonStr(full.Options["billing_setting.billing_expr"], &expressions))
+	named, err := GetModelPricingSnapshot([]string{"deepseek-v4-pro"})
+	require.NoError(t, err)
+	require.NoError(t, common.UnmarshalJsonStr(named.Options["billing_setting.billing_expr"], &namedExpressions))
+	for _, tc := range []struct {
+		name   string
+		listed bool
+	}{
+		{"deepseek-v4-pro", true},
+		{"gpt-image-2", true},
+		{"gpt-image-2.5-flare", false},
+		{"gpt-6-astra", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			builtin, ok := billing_setting.GetBuiltinBillingExpr(tc.name)
+			require.True(t, ok)
+			assert.Equal(t, tc.listed, listed[tc.name])
+			if tc.listed {
+				assert.Equal(t, billing_setting.BillingModeTieredExpr, modes[tc.name])
+				assert.Equal(t, builtin, expressions[tc.name])
+			} else {
+				assert.NotContains(t, modes, tc.name)
+				assert.NotContains(t, expressions, tc.name)
+			}
+			assert.Equal(t, builtin, namedExpressions[tc.name])
+		})
+	}
 }

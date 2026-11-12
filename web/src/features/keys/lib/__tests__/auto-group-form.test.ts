@@ -51,6 +51,7 @@ const baseApiKey: ApiKey = {
   model_limits_enabled: false,
   model_limits: '',
   allow_ips: '',
+  allow_user_quota_query: false,
 }
 
 describe('API key Auto group form mapping', () => {
@@ -141,7 +142,7 @@ describe('API key Auto group form mapping', () => {
     if (result.success) return
     expect(result.error.issues[0]?.path).toEqual(['auto_groups'])
     expect(result.error.issues[0]?.message).toBe(
-      'Select at least one Auto group or restore global Auto.'
+      'Select at least one group or restore the configured order.'
     )
   })
 
@@ -183,7 +184,7 @@ describe('API key Auto group form mapping', () => {
     expect(result.success).toBe(false)
     if (result.success) return
     expect(result.error.issues[0]?.path[0]).toBe('auto_groups')
-    expect(result.error.issues[0]?.message).toBe('Select at most 1 Auto groups')
+    expect(result.error.issues[0]?.message).toBe('Select at most 1 groups')
   })
 
   test('rejects duplicate custom groups', () => {
@@ -197,7 +198,35 @@ describe('API key Auto group form mapping', () => {
     expect(result.success).toBe(false)
     if (result.success) return
     expect(result.error.issues[0]?.message).toBe(
-      'Auto groups must not contain duplicates'
+      'Groups must not contain duplicates'
     )
   })
+})
+
+describe('API key user quota query form mapping', () => {
+  test('lets a new key query the user quota by default', () => {
+    for (const defaultUseAutoGroup of [true, false]) {
+      const defaults = getApiKeyFormDefaultValues(defaultUseAutoGroup)
+
+      expect(defaults.allow_user_quota_query).toBe(true)
+      expect(transformFormDataToPayload(defaults).allow_user_quota_query).toBe(
+        true
+      )
+    }
+  })
+
+  test.each([true, false])(
+    'keeps the stored value %s when an existing key is edited and saved',
+    (stored) => {
+      const defaults = transformApiKeyToFormDefaults({
+        ...baseApiKey,
+        allow_user_quota_query: stored,
+      })
+
+      expect(defaults.allow_user_quota_query).toBe(stored)
+      expect(transformFormDataToPayload(defaults).allow_user_quota_query).toBe(
+        stored
+      )
+    }
+  )
 })

@@ -30,6 +30,9 @@ func EnsureChannelCostRatioHistory(tx *gorm.DB, channelId int, ratio float64, at
 		return errors.New("channel id is required")
 	}
 	ratio = NormalizeChannelCostRatio(ratio)
+	if !tx.Migrator().HasTable(&ChannelCostRatioHistory{}) {
+		return nil
+	}
 	if at <= 0 {
 		at = time.Now().Unix()
 	}

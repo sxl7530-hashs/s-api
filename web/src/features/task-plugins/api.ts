@@ -17,12 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api, type ApiRequestConfig } from '@/lib/api'
+import { createServerError } from '@/lib/server-error-message'
 
 import type {
   ApiResponse,
   MarketplaceSource,
   TaskPluginDetail,
   TaskPluginListItem,
+  TaskPluginPricingNotice,
   TaskPluginRecord,
   TaskPluginUsage,
   TaskPluginDryRunRequest,
@@ -60,7 +62,7 @@ function requireSuccess<T>(response: ApiResponse<T>): T {
     if (data?.channels && typeof data.in_flight_count === 'number') {
       throw new TaskPluginUsageError(response.message, data)
     }
-    throw new Error(response.message)
+    throw createServerError(response)
   }
   return response.data
 }
@@ -86,10 +88,18 @@ export async function getTaskPluginVersions(key: string) {
   return requireSuccess(response.data)
 }
 
-export async function uploadTaskPlugin(source: string, remark: string) {
+/**
+ * `icon` is the sidecar icon.svg / icon.png as a data URI. It is stored apart
+ * from the source, so the JavaScript stays readable in diffs and reviews.
+ */
+export async function uploadTaskPlugin(
+  source: string,
+  remark: string,
+  icon?: string
+) {
   const response = await api.post<ApiResponse<TaskPluginDetail>>(
     '/api/plugin/task',
-    { source, remark },
+    { source, remark, icon: icon || undefined },
     mutationConfig
   )
   return requireSuccess(response.data)
@@ -105,6 +115,7 @@ export async function installMarketplacePlugin(request: {
   source: string
   sourceSha256?: string
   remark: string
+  icon?: string
 }) {
   const response = await api.post<ApiResponse<TaskPluginDetail>>(
     '/api/plugin/task',
@@ -113,6 +124,7 @@ export async function installMarketplacePlugin(request: {
       sourceSha256: request.sourceSha256,
       enabled: true,
       remark: request.remark,
+      icon: request.icon || undefined,
     },
     mutationConfig
   )
@@ -136,12 +148,12 @@ export async function updateMarketplaceSources(sources: MarketplaceSource[]) {
 }
 
 export async function activateTaskPlugin(key: string, version: string) {
-  const response = await api.post<ApiResponse<null>>(
+  const response = await api.post<ApiResponse<TaskPluginPricingNotice>>(
     `/api/plugin/task/${encodeURIComponent(key)}/activate`,
     { version },
     mutationConfig
   )
-  requireSuccess(response.data)
+  return requireSuccess(response.data)
 }
 
 export async function setTaskPluginStatus(
@@ -149,12 +161,12 @@ export async function setTaskPluginStatus(
   enabled: boolean,
   options?: { cascade?: boolean; force?: boolean }
 ) {
-  const response = await api.post<ApiResponse<null>>(
+  const response = await api.post<ApiResponse<TaskPluginPricingNotice>>(
     `/api/plugin/task/${encodeURIComponent(key)}/status`,
     { enabled },
     { ...mutationConfig, params: options }
   )
-  requireSuccess(response.data)
+  return requireSuccess(response.data)
 }
 
 export async function deleteTaskPluginVersion(
@@ -162,11 +174,11 @@ export async function deleteTaskPluginVersion(
   version: string,
   force = false
 ) {
-  const response = await api.delete<ApiResponse<null>>(
+  const response = await api.delete<ApiResponse<TaskPluginPricingNotice>>(
     `/api/plugin/task/${encodeURIComponent(key)}/versions/${encodeURIComponent(version)}`,
     { ...mutationConfig, params: force ? { force: true } : undefined }
   )
-  requireSuccess(response.data)
+  return requireSuccess(response.data)
 }
 
 export async function getTaskPluginEnabledOption() {
@@ -176,8 +188,8 @@ export async function getTaskPluginEnabledOption() {
     )
   const options = requireSuccess(response.data)
   return (
-    options.find((option) => option.key === 'TaskPluginEnabled')
-      ?.value === 'true'
+    options.find((option) => option.key === 'TaskPluginEnabled')?.value ===
+    'true'
   )
 }
 

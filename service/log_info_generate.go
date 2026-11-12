@@ -2,7 +2,8 @@ package service
 
 import (
 	"encoding/base64"
-	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -42,7 +43,7 @@ func attachQuotaSaturation(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, o
 		return
 	}
 	attachQuotaSaturationToOther(other, clamp)
-	logger.LogWarn(ctx, fmt.Sprintf("quota saturation on consume log: op=%s kind=%s original=%g clamped=%d user=%d model=%s",
+	logger.LogWarn(ctx, common.LogText("quota saturation on consume log: op=%s kind=%s original=%g clamped=%d user=%d model=%s",
 		clamp.Op, clamp.Kind, clamp.Original, clamp.Clamped, relayInfo.UserId, relayInfo.GetBillingModelName()))
 }
 
@@ -72,6 +73,40 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		return
 	}
 	other.SetAdmin("use_channel", ctx.GetStringSlice("use_channel"))
+	rules := ctx.GetStringSlice("claude5_compat_rules")
+	value, _ := ctx.Get("claude5_compat_audit")
+	audit, _ := value.(map[string]any)
+	if (len(rules) > 0 || len(audit) > 0) && relayInfo != nil && relayInfo.ChannelMeta != nil && relayInfo.ChannelType == constant.ChannelTypeAws {
+		samplePercent := 100
+		if rate, ok := audit["audit_sample_percent"].(int); ok {
+			samplePercent = rate
+		}
+		fingerprint := common.GenerateHMAC("claude5-compat:" + ctx.GetString(common.RequestIdKey))
+		// Two hex digits give deterministic sampling without storing raw IDs.
+		bucket, _ := strconv.ParseUint(fingerprint[:2], 16, 8)
+		if samplePercent == 100 || int(bucket)*100 < samplePercent*256 {
+			mode := "off"
+			if slices.Contains(rules, "attribution_removed") {
+				mode = "remove"
+			}
+			if slices.Contains(rules, "attribution_forged") {
+				mode = "forge"
+			}
+			metadata := map[string]any{"rules": rules, "attribution_mode": mode, "beta_injected": ctx.GetBool("claude5_compat_beta_injected"), "thinking_budget_dropped": slices.Contains(rules, "thinking_budget_dropped")}
+			for key, value := range audit {
+				metadata[key] = value
+			}
+			metadata["retry_count"] = max(relayInfo.RetryIndex, 0)
+			if !relayInfo.StartTime.IsZero() && !relayInfo.FirstResponseTime.IsZero() && !relayInfo.FirstResponseTime.Before(relayInfo.StartTime) {
+				metadata["ttfb_ms"] = relayInfo.FirstResponseTime.Sub(relayInfo.StartTime).Milliseconds()
+			}
+			if relayInfo.IsStream && relayInfo.StreamStatus != nil {
+				metadata["stream_interrupted"] = !relayInfo.StreamStatus.IsNormalEnd() || relayInfo.StreamStatus.HasErrors() || relayInfo.StreamStatus.ResponseFailed()
+			}
+			other.SetAdmin("claude5_compat", metadata)
+		}
+	}
+
 	if relayInfo != nil {
 		if billingModel := relayInfo.GetBillingModelName(); billingModel != "" && billingModel != relayInfo.OriginModelName {
 			other.SetAdmin("billing_model", billingModel)
@@ -92,10 +127,14 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	}
 
 	AppendChannelAffinityAdminInfo(ctx, other)
+	if events := RequestPolicy(ctx).Events(); len(events) > 0 {
+		other.SetAdmin("request_policy", events)
+	}
 }
 
 func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
 	cacheTokens int, cacheRatio float64, modelPrice float64, userGroupRatio float64) *model.LogOther {
+	MarkRequestPolicySuccess(ctx, relayInfo.StreamStatus)
 	other := model.NewLogOther()
 	other.SetPublic("model_ratio", modelRatio)
 	other.SetPublic("group_ratio", groupRatio)
@@ -119,6 +158,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	}
 
 	AppendRelayLogAdminInfo(ctx, relayInfo, other)
+	AppendResponseModelLogInfo(relayInfo, other)
 	appendRequestPath(ctx, relayInfo, other)
 	appendRequestConversionChain(relayInfo, other)
 	appendFinalRequestFormat(relayInfo, other)
@@ -126,6 +166,19 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendParamOverrideInfo(relayInfo, other)
 	appendStreamStatus(relayInfo, other)
 	return other
+}
+
+func AppendResponseModelLogInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
+	if relayInfo == nil || relayInfo.ResponseModel == nil || other == nil {
+		return
+	}
+	observation := relayInfo.ResponseModel
+	if observation.ReturnedModel == observation.RequestedModel &&
+		(observation.UpstreamModel == "" || observation.UpstreamModel == observation.RequestedModel) &&
+		(relayInfo.ChannelMeta == nil || !relayInfo.IsModelMapped) {
+		return
+	}
+	other.SetPublic("response_model", *observation)
 }
 
 func appendParamOverrideInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
@@ -141,12 +194,15 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other *model.LogOther)
 	}
 	ss := relayInfo.StreamStatus
 	status := "ok"
-	if !ss.IsNormalEnd() || ss.HasErrors() {
+	if !ss.IsNormalEnd() || ss.HasErrors() || ss.ResponseFailed() {
 		status = "error"
 	}
-	streamInfo := map[string]interface{}{
+	streamInfo := map[string]any{
 		"status":     status,
 		"end_reason": string(ss.EndReason),
+	}
+	if outcome := ss.ResponseOutcome(); outcome != "" {
+		streamInfo["response_status"] = outcome
 	}
 	if ss.EndError != nil {
 		streamInfo["end_error"] = ss.EndError.Error()
@@ -200,10 +256,7 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) 
 			usedFinal = 0
 		}
 		if relayInfo.SubscriptionAmountTotal > 0 {
-			remain := relayInfo.SubscriptionAmountTotal - usedFinal
-			if remain < 0 {
-				remain = 0
-			}
+			remain := max(relayInfo.SubscriptionAmountTotal-usedFinal, 0)
 			other.SetPublic("subscription_total", relayInfo.SubscriptionAmountTotal)
 			other.SetPublic("subscription_used", usedFinal)
 			other.SetPublic("subscription_remain", remain)
@@ -325,9 +378,36 @@ func InjectTieredBillingInfo(other *model.LogOther, relayInfo *relaycommon.Relay
 	other.SetPublic("billing_mode", "tiered_expr")
 	other.SetPublic("expr_b64", base64.StdEncoding.EncodeToString([]byte(snap.ExprString)))
 	if result != nil {
+		if tokens := result.BillingTokens; tokens != nil && result.BillingUnit == billingexpr.BillingUnitToken {
+			other.SetPublic("image_cache_tokens", tokens.ImgCR)
+			other.SetPublic("billing_tokens", map[string]float64{
+				"p": tokens.P, "c": tokens.C, "len": tokens.Len,
+				"cr": tokens.CR, "cc": tokens.CC, "cc1h": tokens.CC1h, "cc12h": tokens.CC12h,
+				"img": tokens.Img, "img_cr": tokens.ImgCR, "img_o": tokens.ImgO,
+				"ai": tokens.AI, "ao": tokens.AO,
+			})
+		}
+		if result.ImageCount != nil {
+			other.SetPublic("image_count", *result.ImageCount)
+		}
 		other.SetPublic("matched_tier", result.MatchedTier)
+		if result.BillingUnit != "" {
+			other.SetPublic("billing_unit", result.BillingUnit)
+		}
+		if result.FixedPrice != nil {
+			other.SetPublic("fixed_price", *result.FixedPrice)
+		}
 		if len(result.RequestRules) > 0 {
 			other.SetPublic("request_rules", result.RequestRules)
+		}
+	} else if snap.EstimatedBillingUnit != "" {
+		if snap.EstimatedImageCount != nil {
+			other.SetPublic("image_count", *snap.EstimatedImageCount)
+		}
+		other.SetPublic("matched_tier", snap.EstimatedTier)
+		other.SetPublic("billing_unit", snap.EstimatedBillingUnit)
+		if snap.EstimatedFixedPrice != nil {
+			other.SetPublic("fixed_price", *snap.EstimatedFixedPrice)
 		}
 	}
 }

@@ -35,6 +35,7 @@ const excludedDirs = new Set([
   '.tanstack',
   'build',
   'coverage',
+  'classic',
   'dist',
   'node_modules',
 ])
