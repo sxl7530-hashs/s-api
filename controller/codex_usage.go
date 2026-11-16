@@ -137,6 +137,7 @@ func fetchCodexChannelWhamData(
 					ch = &channelCopy
 					ch.Key = string(encoded)
 					model.CacheUpdateChannel(ch)
+					model.BumpSyncTopic(model.SyncTopicChannels)
 				}
 			}
 

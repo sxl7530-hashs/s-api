@@ -94,6 +94,7 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 	if err := model.DB.Model(&model.Channel{}).Where("id = ?", ch.Id).Update("key", string(encoded)).Error; err != nil {
 		return nil, nil, err
 	}
+	model.BumpSyncTopic(model.SyncTopicChannels)
 	channelCopy := *ch
 	ch = &channelCopy
 	ch.Key = string(encoded)
