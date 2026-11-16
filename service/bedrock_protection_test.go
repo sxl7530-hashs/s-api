@@ -19,6 +19,7 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestBedrockModelAndChannelCeilingsReserveTogether(t *testing.T) {
@@ -502,6 +503,87 @@ func TestBedrockCapacityRejectionSelectsAnotherChannelInSameTier(t *testing.T) {
 	assert.Contains(t, []int{71, 72}, peer.Id)
 	assert.NotEqual(t, preferred.Id, peer.Id)
 	assert.Equal(t, 2, fallbackParam.GetRetry(), "the combined offsets must not grant extra attempts")
+}
+
+func configureBedrockSelectionChannel(t *testing.T, db *gorm.DB, id int, channelType int, settings *dto.BedrockProtectionSettings) {
+	t.Helper()
+	channel := &model.Channel{}
+	require.NoError(t, db.First(channel, id).Error)
+	channel.Type = channelType
+	channel.SetSetting(dto.ChannelSettings{BedrockProtection: settings})
+	require.NoError(t, db.Save(channel).Error)
+}
+
+func TestCacheSelectionSkipsCoolingAwsChannelBeforeRelay(t *testing.T) {
+	setupChannelSelectAutoGroupsTest(t)
+	server := useBedrockProtectionRedis(t)
+	const modelName = "aws-cooldown-selection"
+	createChannelSelectAutoGroupsChannel(t, model.DB, 8101, "default", modelName)
+	createChannelSelectAutoGroupsChannel(t, model.DB, 8102, "default", modelName)
+	settings := &dto.BedrockProtectionSettings{ThrottlingCooldownEnabled: true}
+	configureBedrockSelectionChannel(t, model.DB, 8101, constant.ChannelTypeAws, settings)
+	configureBedrockSelectionChannel(t, model.DB, 8102, constant.ChannelTypeAws, settings)
+	model.InitChannelCache()
+	require.NoError(t, common.RDB.Set(t.Context(), bedrockCooldownKey(8101), "1", time.Minute).Err())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	channel, _, err := CacheGetRandomSatisfiedChannel(&RetryParam{Ctx: c, TokenGroup: "default", ModelName: modelName})
+	require.NoError(t, err)
+	assert.Equal(t, 8102, channel.Id, "a cooling AWS channel must be filtered before relay setup")
+	assert.NotContains(t, server.Keys(), "bedrock:cooldown:8102")
+}
+
+func TestCacheSelectionPreservesNonAwsCooldownBehavior(t *testing.T) {
+	setupChannelSelectAutoGroupsTest(t)
+	useBedrockProtectionRedis(t)
+	const modelName = "non-aws-cooldown-selection"
+	createChannelSelectAutoGroupsChannel(t, model.DB, 8111, "default", modelName)
+	settings := &dto.BedrockProtectionSettings{ThrottlingCooldownEnabled: true}
+	configureBedrockSelectionChannel(t, model.DB, 8111, constant.ChannelTypeOpenAI, settings)
+	model.InitChannelCache()
+	require.NoError(t, common.RDB.Set(t.Context(), bedrockCooldownKey(8111), "1", time.Minute).Err())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	channel, _, err := CacheGetRandomSatisfiedChannel(&RetryParam{Ctx: c, TokenGroup: "default", ModelName: modelName})
+	require.NoError(t, err)
+	assert.Equal(t, 8111, channel.Id, "cooldown filtering must not change non-AWS channel selection")
+}
+
+func TestCacheSelectionReturnsNoCoolingAwsCandidates(t *testing.T) {
+	setupChannelSelectAutoGroupsTest(t)
+	useBedrockProtectionRedis(t)
+	const modelName = "all-aws-cooling-selection"
+	createChannelSelectAutoGroupsChannel(t, model.DB, 8121, "default", modelName)
+	createChannelSelectAutoGroupsChannel(t, model.DB, 8122, "default", modelName)
+	settings := &dto.BedrockProtectionSettings{ThrottlingCooldownEnabled: true}
+	for _, id := range []int{8121, 8122} {
+		configureBedrockSelectionChannel(t, model.DB, id, constant.ChannelTypeAws, settings)
+	}
+	model.InitChannelCache()
+	for _, id := range []int{8121, 8122} {
+		require.NoError(t, common.RDB.Set(t.Context(), bedrockCooldownKey(id), "1", time.Minute).Err())
+	}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	channel, _, err := CacheGetRandomSatisfiedChannel(&RetryParam{Ctx: c, TokenGroup: "default", ModelName: modelName})
+	require.NoError(t, err)
+	assert.Nil(t, channel, "all cooling AWS candidates should be unavailable to selection")
+}
+
+func TestCacheSelectionFailsOpenWhenCooldownRedisUnavailable(t *testing.T) {
+	setupChannelSelectAutoGroupsTest(t)
+	server := useBedrockProtectionRedis(t)
+	const modelName = "aws-cooldown-redis-fail-open"
+	createChannelSelectAutoGroupsChannel(t, model.DB, 8131, "default", modelName)
+	settings := &dto.BedrockProtectionSettings{ThrottlingCooldownEnabled: true}
+	configureBedrockSelectionChannel(t, model.DB, 8131, constant.ChannelTypeAws, settings)
+	model.InitChannelCache()
+	server.Close()
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	channel, _, err := CacheGetRandomSatisfiedChannel(&RetryParam{Ctx: c, TokenGroup: "default", ModelName: modelName})
+	require.NoError(t, err)
+	assert.Equal(t, 8131, channel.Id, "Redis errors must keep AWS selection fail-open")
 }
 
 func TestBedrockProtectionFailsOpenWhenRedisIsUnavailable(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -12,9 +13,49 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 )
+
+// getRandomSatisfiedChannelAvoidingBedrockCooldown filters cooling AWS
+// channels before relay setup. The selection retry stays at the same priority
+// so cooldown filtering does not consume a request retry.
+func getRandomSatisfiedChannelAvoidingBedrockCooldown(group, modelName string, retry int, filters []dto.ChannelFilter) (*model.Channel, error) {
+	selectionFilters := slices.Clone(filters)
+	excluded := make(map[int]struct{})
+	for {
+		channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, selectionFilters)
+		if err != nil || channel == nil {
+			return channel, err
+		}
+		if channel.Type != constant.ChannelTypeAws || !isBedrockChannelCoolingDown(channel) {
+			return channel, nil
+		}
+		if _, alreadyExcluded := excluded[channel.Id]; alreadyExcluded {
+			// Defensive guard for an inconsistent selector implementation. Do not
+			// spin or expose a cooling candidate to the relay.
+			return nil, nil
+		}
+		excluded[channel.Id] = struct{}{}
+		selectionFilters = append(selectionFilters, dto.ChannelFilter{
+			Kind:              dto.FilterExcludedChannel,
+			ExcludedChannelID: channel.Id,
+		})
+	}
+}
+
+func isBedrockChannelCoolingDown(channel *model.Channel) bool {
+	if channel == nil || channel.Type != constant.ChannelTypeAws || channel.Setting == nil || *channel.Setting == "" {
+		return false
+	}
+	settings := &kitdto.ChannelSettings{}
+	if err := common.Unmarshal([]byte(*channel.Setting), settings); err != nil {
+		// A malformed optional setting must not make an AWS channel unavailable.
+		return false
+	}
+	return IsBedrockCoolingDown(channel.Id, settings.BedrockProtection)
+}
 
 func GetChannelConstraints(c *gin.Context) *dto.ChannelConstraints {
 	if c == nil {
@@ -162,7 +203,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			priorityRetry := max(groupRetry-affinityRetryOffset-param.capacitySkips, 0)
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(
+			channel, _ = getRandomSatisfiedChannelAvoidingBedrockCooldown(
 				autoGroup,
 				param.ModelName,
 				priorityRetry,
@@ -208,7 +249,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(
+		channel, err = getRandomSatisfiedChannelAvoidingBedrockCooldown(
 			param.TokenGroup,
 			param.ModelName,
 			max(param.GetRetry()-affinityRetryOffset-param.capacitySkips, 0),

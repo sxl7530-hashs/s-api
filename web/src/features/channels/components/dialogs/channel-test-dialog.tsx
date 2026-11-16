@@ -637,6 +637,7 @@ function ChannelTestDialogContent({
       endpointType,
       effectiveStreamTest,
       markModelTesting,
+      nameDisplaySettings,
       refreshChannelLists,
       t,
       updateTestResult,

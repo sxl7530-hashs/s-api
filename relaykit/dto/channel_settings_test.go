@@ -2,7 +2,6 @@ package dto
 
 import (
 	"encoding/json"
-	"regexp"
 	"strings"
 	"testing"
 
