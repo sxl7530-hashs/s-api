@@ -16,8 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, test } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+
+import type { ApiKey } from '../../types'
 
 const { createInstance } = await import('i18next')
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
@@ -204,13 +206,11 @@ afterEach(() => {
 })
 
 describe('API keys mutate drawer Auto group integration', () => {
-  test('inherits the root Auto order and sends an empty override for every batch-created key', async () => {
+  test('inherits the configured order and sends an empty override for every batch-created key', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
 
-    const groupTrigger = getControlByLabel('Group')
-    expect(groupTrigger.textContent?.includes('auto')).toBe(true)
     expect(
       document.body.textContent?.includes(
         'Using the complete global Auto order (2 groups)'
@@ -237,7 +237,7 @@ describe('API keys mutate drawer Auto group integration', () => {
     }
   })
 
-  test('preserves an unsaved custom order and mode after Auto to ordinary to Auto changes', async () => {
+  test('submits a custom group order selected from the inherited Auto route', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
@@ -259,22 +259,153 @@ describe('API keys mutate drawer Auto group integration', () => {
     )
     expect(findButton('Restore global Auto', true).disabled).toBe(false)
 
-    const groupTrigger = getControlByLabel('Group')
-    selectComboboxOption(groupTrigger, 'Standard access')
-    expect(document.querySelector('button[aria-label="Remove vip"]')).toBe(null)
-    selectComboboxOption(groupTrigger, 'Automatic routing')
-
-    expect(
-      document.querySelector('button[aria-label="Remove vip"]')
-    ).toBeTruthy()
-    expect(document.body.textContent?.includes('1 / 3 groups selected')).toBe(
-      true
-    )
-    expect(findButton('Restore global Auto', true).disabled).toBe(false)
-
     changeInput(getControlByLabel('Name'), 'custom')
     fireEvent.click(findButton('Save changes', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
     expect(createdPayloads[0]?.auto_groups).toEqual(['vip'])
+  })
+})
+
+describe('API key expiry across editing sessions', () => {
+  test.each(['close', 'save'] as const)(
+    'keeps an uncached key non-expiring after %s of a key with an expiry',
+    async (finish) => {
+      installApiFixtures([])
+      const first: ApiKey = {
+        id: 1,
+        name: 'expiring',
+        key: '',
+        status: 1,
+        remain_quota: 0,
+        used_quota: 0,
+        unlimited_quota: true,
+        expired_time: 2000000000,
+        created_time: 1,
+        accessed_time: 0,
+        group: 'default',
+        auto_groups: [],
+        cross_group_retry: false,
+        model_limits_enabled: false,
+        model_limits: '',
+        allow_ips: '',
+        allow_user_quota_query: true,
+      }
+      const second = { ...first, id: 2, name: 'non-expiring', expired_time: -1 }
+      let resolveDetail!: (value: { data: unknown }) => void
+      const detail = new Promise<{ data: unknown }>((resolve) => {
+        resolveDetail = resolve
+      })
+      const getFixture = apiClient.get
+      const get = vi.spyOn(apiClient, 'get').mockImplementation((url) => {
+        if (url === '/api/token/1') {
+          return Promise.resolve({ data: { success: true, data: first } })
+        }
+        if (url === '/api/token/2') return detail
+        return getFixture(url)
+      })
+      const put = vi
+        .spyOn(api, 'put')
+        .mockResolvedValue({ data: { success: true } })
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      })
+      renderedDrawer = { queryClient }
+      const close = vi.fn()
+      const tree = (currentRow: ApiKey, open: boolean) => (
+        <QueryClientProvider client={queryClient}>
+          <I18nextProvider i18n={i18n}>
+            <ApiKeysProvider>
+              <ApiKeysMutateDrawer
+                open={open}
+                currentRow={currentRow}
+                onOpenChange={close}
+              />
+            </ApiKeysProvider>
+          </I18nextProvider>
+        </QueryClientProvider>
+      )
+      const view = render(tree(first, true))
+      await waitFor(() =>
+        expect(findButton('Save changes', true)).toBeEnabled()
+      )
+      await waitFor(() => expect(screen.getByLabelText('Time')).toBeEnabled())
+
+      if (finish === 'save') {
+        fireEvent.click(findButton('Save changes', true))
+        await waitFor(() => expect(put).toHaveBeenCalled())
+        expect(put.mock.calls[0][1]).toMatchObject({
+          id: 1,
+          expired_time: 2000000000,
+        })
+      } else {
+        fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
+      }
+      await waitFor(() => expect(close.mock.calls[0]?.[0]).toBe(false))
+      view.rerender(tree(first, false))
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      )
+      view.rerender(tree(second, true))
+      await waitFor(() => expect(get).toHaveBeenCalledWith('/api/token/2'))
+      expect(findButton('Save changes', true)).toBeDisabled()
+      await act(async () =>
+        resolveDetail({ data: { success: true, data: second } })
+      )
+      await waitFor(() =>
+        expect(findButton('Save changes', true)).toBeEnabled()
+      )
+      expect(
+        screen.getByRole('button', { name: 'Never expires' })
+      ).toBeVisible()
+      expect(screen.getByLabelText('Time')).toBeDisabled()
+      fireEvent.click(findButton('Save changes', true))
+      await waitFor(() =>
+        expect(put).toHaveBeenLastCalledWith(
+          '/api/token/',
+          expect.objectContaining({ id: 2, expired_time: -1 })
+        )
+      )
+    }
+  )
+
+  test.each(['Never', 'Clear'])(
+    'submits a non-expiring key when its date is cleared with %s',
+    async (action) => {
+      const payloads: Array<Record<string, unknown>> = []
+      installApiFixtures(payloads)
+      await renderCreateDrawer()
+      changeInput(getControlByLabel('Name'), 'no-expiry')
+      fireEvent.click(screen.getByRole('button', { name: '1 Month' }))
+      expect(screen.getByLabelText('Time')).toBeEnabled()
+      fireEvent.click(screen.getByRole('button', { name: action }))
+      expect(
+        screen.getByRole('button', { name: 'Never expires' })
+      ).toBeVisible()
+      expect(screen.getByLabelText('Time')).toBeDisabled()
+      fireEvent.click(findButton('Save changes', true))
+      await waitFor(() => expect(payloads).toHaveLength(1))
+      expect(payloads[0]?.expired_time).toBe(-1)
+    }
+  )
+})
+
+describe('API keys mutate drawer user quota query switch', () => {
+  test('sends false for a new key after the switch, which starts on, is turned off', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(createdPayloads)
+    await renderCreateDrawer()
+
+    fireEvent.click(findButton('Advanced Settings', true))
+    const quotaQuerySwitch = await screen.findByRole('switch', {
+      name: 'Allow querying user quota',
+    })
+    expect(quotaQuerySwitch).toBeChecked()
+    fireEvent.click(quotaQuerySwitch)
+    expect(quotaQuerySwitch).not.toBeChecked()
+
+    changeInput(getControlByLabel('Name'), 'no-user-quota')
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]?.allow_user_quota_query).toBe(false)
   })
 })

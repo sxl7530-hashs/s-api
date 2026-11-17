@@ -46,7 +46,7 @@ func xAIStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		var xAIResp *dto.ChatCompletionsStreamResponse
 		if err := common.UnmarshalJsonStr(data, &xAIResp); err != nil {
-			common.SysLog("error unmarshalling stream response: " + err.Error())
+			common.SysLog(common.LogText("error unmarshalling stream response: %s", err.Error()))
 			sr.Error(err)
 			return
 		}
@@ -57,13 +57,14 @@ func xAIStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			usage.PromptTokens = xAIResp.Usage.PromptTokens
 			usage.TotalTokens = xAIResp.Usage.TotalTokens
 			usage.CompletionTokens = usage.TotalTokens - usage.PromptTokens
+			usage.PromptTokensDetails = xAIResp.Usage.PromptTokensDetails
+			usage.CompletionTokenDetails = xAIResp.Usage.CompletionTokenDetails
 		}
 
 		openaiResponse := streamResponseXAI2OpenAI(xAIResp, usage)
 		_ = openai.ProcessStreamResponse(*openaiResponse, &responseTextBuilder, &toolCount)
 		if err := helper.ObjectData(c, openaiResponse); err != nil {
-			common.SysLog(err.Error())
-			sr.Error(err)
+			sr.Stop(err)
 		}
 	})
 
@@ -72,7 +73,9 @@ func xAIStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		usage.CompletionTokens += toolCount * 7
 	}
 
-	helper.Done(c)
+	if info.StreamStatus != nil && info.StreamStatus.IsNormalEnd() && c.Request.Context().Err() == nil {
+		helper.Done(c)
+	}
 	service.CloseResponseBodyGracefully(resp)
 	return usage, nil
 }

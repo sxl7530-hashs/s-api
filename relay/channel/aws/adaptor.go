@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -18,19 +18,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type ClientMode int
-
-const (
-	ClientModeApiKey ClientMode = iota + 1
-	ClientModeAKSK
-)
-
 type Adaptor struct {
-	ClientMode ClientMode
 	AwsClient  *bedrockruntime.Client
 	AwsModelId string
 	AwsReq     any
 	IsNova     bool
+	// Capture once before dispatch so RPM and TPM use the same setting even
+	// when an administrator changes it while the upstream request is in flight.
+	collectActualUsage bool
 }
 
 func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeminiChatRequest) (any, error) {
@@ -93,25 +88,17 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	if info.ChannelOtherSettings.AwsKeyType == dto.AwsKeyTypeApiKey {
-		awsModelId := getAwsModelID(info.UpstreamModelName)
-		a.ClientMode = ClientModeApiKey
-		awsSecret := strings.Split(info.ApiKey, "|")
-		if len(awsSecret) != 2 {
-			return "", errors.New("invalid aws api key, should be in format of <api-key>|<region>")
-		}
-		return fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com/model/%s/converse", awsModelId, awsSecret[1]), nil
-	} else {
-		a.ClientMode = ClientModeAKSK
-		return "", nil
+	if info.ChannelOtherSettings.AwsApiType == dto.AwsApiTypeMantle {
+		return mantleRequestURL(info)
 	}
+	// InvokeModel goes through the AWS SDK, which builds the URL from the region
+	// in the key. Both key types work there: "<api-key>|<region>" and
+	// "<ak>|<sk>|<region>".
+	return "", nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	claude.CommonClaudeHeadersOperation(c, req, info)
-	if a.ClientMode == ClientModeApiKey {
-		req.Set("Authorization", "Bearer "+info.ApiKey)
-	}
 	return nil
 }
 
@@ -123,6 +110,34 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if isNovaModel(request.Model) {
 		novaReq := convertToNovaRequest(request)
 		a.IsNova = true
+		if info.AwsPassthroughCompatibility {
+			if len(request.Tools) > 0 || request.ToolChoice != nil || len(request.Functions) > 0 {
+				return nil, errors.New("Nova compatibility currently supports text requests only")
+			}
+			for _, message := range request.Messages {
+				if !message.IsStringContent() || len(message.ToolCalls) > 0 {
+					return nil, errors.New("Nova compatibility currently supports text messages only")
+				}
+			}
+			// The legacy DTO omits explicit zeroes. Use optional pointer fields
+			// only in compatibility mode to preserve the existing off path.
+			maxTokens := request.MaxTokens
+			if request.MaxCompletionTokens != nil {
+				maxTokens = request.MaxCompletionTokens
+			}
+			config := struct {
+				MaxTokens     *uint    `json:"maxTokens,omitempty"`
+				Temperature   *float64 `json:"temperature,omitempty"`
+				TopP          *float64 `json:"topP,omitempty"`
+				TopK          *int     `json:"topK,omitempty"`
+				StopSequences []string `json:"stopSequences,omitempty"`
+			}{maxTokens, request.Temperature, request.TopP, request.TopK, parseStopSequences(request.Stop)}
+			encoded, err := common.Marshal(config)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"schemaVersion": novaReq.SchemaVersion, "messages": novaReq.Messages, "inferenceConfig": common.RawMessage(encoded)}, nil
+		}
 		return novaReq, nil
 	}
 
@@ -154,15 +169,27 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
-	if a.ClientMode == ClientModeApiKey {
-		return channel.DoApiRequest(a, c, info, requestBody)
-	} else {
-		return doAwsClientRequest(c, info, a, requestBody)
+	switch info.ChannelOtherSettings.AwsApiType {
+	case dto.AwsApiTypeMantle:
+		req, err := a.newMantleRequest(c, info, requestBody)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := channel.DoRequest(c, req, info)
+		if err != nil {
+			return nil, newAwsInvokeError(c.Request.Context(), err, "Mantle Messages")
+		}
+		return resp, nil
+	case "", dto.AwsApiTypeInvokeModel:
+		// Unconfigured channels retain the existing InvokeModel behavior.
+	default:
+		return nil, errors.New("invalid AWS API type")
 	}
+	return doAwsClientRequest(c, info, a, requestBody)
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
-	if a.ClientMode == ClientModeApiKey {
+	if info.ChannelOtherSettings.AwsApiType == dto.AwsApiTypeMantle {
 		claudeAdaptor := claude.Adaptor{}
 		usage, err = claudeAdaptor.DoResponse(c, resp, info)
 	} else {

@@ -12,6 +12,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -74,10 +75,12 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	adaptor.Init(info)
 
 	passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	awsCompatibility := info.AwsPassthroughCompatibility
 	if info.RelayMode == relayconstant.RelayModeChatCompletions &&
 		!passThroughGlobal &&
 		!info.ChannelSetting.PassThroughBodyEnabled &&
-		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
+		(service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) ||
+			service.ShouldUseAzureBackground(info.ChannelType, info.ChannelOtherSettings.AzureForceBackground)) {
 		applySystemPromptIfNeeded(c, info, request)
 		usage, newApiErr := textRequestViaResponses(c, info, adaptor, request)
 		if newApiErr != nil {
@@ -88,7 +91,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
 
 		if containAudioTokens && containsAudioRatios {
-			service.PostAudioConsumeQuota(c, info, usage, "")
+			service.PostAudioConsumeQuota(c, info, usage, nil)
 		} else {
 			service.PostTextConsumeQuota(c, info, usage, nil)
 		}
@@ -97,10 +100,13 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 
 	var requestBody io.Reader
 
-	if passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled {
+	if (passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled) && !awsCompatibility {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if newAPIError = requestplugin.PassThrough(c, info, storage); newAPIError != nil {
+			return newAPIError
 		}
 		if common.DebugEnabled {
 			if debugBytes, bErr := storage.Bytes(); bErr == nil {
@@ -114,47 +120,10 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			return newConvertRequestFailedError(c, info, err)
 		}
 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
+		info.AwsCompatibilityConverted = awsCompatibility
 
-		if info.ChannelSetting.SystemPrompt != "" {
-			// 如果有系统提示，则将其添加到请求中
-			request, ok := convertedRequest.(*dto.GeneralOpenAIRequest)
-			if ok {
-				containSystemPrompt := false
-				for _, message := range request.Messages {
-					if message.Role == request.GetSystemRoleName() {
-						containSystemPrompt = true
-						break
-					}
-				}
-				if !containSystemPrompt {
-					// 如果没有系统提示，则添加系统提示
-					systemMessage := dto.Message{
-						Role:    request.GetSystemRoleName(),
-						Content: info.ChannelSetting.SystemPrompt,
-					}
-					request.Messages = append([]dto.Message{systemMessage}, request.Messages...)
-				} else if info.ChannelSetting.SystemPromptOverride {
-					common.SetContextKey(c, constant.ContextKeySystemPromptOverride, true)
-					// 如果有系统提示，且允许覆盖，则拼接到前面
-					for i, message := range request.Messages {
-						if message.Role == request.GetSystemRoleName() {
-							if message.IsStringContent() {
-								request.Messages[i].SetStringContent(info.ChannelSetting.SystemPrompt + "\n" + message.StringContent())
-							} else {
-								contents := message.ParseContent()
-								contents = append([]dto.MediaContent{
-									{
-										Type: dto.ContentTypeText,
-										Text: info.ChannelSetting.SystemPrompt,
-									},
-								}, contents...)
-								request.Messages[i].Content = contents
-							}
-							break
-						}
-					}
-				}
-			}
+		if req, ok := convertedRequest.(*dto.GeneralOpenAIRequest); ok {
+			applySystemPromptIfNeeded(c, info, req)
 		}
 
 		jsonData, err := common.Marshal(convertedRequest)
@@ -168,12 +137,18 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
+		if jsonData, newAPIError = requestplugin.Outbound(c, info, jsonData); newAPIError != nil {
+			return newAPIError
+		}
 		// apply param override
 		if len(info.ParamOverride) > 0 {
 			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 			if err != nil {
 				return newAPIErrorFromParamOverride(err)
 			}
+		}
+		if newAPIError = requestplugin.Egress(c, info, jsonData); newAPIError != nil {
+			return newAPIError
 		}
 
 		logger.LogDebug(c, "text request body: %s", jsonData)
@@ -217,7 +192,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
 
 	if containAudioTokens && containsAudioRatios {
-		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "")
+		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	} else {
 		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	}

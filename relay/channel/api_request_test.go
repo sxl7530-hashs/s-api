@@ -2,12 +2,18 @@ package channel
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +33,6 @@ func TestNewTaskAPIRequestInheritsClientCancellation(t *testing.T) {
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -50,7 +55,6 @@ func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 func TestProcessHeaderOverride_ChannelTestSkipsClientHeaderPlaceholder(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -74,7 +78,6 @@ func TestProcessHeaderOverride_ChannelTestSkipsClientHeaderPlaceholder(t *testin
 func TestProcessHeaderOverride_NonTestKeepsClientHeaderPlaceholder(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -97,7 +100,6 @@ func TestProcessHeaderOverride_NonTestKeepsClientHeaderPlaceholder(t *testing.T)
 func TestProcessHeaderOverride_RuntimeOverrideIsFinalHeaderMap(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -128,7 +130,6 @@ func TestProcessHeaderOverride_RuntimeOverrideIsFinalHeaderMap(t *testing.T) {
 func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -155,7 +156,6 @@ func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -204,4 +204,100 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Equal(t, "Codex CLI", upstreamReq.Header.Get("Originator"))
 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+}
+
+func TestToWebSocketURL(t *testing.T) {
+	for input, want := range map[string]string{
+		"https://api.openai.com/v1/responses":             "wss://api.openai.com/v1/responses",
+		"http://127.0.0.1:3000/v1/responses":              "ws://127.0.0.1:3000/v1/responses",
+		"wss://chatgpt.com/backend-api/codex/responses":   "wss://chatgpt.com/backend-api/codex/responses",
+		"ws://127.0.0.1:3000/backend-api/codex/responses": "ws://127.0.0.1:3000/backend-api/codex/responses",
+	} {
+		assert.Equal(t, want, toWebSocketURL(input), input)
+	}
+}
+
+type cancellationProbeAdaptor struct {
+	Adaptor
+	url string
+}
+
+func (a cancellationProbeAdaptor) GetRequestURL(*relaycommon.RelayInfo) (string, error) {
+	return a.url, nil
+}
+func (a cancellationProbeAdaptor) SetupRequestHeader(_ *gin.Context, _ *http.Header, _ *relaycommon.RelayInfo) error {
+	return nil
+}
+
+func TestRelayRequestCancelsUpstreamBeforeHeadersAndDuringBody(t *testing.T) {
+	service.InitHttpClient()
+	for _, form := range []bool{false, true} {
+		for _, responseStarted := range []bool{false, true} {
+			t.Run(fmt.Sprintf("form=%t/response-started=%t", form, responseStarted), func(t *testing.T) {
+				started := make(chan struct{})
+				canceled := make(chan struct{})
+				release := make(chan struct{})
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					_, _ = io.Copy(io.Discard, r.Body)
+					if responseStarted {
+						_, _ = io.WriteString(w, "partial")
+						w.(http.Flusher).Flush()
+					}
+					close(started)
+					select {
+					case <-r.Context().Done():
+						close(canceled)
+					case <-release:
+					}
+				}))
+				requestContext, cancel := context.WithCancel(t.Context())
+				t.Cleanup(func() { cancel(); close(release); upstream.Close() })
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, "/relay", strings.NewReader("request")).WithContext(requestContext)
+				info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+				result := make(chan error, 1)
+				readingBody := make(chan struct{})
+				go func() {
+					send := DoApiRequest
+					if form {
+						send = DoFormRequest
+					}
+					response, err := send(cancellationProbeAdaptor{url: upstream.URL}, c, info, strings.NewReader("request"))
+					if response != nil {
+						close(readingBody)
+						_, err = io.Copy(io.Discard, response.Body)
+						_ = response.Body.Close()
+					}
+					result <- err
+				}()
+				select {
+				case <-started:
+				case <-time.After(2 * time.Second):
+					t.Fatal("upstream request did not start")
+				}
+				if responseStarted {
+					select {
+					case <-readingBody:
+					case <-time.After(2 * time.Second):
+						t.Fatal("upstream response body read did not start")
+					}
+				}
+				cancel()
+				select {
+				case err := <-result:
+					require.Error(t, err)
+					if responseStarted {
+						assert.ErrorIs(t, err, context.Canceled)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("client cancellation left the upstream request running")
+				}
+				select {
+				case <-canceled:
+				case <-time.After(2 * time.Second):
+					t.Fatal("upstream did not observe cancellation")
+				}
+			})
+		}
+	}
 }

@@ -1,0 +1,350 @@
+import { RefreshCw } from 'lucide-react'
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { useEffect, useState } from 'react'
+import { type UseFormReturn, useWatch } from 'react-hook-form'
+import { useTranslation } from 'react-i18next'
+
+import { DateTimePicker } from '@/components/datetime-picker'
+import { sideDrawerSwitchItemClassName } from '@/components/drawer-layout'
+import { Button } from '@/components/ui/button'
+import {
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
+import {
+  getServerErrorMessage,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
+
+import { previewBedrockQuotas } from '../api'
+import type { ChannelFormValues } from '../lib/channel-form'
+import { parseModelsString } from '../lib/model-mapping-validation'
+import type { BedrockModelQuota } from '../types'
+import { BedrockModelLimitsEditor } from './bedrock-model-limits-editor'
+
+export function BedrockAdvancedSettings(props: {
+  form: UseFormReturn<ChannelFormValues>
+  disabled: boolean
+  channelId?: number | null
+}) {
+  const { t } = useTranslation()
+  const [quotas, setQuotas] = useState<BedrockModelQuota[]>([])
+  const [quotaRegion, setQuotaRegion] = useState('')
+  const [isLoadingQuotas, setIsLoadingQuotas] = useState(false)
+  const [quotaError, setQuotaError] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  const [
+    modelEnabled,
+    rampEnabled,
+    backoffEnabled,
+    models,
+    proxy,
+    key,
+    mapping,
+  ] = useWatch({
+    control: props.form.control,
+    name: [
+      'bedrock_model_rate_limit_enabled',
+      'bedrock_ramp_up_enabled',
+      'bedrock_retry_backoff_enabled',
+      'models',
+      'proxy',
+      'key',
+      'model_mapping',
+    ],
+  })
+
+  useEffect(() => {
+    setQuotas([])
+    setQuotaRegion('')
+    setQuotaError('')
+    setIsLoadingQuotas(false)
+    if (!modelEnabled || props.disabled || !proxy?.trim() || !models?.trim()) {
+      return
+    }
+    if (!props.channelId && !key?.trim()) return
+    const controller = new AbortController()
+    setIsLoadingQuotas(true)
+    const timer = setTimeout(async () => {
+      try {
+        const response = requireServerSuccess(
+          await previewBedrockQuotas(
+            {
+              channel_id: props.channelId || undefined,
+              proxy: proxy.trim(),
+              key: key?.trim() || undefined,
+              models,
+              model_mapping: mapping || '{}',
+            },
+            controller.signal
+          )
+        )
+        if (controller.signal.aborted) return
+        setQuotas(response.data.models)
+        setQuotaRegion(response.data.region)
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setQuotaError(
+            getServerErrorMessage(error, t('Failed to query AWS quotas'))
+          )
+        }
+      } finally {
+        if (!controller.signal.aborted) setIsLoadingQuotas(false)
+      }
+    }, 400)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [
+    modelEnabled,
+    props.disabled,
+    props.channelId,
+    proxy,
+    key,
+    models,
+    mapping,
+    refresh,
+    t,
+  ])
+
+  return (
+    <div className='space-y-4'>
+      {(
+        [
+          [
+            'bedrock_model_rate_limit_enabled',
+            t('Bedrock model rate limits'),
+            t(
+              'Select channel models to import AWS quotas through the proxy. Limits remain editable and apply to their mapped upstream models.'
+            ),
+          ],
+          [
+            'bedrock_ramp_up_enabled',
+            t('Bedrock gradual ramp-up'),
+            t(
+              'Increase configured RPM and TPM ceilings daily, reaching 100% on the last day. Requires channel rate protection.'
+            ),
+          ],
+          [
+            'bedrock_retry_backoff_enabled',
+            t('Bedrock randomized retry backoff'),
+            t(
+              'Apply capped exponential jitter to upstream 429 and server-error retries. The existing retry budget still applies.'
+            ),
+          ],
+        ] as const
+      ).map(([name, label, description]) => (
+        <FormField
+          key={name}
+          control={props.form.control}
+          name={name}
+          render={({ field }) => (
+            <FormItem className={sideDrawerSwitchItemClassName()}>
+              <div className='space-y-0.5'>
+                <FormLabel>{label}</FormLabel>
+                <FormDescription>{description}</FormDescription>
+                <FormMessage />
+              </div>
+              <FormControl>
+                <Switch
+                  disabled={props.disabled}
+                  checked={field.value}
+                  onCheckedChange={(enabled) => {
+                    if (
+                      name === 'bedrock_ramp_up_enabled' &&
+                      enabled &&
+                      !props.form.getValues('bedrock_ramp_up_start_unix')
+                    ) {
+                      props.form.setValue(
+                        'bedrock_ramp_up_start_unix',
+                        Math.floor(Date.now() / 1000),
+                        { shouldDirty: true }
+                      )
+                    }
+                    field.onChange(enabled)
+                  }}
+                />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+      ))}
+
+      {modelEnabled && (
+        <FormField
+          control={props.form.control}
+          name='bedrock_model_limits'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Model limits')}</FormLabel>
+              <FormControl>
+                <BedrockModelLimitsEditor
+                  value={field.value || '{}'}
+                  models={parseModelsString(models || '')}
+                  onChange={field.onChange}
+                  disabled={props.disabled}
+                  quotas={quotas}
+                  quotaRegion={quotaRegion}
+                  loadingQuotas={isLoadingQuotas}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      )}
+
+      {modelEnabled && (
+        <div className='border-border/60 space-y-2 rounded-md border p-3'>
+          <div className='flex items-center justify-between gap-3'>
+            <div className='text-sm font-medium'>{t('AWS model quotas')}</div>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              onClick={() => setRefresh((value) => value + 1)}
+              disabled={
+                props.disabled ||
+                isLoadingQuotas ||
+                !proxy?.trim() ||
+                (!props.channelId && !key?.trim())
+              }
+            >
+              <RefreshCw
+                className={
+                  isLoadingQuotas ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'
+                }
+                aria-hidden='true'
+              />
+              {isLoadingQuotas ? t('Fetching...') : t('Refresh')}
+            </Button>
+          </div>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'AWS quotas fill empty limits only. Refresh preserves manual values; restore quotas explicitly to replace them.'
+            )}
+          </p>
+          {!proxy?.trim() && (
+            <p role='status' className='text-destructive text-xs'>
+              {t('Please fill in the channel proxy before querying AWS quotas')}
+            </p>
+          )}
+          {!props.channelId && !key?.trim() && (
+            <p role='status' className='text-muted-foreground text-xs'>
+              {t('Enter AWS credentials before querying quotas.')}
+            </p>
+          )}
+          {quotaError && (
+            <p role='alert' className='text-destructive text-xs break-words'>
+              {quotaError}
+            </p>
+          )}
+          {quotaRegion && (
+            <p className='text-muted-foreground text-xs'>
+              {t('AWS region')}: {quotaRegion}
+            </p>
+          )}
+        </div>
+      )}
+
+      {rampEnabled && (
+        <FormField
+          control={props.form.control}
+          name='bedrock_ramp_up_start_unix'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Ramp-up start time')}</FormLabel>
+              <fieldset
+                disabled={props.disabled}
+                aria-label={t('Ramp-up start time')}
+              >
+                <DateTimePicker
+                  value={field.value ? new Date(field.value * 1000) : undefined}
+                  onChange={(date) =>
+                    field.onChange(date ? Math.floor(date.getTime() / 1000) : 0)
+                  }
+                />
+              </fieldset>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      )}
+      <div className='grid grid-cols-2 gap-3'>
+        {(
+          [
+            ['bedrock_ramp_up_days', t('Ramp-up days (1–7)'), rampEnabled, 7],
+            [
+              'bedrock_ramp_up_initial_percent',
+              t('Initial ceiling (%)'),
+              rampEnabled,
+              100,
+            ],
+            [
+              'bedrock_retry_backoff_base_ms',
+              t('Base backoff (ms)'),
+              backoffEnabled,
+              10000,
+            ],
+            [
+              'bedrock_retry_backoff_max_ms',
+              t('Maximum backoff (ms)'),
+              backoffEnabled,
+              10000,
+            ],
+          ] as const
+        )
+          .filter(([, , visible]) => visible)
+          .map(([name, label, , maximum]) => (
+            <FormField
+              key={name}
+              control={props.form.control}
+              name={name}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{label}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={1}
+                      max={maximum}
+                      disabled={props.disabled}
+                      {...field}
+                      onChange={(event) =>
+                        field.onChange(Number(event.target.value))
+                      }
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ))}
+      </div>
+    </div>
+  )
+}

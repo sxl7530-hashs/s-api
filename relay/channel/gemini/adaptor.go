@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
@@ -129,6 +131,29 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	return geminiRequest, nil
 }
 
+// imagenDefaultSampleCount is the number of images Imagen generates when a
+// request names none, as Google's GenAI SDK documents it ("currently 4").
+const imagenDefaultSampleCount = 4
+
+// OutboundImageCount reads the image count of an image request body:
+// Imagen generates parameters.sampleCount images, and its default without
+// one.
+func (a *Adaptor) OutboundImageCount(body []byte) (*uint, error) {
+	var request struct {
+		Instances  any `json:"instances"`
+		Parameters struct {
+			SampleCount *uint `json:"sampleCount"`
+		} `json:"parameters"`
+	}
+	if err := common.Unmarshal(body, &request); err != nil {
+		return nil, err
+	}
+	if request.Parameters.SampleCount == nil && request.Instances != nil {
+		return common.GetPointer(uint(imagenDefaultSampleCount)), nil
+	}
+	return request.Parameters.SampleCount, nil
+}
+
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 
 }
@@ -186,6 +211,20 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 	if request.Input == nil {
 		return nil, errors.New("input is required")
 	}
+	// Gemini embeds text only. The request estimate billed for this channel
+	// counts image, video and text parts, so a part must fail the request
+	// instead of being dropped and charged without reaching Gemini.
+	if items, ok := request.Input.([]any); ok && slices.ContainsFunc(items, func(item any) bool {
+		_, isPart := item.(map[string]any)
+		return isPart
+	}) {
+		return nil, types.NewErrorWithStatusCode(
+			errors.New("gemini embedding models accept only plain text input; images, videos and other content parts are not supported"),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 
 	inputs := request.ParseInput()
 	if len(inputs) == 0 {
@@ -195,9 +234,9 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 	// batch endpoint upstream to avoid payload/endpoint mismatches.
 	info.IsGeminiBatchEmbedding = true
 	// process all inputs
-	geminiRequests := make([]map[string]interface{}, 0, len(inputs))
+	geminiRequests := make([]map[string]any, 0, len(inputs))
 	for _, input := range inputs {
-		geminiRequest := map[string]interface{}{
+		geminiRequest := map[string]any{
 			"model": fmt.Sprintf("models/%s", info.UpstreamModelName),
 			"content": dto.GeminiChatContent{
 				Parts: []dto.GeminiPart{
@@ -221,7 +260,7 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 		geminiRequests = append(geminiRequests, geminiRequest)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"requests": geminiRequests,
 	}, nil
 }

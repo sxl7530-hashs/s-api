@@ -1,13 +1,193 @@
 package model
 
 import (
+	"context"
+	"fmt"
+	"os"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/glebarez/sqlite"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
+
+// useSystemTaskMatrixDB points DB at a fresh system_tasks table on dialect,
+// skipping MySQL and PostgreSQL unless TEST_MYSQL_DSN / TEST_POSTGRES_DSN are set.
+func useSystemTaskMatrixDB(t *testing.T, dialect string) *gorm.DB {
+	t.Helper()
+	var dialector gorm.Dialector
+	switch dialect {
+	case "sqlite":
+		dialector = sqlite.Open(":memory:")
+	case "mysql":
+		dsn := os.Getenv("TEST_MYSQL_DSN")
+		if dsn == "" {
+			t.Skip("TEST_MYSQL_DSN is not configured")
+		}
+		dialector = mysql.Open(dsn)
+	case "postgres":
+		dsn := os.Getenv("TEST_POSTGRES_DSN")
+		if dsn == "" {
+			t.Skip("TEST_POSTGRES_DSN is not configured")
+		}
+		dialector = postgres.Open(dsn)
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: "history_test_"}})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	previousDB := DB
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		require.NoError(t, db.Migrator().DropTable(&SystemTask{}))
+		require.NoError(t, sqlDB.Close())
+	})
+	require.NoError(t, db.AutoMigrate(&SystemTask{}))
+	var version string
+	versionQuery := "SELECT version()"
+	if dialect == "sqlite" {
+		versionQuery = "SELECT sqlite_version()"
+	}
+	require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+	t.Logf("database version: %s", version)
+	return db
+}
+
+func TestSystemTaskHistoryDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := useSystemTaskMatrixDB(t, dialect)
+
+			tasks := []SystemTask{
+				{TaskID: "model-failed-old", Type: SystemTaskTypeModelUpdate, Status: SystemTaskStatusFailed},
+				{TaskID: "model-success", Type: SystemTaskTypeModelUpdate, Status: SystemTaskStatusSucceeded},
+				{TaskID: "channel-failed", Type: SystemTaskTypeChannelTest, Status: SystemTaskStatusFailed},
+				{TaskID: "model-failed-recent", Type: SystemTaskTypeModelUpdate, Status: SystemTaskStatusFailed},
+				{TaskID: "model-latest", Type: SystemTaskTypeModelUpdate, Status: SystemTaskStatusSucceeded},
+				{TaskID: "channel-pending", Type: SystemTaskTypeChannelTest, Status: SystemTaskStatusPending},
+				{TaskID: "channel-running", Type: SystemTaskTypeChannelTest, Status: SystemTaskStatusRunning},
+				{TaskID: "log-only-history", Type: SystemTaskTypeLogCleanup, Status: SystemTaskStatusSucceeded},
+			}
+			require.NoError(t, db.Create(&tasks).Error)
+			filter := SystemTaskFilter{Scope: "history", Type: SystemTaskTypeModelUpdate, Status: SystemTaskStatusFailed}
+			page, total, err := ListSystemTasks(filter, 1, 1)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, total)
+			require.Len(t, page, 1)
+			assert.Equal(t, "model-failed-old", page[0].TaskID)
+			page, total, err = ListSystemTasks(filter, 2, 1)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, total)
+			assert.Empty(t, page)
+
+			active, total, err := ListSystemTasks(SystemTaskFilter{Scope: "active"}, 0, 20)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, total)
+			require.Len(t, active, 2)
+			assert.Equal(t, "channel-running", active[0].TaskID)
+			assert.Equal(t, "channel-pending", active[1].TaskID)
+
+			deleted, err := DeleteSystemTaskHistory(filter)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, deleted)
+			_, total, err = ListSystemTasks(SystemTaskFilter{Scope: "history"}, 0, 20)
+			require.NoError(t, err)
+			assert.EqualValues(t, 4, total, "other types and statuses are untouched")
+
+			deleted, err = DeleteSystemTaskHistory(SystemTaskFilter{Scope: "active", Status: SystemTaskStatusRunning})
+			require.NoError(t, err)
+			assert.Zero(t, deleted, "caller cannot override the terminal-status restriction")
+			deleted, err = DeleteSystemTaskHistory(SystemTaskFilter{})
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, deleted)
+			remaining, total, err := ListSystemTasks(SystemTaskFilter{}, 0, 100)
+			require.NoError(t, err)
+			assert.EqualValues(t, 4, total)
+			var remainingIDs []string
+			for _, task := range remaining {
+				remainingIDs = append(remainingIDs, task.TaskID)
+			}
+			assert.ElementsMatch(t, []string{"model-latest", "channel-pending", "channel-running", "log-only-history"}, remainingIDs)
+			latest, err := GetLatestSystemTasks([]string{SystemTaskTypeModelUpdate, SystemTaskTypeChannelTest, SystemTaskTypeLogCleanup})
+			require.NoError(t, err)
+			assert.Equal(t, "model-latest", latest[SystemTaskTypeModelUpdate].TaskID)
+			assert.Equal(t, "channel-running", latest[SystemTaskTypeChannelTest].TaskID)
+			assert.Equal(t, "log-only-history", latest[SystemTaskTypeLogCleanup].TaskID)
+			deleted, err = DeleteSystemTaskHistory(SystemTaskFilter{})
+			require.NoError(t, err)
+			assert.Zero(t, deleted, "repeated cleanup preserves the scheduler's latest runs")
+
+			for _, status := range []SystemTaskStatus{SystemTaskStatusPending, SystemTaskStatusRunning} {
+				task, err := CreateSystemTask(SystemTaskTypeChannelModelTest, nil, nil)
+				require.NoError(t, err)
+				require.NoError(t, db.Model(task).Update("status", status).Error)
+				cancelled, changed, err := CancelSystemTask(task.TaskID, "matrix cancellation")
+				require.NoError(t, err)
+				require.True(t, changed)
+				assert.Equal(t, SystemTaskStatusCancelled, cancelled.Status)
+				assert.Nil(t, cancelled.ActiveKey)
+				_, changed, err = CancelSystemTask(task.TaskID, "repeat")
+				require.NoError(t, err)
+				assert.False(t, changed)
+			}
+			history, count, err := ListSystemTasks(SystemTaskFilter{Scope: "history", Status: SystemTaskStatusCancelled}, 0, 20)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, count)
+			assert.Len(t, history, 2)
+			require.NoError(t, db.AutoMigrate(&SystemTask{}))
+			_, count, err = ListSystemTasks(SystemTaskFilter{Status: SystemTaskStatusCancelled}, 0, 20)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, count, "repeat migration preserves cancellations")
+		})
+	}
+}
+
+// The daily cleanup deletes finished rows older than the retention in
+// batches, and keeps active rows, newer rows and the newest row of each type.
+func TestDeleteFinishedSystemTasksDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := useSystemTaskMatrixDB(t, dialect)
+			const cutoff int64 = 1_000_000
+			old := make([]SystemTask, systemTaskCleanupBatchSize+1)
+			for i := range old {
+				old[i] = SystemTask{TaskID: fmt.Sprintf("sync-old-%d", i), Type: SyncTaskType(SyncTopicChannels), Status: SystemTaskStatusSucceeded, CreatedAt: 10, UpdatedAt: cutoff - 1}
+			}
+			require.NoError(t, db.CreateInBatches(&old, 200).Error)
+			kept := []SystemTask{
+				{TaskID: "test-old-pending", Type: SystemTaskTypeChannelTest, Status: SystemTaskStatusPending, CreatedAt: 10, UpdatedAt: 10},
+				{TaskID: "test-old-running", Type: SystemTaskTypeChannelTest, Status: SystemTaskStatusRunning, CreatedAt: 10, UpdatedAt: 10},
+				{TaskID: "sync-at-cutoff", Type: SyncTaskType(SyncTopicChannels), Status: SystemTaskStatusSucceeded, CreatedAt: 10, UpdatedAt: cutoff},
+				{TaskID: "sync-newest", Type: SyncTaskType(SyncTopicChannels), Status: SystemTaskStatusFailed, CreatedAt: 10, UpdatedAt: 10},
+				{TaskID: "log-newest", Type: SystemTaskTypeLogCleanup, Status: SystemTaskStatusFailed, CreatedAt: 10, UpdatedAt: 10},
+			}
+			deletedRows := []SystemTask{
+				{TaskID: "log-old-failed", Type: SystemTaskTypeLogCleanup, Status: SystemTaskStatusFailed, CreatedAt: 10, UpdatedAt: 10},
+			}
+			require.NoError(t, db.Create(&deletedRows).Error)
+			require.NoError(t, db.Create(&kept).Error)
+
+			deleted, err := DeleteFinishedSystemTasks(context.Background(), cutoff)
+			require.NoError(t, err)
+			assert.EqualValues(t, len(old)+len(deletedRows), deleted)
+			var remaining []string
+			require.NoError(t, db.Model(&SystemTask{}).Order("id").Pluck("task_id", &remaining).Error)
+			assert.Equal(t, []string{"test-old-pending", "test-old-running", "sync-at-cutoff", "sync-newest", "log-newest"}, remaining)
+
+			deleted, err = DeleteFinishedSystemTasks(context.Background(), cutoff)
+			require.NoError(t, err)
+			assert.Zero(t, deleted)
+		})
+	}
+}
 
 type testSystemTaskPayload struct {
 	TargetTimestamp int64 `json:"target_timestamp"`
@@ -72,6 +252,41 @@ func TestSystemTaskCreateAndActiveLifecycle(t *testing.T) {
 
 	_, err = CreateSystemTask(SystemTaskTypeLogCleanup, payload, state)
 	require.NoError(t, err)
+}
+
+func TestCancelSystemTaskRetainsLeaseUntilRunnerExits(t *testing.T) {
+	truncateTables(t)
+	task, err := CreateSystemTask(SystemTaskTypeChannelModelTest, nil, nil)
+	require.NoError(t, err)
+	claimed, ok, err := ClaimSystemTask(task.ID, task.Type, "runner-a", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	cancelledTask, cancelled, err := CancelSystemTask(claimed.TaskID, "cancelled in test")
+	require.NoError(t, err)
+	require.True(t, cancelled)
+	assert.Equal(t, SystemTaskStatusCancelled, cancelledTask.Status)
+	assert.Nil(t, cancelledTask.ActiveKey)
+	assert.Equal(t, "cancelled in test", cancelledTask.Error)
+	var lockCount int64
+	require.NoError(t, DB.Model(&SystemTaskLock{}).Where("task_id = ?", task.TaskID).Count(&lockCount).Error)
+	assert.EqualValues(t, 1, lockCount)
+	replacement, err := CreateSystemTask(SystemTaskTypeChannelModelTest, nil, nil)
+	require.NoError(t, err)
+	_, replacementClaimed, err := ClaimSystemTask(replacement.ID, replacement.Type, "runner-b", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	assert.False(t, replacementClaimed, "a replacement must wait for the old runner to exit")
+	assert.ErrorIs(t, FinishSystemTask(task.TaskID, "runner-a", SystemTaskStatusSucceeded, nil, ""), ErrSystemTaskLockLost)
+	require.NoError(t, ReleaseSystemTaskLock(task.TaskID, "runner-a"))
+	_, replacementClaimed, err = ClaimSystemTask(replacement.ID, replacement.Type, "runner-b", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	assert.True(t, replacementClaimed)
+
+	unchanged, cancelledAgain, err := CancelSystemTask(task.TaskID, "second cancellation")
+	require.NoError(t, err)
+	assert.False(t, cancelledAgain)
+	assert.Equal(t, SystemTaskStatusCancelled, unchanged.Status)
+	assert.Equal(t, "cancelled in test", unchanged.Error)
 }
 
 func TestSystemTaskActiveKeyPreventsDuplicateActiveRun(t *testing.T) {

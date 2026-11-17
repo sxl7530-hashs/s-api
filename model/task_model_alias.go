@@ -1,7 +1,7 @@
 package model
 
 import (
-	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +47,27 @@ func ResolveTaskModelAlias(g *jsplugin.RoutingGeneration, name string) (TaskAlia
 	return target, ok
 }
 
+// ResolveTaskPluginModel matches a client model name against a plugin's
+// declared models as the host protocols do: a case variant is served under
+// the declared spelling, a channel alias under the alias. declared is the
+// model of models the name stands for. A nil g matches exact names only.
+func ResolveTaskPluginModel(g *jsplugin.RoutingGeneration, name string, models []string) (served, declared string, ok bool) {
+	if slices.Contains(models, name) {
+		return name, name, true
+	}
+	if canonical, found := g.CanonicalModel(name); found {
+		if !slices.Contains(models, canonical) {
+			return "", "", false
+		}
+		return canonical, canonical, true
+	}
+	target, found := ResolveTaskModelAlias(g, name)
+	if !found || target.Declared == "" || !slices.Contains(models, target.Declared) {
+		return "", "", false
+	}
+	return target.Alias, target.Declared, true
+}
+
 func loadFreshTaskAliasView(g *jsplugin.RoutingGeneration) *taskAliasView {
 	view := taskAliasViewPtr.Load()
 	if taskAliasViewFresh(view, g.Number) {
@@ -73,6 +94,10 @@ func rebuildTaskAliasView() {
 	taskAliasViewPtr.Store(buildTaskAliasView(jsplugin.DefaultRegistry.Generation()))
 }
 
+func invalidateTaskAliasView() {
+	taskAliasViewPtr.Store(nil)
+}
+
 type taskAliasDraft struct {
 	spellings []string
 	byPlugin  map[string]map[string]struct{}
@@ -97,7 +122,7 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 		Where("status = ?", common.ChannelStatusEnabled).
 		Find(&channels).Error
 	if err != nil {
-		common.SysError(fmt.Sprintf("rebuild task alias view: %s", err.Error()))
+		common.SysError(common.LogText("rebuild task alias view: %s", err.Error()))
 		return view
 	}
 
@@ -110,7 +135,7 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 		}
 		modelMap := make(map[string]string)
 		if err := common.UnmarshalJsonStr(mappingJSON, &modelMap); err != nil {
-			common.SysError(fmt.Sprintf("task alias view: channel %d model_mapping: %s", channel.Id, err.Error()))
+			common.SysError(common.LogText("task alias view: channel %d model_mapping: %s", channel.Id, err.Error()))
 			continue
 		}
 		inModels := make(map[string]struct{})
@@ -129,7 +154,7 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 			}
 			tail, cyclic := followChannelModelMapping(modelMap, alias)
 			if cyclic {
-				common.SysError(fmt.Sprintf("task alias mapping cycle dropped: channel=%d key=%q", channel.Id, alias))
+				common.SysError(common.LogText("task alias mapping cycle dropped: channel=%d key=%q", channel.Id, alias))
 				continue
 			}
 			declared, ok := generation.CanonicalModel(tail)
@@ -168,7 +193,7 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 			for key := range draft.byPlugin {
 				pluginKeys = append(pluginKeys, key)
 			}
-			common.SysLog(fmt.Sprintf("task model alias %q dropped: maps to multiple plugins %v", alias, pluginKeys))
+			common.SysLog(common.LogText("task model alias %q dropped: maps to multiple plugins %v", alias, pluginKeys))
 			continue
 		}
 		var pluginKey, declared string

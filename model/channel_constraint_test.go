@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -215,4 +216,314 @@ func TestChannelSatisfiesFilters(t *testing.T) {
 	}})
 	assert.False(t, ok)
 	assert.Equal(t, dto.FilterRequestPath, kind)
+}
+
+func TestGroupHasAvailableKeyIgnoresModelSupport(t *testing.T) {
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+
+	channelSyncLock.Lock()
+	previousChannels := channelsIDM
+	previousGroupAvailability := group2hasAvailableKey
+	channelsIDM = map[int]*Channel{
+		1: {Id: 1, Status: common.ChannelStatusEnabled, Group: "empty", Key: "   ", Models: "gpt-empty"},
+		2: {
+			Id:     2,
+			Status: common.ChannelStatusEnabled,
+			Group:  "disabled-multi",
+			Key:    "key-a\nkey-b",
+			Models: "gpt-disabled",
+			ChannelInfo: ChannelInfo{
+				IsMultiKey:         true,
+				MultiKeyStatusList: map[int]int{0: common.ChannelStatusAutoDisabled, 1: common.ChannelStatusManuallyDisabled},
+			},
+		},
+		3: {Id: 3, Status: common.ChannelStatusEnabled, Group: "live", Key: "key-live", Models: "different-model"},
+		4: {Id: 4, Status: common.ChannelStatusManuallyDisabled, Group: "disabled-channel", Key: "key-live"},
+		5: {
+			Id:     5,
+			Status: common.ChannelStatusEnabled,
+			Group:  "live-multi, other",
+			Key:    "key-a\nkey-b",
+			ChannelInfo: ChannelInfo{
+				IsMultiKey:         true,
+				MultiKeyStatusList: map[int]int{0: common.ChannelStatusAutoDisabled},
+			},
+		},
+	}
+	group2hasAvailableKey = buildGroupAvailableKeyMap(channelsIDM)
+	channelSyncLock.Unlock()
+	t.Cleanup(func() {
+		channelSyncLock.Lock()
+		channelsIDM = previousChannels
+		group2hasAvailableKey = previousGroupAvailability
+		channelSyncLock.Unlock()
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+
+	tests := []struct {
+		group string
+		want  bool
+	}{
+		{group: "empty", want: false},
+		{group: "disabled-multi", want: false},
+		{group: "disabled-channel", want: false},
+		{group: "missing", want: false},
+		{group: "live", want: true},
+		{group: "live-multi", want: true},
+		{group: "other", want: true},
+		{group: "auto", want: true},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.group, func(t *testing.T) {
+			hasKey, err := GroupHasAvailableKey(testCase.group)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.want, hasKey)
+		})
+	}
+
+	CacheUpdateChannelStatus(3, common.ChannelStatusAutoDisabled)
+	hasKey, err := GroupHasAvailableKey("live")
+	require.NoError(t, err)
+	assert.False(t, hasKey)
+
+	CacheUpdateChannelStatus(3, common.ChannelStatusEnabled)
+	hasKey, err = GroupHasAvailableKey("live")
+	require.NoError(t, err)
+	assert.True(t, hasKey)
+}
+
+func TestCacheUpdateChannelRefreshesRoutingIndex(t *testing.T) {
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+
+	oldChannel := &Channel{Id: 41, Status: common.ChannelStatusEnabled, Group: "old", Models: "old-model", Key: "old-key"}
+	otherChannel := &Channel{Id: 42, Status: common.ChannelStatusEnabled, Group: "new", Models: "new-model", Key: "other-key"}
+	channelSyncLock.Lock()
+	previousChannels := channelsIDM
+	previousRouting := group2model2channels
+	previousGroupAvailability := group2hasAvailableKey
+	previousAdvancedConfigs := channel2advancedCustomConfig
+	channelsIDM = map[int]*Channel{41: oldChannel, 42: otherChannel}
+	group2model2channels = map[string]map[string][]int{
+		"old": {"old-model": {41}},
+		"new": {"new-model": {42}},
+	}
+	group2hasAvailableKey = buildGroupAvailableKeyMap(channelsIDM)
+	channel2advancedCustomConfig = make(map[int]*kitdto.AdvancedCustomConfig)
+	channelSyncLock.Unlock()
+	t.Cleanup(func() {
+		channelSyncLock.Lock()
+		channelsIDM = previousChannels
+		group2model2channels = previousRouting
+		group2hasAvailableKey = previousGroupAvailability
+		channel2advancedCustomConfig = previousAdvancedConfigs
+		channelSyncLock.Unlock()
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+
+	updated := &Channel{Id: 41, Status: common.ChannelStatusEnabled, Group: "new", Models: "new-model", Key: "new-key", Priority: common.GetPointer(int64(10))}
+	CacheUpdateChannel(updated)
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	assert.Empty(t, group2model2channels["old"]["old-model"])
+	assert.Equal(t, []int{41, 42}, group2model2channels["new"]["new-model"])
+	assert.False(t, group2hasAvailableKey["old"])
+	assert.True(t, group2hasAvailableKey["new"])
+}
+
+func TestCacheChannelSnapshotsDoNotMutateStoredChannel(t *testing.T) {
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	cachedChannel := &Channel{
+		Id:     43,
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:         true,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusEnabled},
+		},
+	}
+	channelSyncLock.Lock()
+	previousChannels := channelsIDM
+	previousPollingIndexes := channel2pollingIndex
+	channelsIDM = map[int]*Channel{43: cachedChannel}
+	channel2pollingIndex = map[int]int{43: 2}
+	channelSyncLock.Unlock()
+	t.Cleanup(func() {
+		channelSyncLock.Lock()
+		channelsIDM = previousChannels
+		channel2pollingIndex = previousPollingIndexes
+		channelSyncLock.Unlock()
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+
+	channelSnapshot, err := CacheGetChannel(43)
+	require.NoError(t, err)
+	channelSnapshot.Status = common.ChannelStatusAutoDisabled
+
+	infoSnapshot, err := CacheGetChannelInfo(43)
+	require.NoError(t, err)
+	assert.Equal(t, 2, infoSnapshot.MultiKeyPollingIndex)
+	infoSnapshot.MultiKeyStatusList[0] = common.ChannelStatusAutoDisabled
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	assert.Equal(t, common.ChannelStatusEnabled, channelsIDM[43].Status)
+	assert.Equal(t, common.ChannelStatusEnabled, channelsIDM[43].ChannelInfo.MultiKeyStatusList[0])
+}
+
+func TestGetRandomSatisfiedChannelHonorsRetryPriority(t *testing.T) {
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	highPriority := int64(100)
+	lowPriority := int64(50)
+	weight := uint(1)
+
+	channelSyncLock.Lock()
+	previousChannels := channelsIDM
+	previousRouting := group2model2channels
+	channelsIDM = map[int]*Channel{
+		1: {Id: 1, Status: common.ChannelStatusEnabled, Priority: &highPriority, Weight: &weight},
+		2: {Id: 2, Status: common.ChannelStatusEnabled, Priority: &lowPriority, Weight: &weight},
+		3: {Id: 3, Status: common.ChannelStatusEnabled, Priority: &lowPriority, Weight: &weight},
+	}
+	group2model2channels = map[string]map[string][]int{
+		"default": {"model": {1, 2, 3}},
+	}
+	channelSyncLock.Unlock()
+	t.Cleanup(func() {
+		channelSyncLock.Lock()
+		channelsIDM = previousChannels
+		group2model2channels = previousRouting
+		channelSyncLock.Unlock()
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+
+	selected, err := GetRandomSatisfiedChannel("default", "model", 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 1, selected.Id)
+
+	for _, retry := range []int{1, 99} {
+		selected, err = GetRandomSatisfiedChannel("default", "model", retry, nil)
+		require.NoError(t, err)
+		require.NotNil(t, selected)
+		assert.Contains(t, []int{2, 3}, selected.Id)
+	}
+}
+
+func TestCacheDeleteChannelRemovesRoutingAndChannel(t *testing.T) {
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	channel := &Channel{Id: 51, Status: common.ChannelStatusEnabled, Group: "default", Models: "model", Key: "key"}
+	channelSyncLock.Lock()
+	previousChannels := channelsIDM
+	previousRouting := group2model2channels
+	previousAvailability := group2hasAvailableKey
+	previousAdvancedConfigs := channel2advancedCustomConfig
+	channelsIDM = map[int]*Channel{51: channel}
+	group2model2channels = map[string]map[string][]int{"default": {"model": {51}}}
+	group2hasAvailableKey = buildGroupAvailableKeyMap(channelsIDM)
+	channel2advancedCustomConfig = make(map[int]*kitdto.AdvancedCustomConfig)
+	channelSyncLock.Unlock()
+	t.Cleanup(func() {
+		channelSyncLock.Lock()
+		channelsIDM = previousChannels
+		group2model2channels = previousRouting
+		group2hasAvailableKey = previousAvailability
+		channel2advancedCustomConfig = previousAdvancedConfigs
+		channelSyncLock.Unlock()
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+
+	CacheDeleteChannel(51)
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	assert.NotContains(t, channelsIDM, 51)
+	assert.Empty(t, group2model2channels["default"]["model"])
+	assert.False(t, group2hasAvailableKey["default"])
+}
+
+func TestCacheBatchUpdateAndDeleteChannels(t *testing.T) {
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	highPriority := int64(10)
+	lowPriority := int64(1)
+	channelSyncLock.Lock()
+	previousChannels := channelsIDM
+	previousRouting := group2model2channels
+	previousAvailability := group2hasAvailableKey
+	previousAdvancedConfigs := channel2advancedCustomConfig
+	channelsIDM = map[int]*Channel{
+		61: {Id: 61, Status: common.ChannelStatusEnabled, Group: "old", Models: "model", Key: "key-a", Priority: &lowPriority},
+		62: {Id: 62, Status: common.ChannelStatusEnabled, Group: "old", Models: "model", Key: "key-b", Priority: &lowPriority},
+	}
+	group2model2channels = map[string]map[string][]int{"old": {"model": {61, 62}}}
+	group2hasAvailableKey = buildGroupAvailableKeyMap(channelsIDM)
+	channel2advancedCustomConfig = make(map[int]*kitdto.AdvancedCustomConfig)
+	channelSyncLock.Unlock()
+	t.Cleanup(func() {
+		channelSyncLock.Lock()
+		channelsIDM = previousChannels
+		group2model2channels = previousRouting
+		group2hasAvailableKey = previousAvailability
+		channel2advancedCustomConfig = previousAdvancedConfigs
+		channelSyncLock.Unlock()
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+
+	CacheUpdateChannels([]*Channel{
+		{Id: 61, Status: common.ChannelStatusEnabled, Group: "new", Models: "model", Key: "key-a", Priority: &highPriority},
+		{Id: 62, Status: common.ChannelStatusManuallyDisabled, Group: "old", Models: "model", Key: "key-b", Priority: &lowPriority},
+	})
+	channelSyncLock.RLock()
+	assert.Equal(t, []int{61}, group2model2channels["new"]["model"])
+	assert.Empty(t, group2model2channels["old"]["model"])
+	assert.True(t, group2hasAvailableKey["new"])
+	assert.False(t, group2hasAvailableKey["old"])
+	channelSyncLock.RUnlock()
+
+	CacheDeleteChannels([]int{61, 62})
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	assert.Empty(t, channelsIDM)
+	assert.Empty(t, group2model2channels)
+	assert.Empty(t, group2hasAvailableKey)
+}
+
+// A task plugin channel takes a Responses WebSocket session when the switch
+// is on and its plugin's /v1/responses route for the model has no converter,
+// the rule an Advanced Custom channel follows.
+func TestTaskPluginChannelResponsesWebSocket(t *testing.T) {
+	for key, relay := range map[string]string{
+		"ws-native":    `[{incoming_path: "/v1/responses", upstream_path: "/responses", models: ["m1"]}]`,
+		"ws-converted": `[{incoming_path: "/v1/responses", upstream_path: "/responses", converter: "plugin"}]`,
+	} {
+		source := `export const meta = {apiVersion: 1, key: "` + key + `", name: "WS", version: "1.0.0", author: {name: "Test"}, relay: ` + relay + `};`
+		if key == "ws-converted" {
+			source += `export function convertRequest(ctx, req) { return {body: req.body}; } export function convertResponse(ctx, res) { return {body: res.body}; } export function convertStreamEvent() { return {}; }`
+		}
+		_, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = jsplugin.DefaultRegistry.Unregister(key) })
+	}
+	channel := func(key string, enabled bool) *Channel {
+		ch := &Channel{Id: 1, Type: constant.ChannelTypeTaskPlugin}
+		ch.SetSetting(kitdto.ChannelSettings{TaskPluginKey: key, ResponsesWebSocketEnabled: enabled})
+		return ch
+	}
+	filters := []dto.ChannelFilter{{Kind: dto.FilterResponsesWebSocket}}
+
+	ok, _ := ChannelSatisfiesFilters(channel("ws-native", true), "m1", filters)
+	assert.True(t, ok)
+	ok, kind := ChannelSatisfiesFilters(channel("ws-native", false), "m1", filters)
+	assert.False(t, ok, "the channel switch is off")
+	assert.Equal(t, dto.FilterResponsesWebSocket, kind)
+	ok, _ = ChannelSatisfiesFilters(channel("ws-native", true), "m2", filters)
+	assert.False(t, ok, "the route does not serve the model")
+	ok, _ = ChannelSatisfiesFilters(channel("ws-converted", true), "m1", filters)
+	assert.False(t, ok, "a converted route cannot forward native events")
+	ok, _ = ChannelSatisfiesFilters(channel("ws-missing", true), "m1", filters)
+	assert.False(t, ok)
 }

@@ -48,6 +48,7 @@ import {
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { Claude5CompatSettings } from './claude5-compat-settings'
 
 const thinkingBlacklistExample = JSON.stringify(
   ['moonshotai/kimi-k2-thinking', 'kimi-k2-thinking', 're:.*@sha256:.*'],
@@ -89,9 +90,17 @@ const jsonString = z.string().refine((value) => {
 
 const schema = z.object({
   global: z.object({
+    aws_passthrough_compatibility_enabled: z.boolean(),
     pass_through_request_enabled: z.boolean(),
+    aws_beta_filter_enabled: z.boolean(),
+    aws_beta_blacklist: jsonString,
+    aws_context_management_auto_beta: z.boolean(),
+    aws_context_management_beta_models: jsonString,
     thinking_model_blacklist: jsonString,
     chat_completions_to_responses_policy: jsonString,
+    azure_force_background_enabled: z.boolean(),
+    aws_usage_metrics_enabled: z.boolean(),
+    claude5_compat: jsonString,
   }),
   general_setting: z.object({
     ping_interval_enabled: z.boolean(),
@@ -103,9 +112,17 @@ type GlobalModelSettingsFormValues = z.output<typeof schema>
 type GlobalModelSettingsFormInput = z.input<typeof schema>
 
 type FlatGlobalModelSettings = {
+  'global.aws_passthrough_compatibility_enabled': boolean
   'global.pass_through_request_enabled': boolean
+  'global.aws_beta_filter_enabled': boolean
+  'global.aws_beta_blacklist': string
+  'global.aws_context_management_auto_beta': boolean
+  'global.aws_context_management_beta_models': string
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
+  'global.azure_force_background_enabled': boolean
+  'global.aws_usage_metrics_enabled': boolean
+  'global.claude5_compat': string
   'general_setting.ping_interval_enabled': boolean
   'general_setting.ping_interval_seconds': number
 }
@@ -113,14 +130,34 @@ type FlatGlobalModelSettings = {
 const flattenGlobalValues = (
   values: GlobalModelSettingsFormValues
 ): FlatGlobalModelSettings => ({
+  'global.aws_passthrough_compatibility_enabled':
+    values.global.aws_passthrough_compatibility_enabled,
   'global.pass_through_request_enabled':
     values.global.pass_through_request_enabled,
+  'global.aws_beta_filter_enabled': values.global.aws_beta_filter_enabled,
+  'global.aws_beta_blacklist': normalizeJsonText(
+    values.global.aws_beta_blacklist,
+    '[]'
+  ),
+  'global.aws_context_management_auto_beta':
+    values.global.aws_context_management_auto_beta,
+  'global.aws_context_management_beta_models': normalizeJsonText(
+    values.global.aws_context_management_beta_models,
+    '["*claude-haiku-4-5*", "*claude-sonnet-4-5*", "*claude-opus-4-6*", "*claude-opus-4-7*", "*claude-opus-4-8*", "*claude-sonnet-4-6*", "*claude-opus-5*", "*claude-sonnet-5*", "*claude-haiku-5*", "*claude-fable-5*", "*claude-mythos-5*"]'
+  ),
   'global.thinking_model_blacklist': normalizeJsonText(
     values.global.thinking_model_blacklist,
     '[]'
   ),
   'global.chat_completions_to_responses_policy': normalizeJsonText(
     values.global.chat_completions_to_responses_policy,
+    '{}'
+  ),
+  'global.azure_force_background_enabled':
+    values.global.azure_force_background_enabled,
+  'global.aws_usage_metrics_enabled': values.global.aws_usage_metrics_enabled,
+  'global.claude5_compat': normalizeJsonText(
+    values.global.claude5_compat,
     '{}'
   ),
   'general_setting.ping_interval_enabled':
@@ -156,7 +193,6 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
   }, [defaultValues, form])
 
   const pingEnabled = form.watch('general_setting.ping_interval_enabled')
-
   const onSubmit = async (values: GlobalModelSettingsFormValues) => {
     const flattenedDefaults = flattenGlobalValues(defaultValues)
     const flattenedValues = flattenGlobalValues(values)
@@ -196,6 +232,112 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
                   <FormDescription>
                     {t(
                       'Forward requests directly to upstream providers without any post-processing.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.claude5_compat'
+            render={({ field }) => (
+              <FormItem className='space-y-3'>
+                <Claude5CompatSettings
+                  value={field.value}
+                  onChange={field.onChange}
+                  awsContextManagementAutoBeta={form.watch(
+                    'global.aws_context_management_auto_beta'
+                  )}
+                  onAwsContextManagementAutoBetaChange={(value) =>
+                    form.setValue(
+                      'global.aws_context_management_auto_beta',
+                      value,
+                      {
+                        shouldDirty: true,
+                      }
+                    )
+                  }
+                  awsContextManagementBetaModels={form.watch(
+                    'global.aws_context_management_beta_models'
+                  )}
+                  onAwsContextManagementBetaModelsChange={(value) =>
+                    form.setValue(
+                      'global.aws_context_management_beta_models',
+                      value,
+                      { shouldDirty: true, shouldValidate: true }
+                    )
+                  }
+                  awsContextManagementBetaModelsError={
+                    form.formState.errors.global
+                      ?.aws_context_management_beta_models?.message
+                  }
+                  awsBetaFilterEnabled={form.watch(
+                    'global.aws_beta_filter_enabled'
+                  )}
+                  onAwsBetaFilterEnabledChange={(value) =>
+                    form.setValue('global.aws_beta_filter_enabled', value, {
+                      shouldDirty: true,
+                    })
+                  }
+                  awsBetaBlacklist={form.watch('global.aws_beta_blacklist')}
+                  onAwsBetaBlacklistChange={(value) =>
+                    form.setValue('global.aws_beta_blacklist', value, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    })
+                  }
+                  awsBetaBlacklistError={
+                    form.formState.errors.global?.aws_beta_blacklist?.message
+                  }
+                />
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.aws_passthrough_compatibility_enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>
+                    {t('AWS Bedrock Passthrough Compatibility')}
+                  </FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Convert supported client requests when AWS passthrough is enabled. Users with AWS direct passthrough bypass compatibility. Disabled by default.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.aws_usage_metrics_enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Enable AWS RPM/TPM Metrics')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Collect rolling RPM and TPM for all AWS Bedrock channels.'
                     )}
                   </FormDescription>
                 </SettingsSwitchContent>
@@ -315,6 +457,31 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
               )}
             />
           </div>
+
+          <Separator />
+
+          <FormField
+            control={form.control}
+            name='global.azure_force_background_enabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Azure Force Background Mode')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Default for the Force background mode switch of Azure channels: new Azure channels start with it, and channels that never set it follow it. Enabled channels submit every request with background=true and the gateway polls for the result; clients still receive a normal synchronous response.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
 
           <Separator />
 

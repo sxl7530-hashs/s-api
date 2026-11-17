@@ -24,12 +24,69 @@ import type {
   LogCleanupTask,
   SystemOptionsResponse,
   SystemTaskListResponse,
+  SystemTaskFilters,
   SystemTaskResponse,
   UpdateOptionRequest,
   UpdateOptionResponse,
+  UpdatePasskeyDomainsRequest,
+  UpdatePasskeyDomainsResponse,
   UpstreamChannelsResponse,
   UpstreamRatiosResponse,
 } from './types'
+
+export type Claude5CompatStats = {
+  start: number
+  end: number
+  scanned: number
+  partial: boolean
+  requests: number
+  rows: { model: string; rule: string; requests: number }[]
+  buckets: { start: number; requests: number }[]
+  rule_states?: {
+    model: string
+    rule: string
+    evaluated: number
+    matched: number
+    changed: number
+    skipped: number
+  }[]
+  cohorts?: {
+    model: string
+    region: string
+    cohort: string
+    requests: number
+    successes: number
+    failures: number
+    upstream_4xx: number
+    upstream_5xx: number
+    upstream_known: number
+    retried: number
+    retries: number
+    ttfb_samples: number
+    ttfb_p50_ms: number | null
+    ttfb_p95_ms: number | null
+    streams: number
+    stream_known: number
+    interrupted: number
+    sample_min: number
+    sample_max: number
+  }[]
+  combinations?: {
+    model: string
+    output_config_policy: string
+    thinking_enabled_map: boolean
+    requests: number
+  }[]
+}
+
+export async function getClaude5CompatStats(signal?: AbortSignal) {
+  const res = await api.get<{
+    success: boolean
+    message?: string
+    data?: Claude5CompatStats
+  }>('/api/option/claude5_compat_stats', { signal })
+  return res.data
+}
 
 export async function getSystemOptions() {
   const res = await api.get<SystemOptionsResponse>('/api/option/')
@@ -38,6 +95,20 @@ export async function getSystemOptions() {
 
 export async function updateSystemOption(request: UpdateOptionRequest) {
   const res = await api.put<UpdateOptionResponse>('/api/option/', request)
+  return res.data
+}
+
+export async function updatePasskeyDomains(
+  request: UpdatePasskeyDomainsRequest
+) {
+  const res = await api.put<UpdatePasskeyDomainsResponse>(
+    '/api/option/passkey/domains',
+    request,
+    {
+      validateStatus: (status) =>
+        (status >= 200 && status < 300) || status === 409,
+    }
+  )
   return res.data
 }
 
@@ -77,9 +148,12 @@ export async function getSystemTask(taskId: string) {
   return res.data
 }
 
-export async function listSystemTasks(limit = 20) {
+export async function listSystemTasks(
+  limit = 20,
+  filters: SystemTaskFilters = {}
+) {
   const res = await api.get<SystemTaskListResponse>('/api/system-task/list', {
-    params: { limit },
+    params: { limit, ...filters },
   })
   return res.data
 }

@@ -127,3 +127,42 @@ func TestCacheGetRandomSatisfiedChannelUsesTokenAutoGroupsWhenGlobalAutoIsEmpty(
 	assert.Equal(t, "default", selectedGroup)
 	assert.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
 }
+
+func TestAutoGroupFallbackResetsAffinityAndCapacityOffsets(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	common.RetryTimes = 4
+	const modelName = "auto-group-capacity-fallback"
+	createChannelSelectAutoGroupsChannel(t, db, 2201, "vip", modelName)
+	createChannelSelectAutoGroupsChannel(t, db, 2202, "default", modelName)
+	createChannelSelectAutoGroupsChannel(t, db, 2203, "default", modelName)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 2203).Update("priority", -1).Error)
+	require.NoError(t, db.Model(&model.Ability{}).Where("channel_id = ?", 2203).Update("priority", -1).Error)
+	model.InitChannelCache()
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenCrossGroupRetry, true)
+	ctx.Set(ginKeyChannelAffinityRetryOffset, 1)
+	retry := 2
+	param := &RetryParam{
+		Ctx: ctx, TokenGroup: "auto", ModelName: modelName,
+		RequestPath: "/v1/chat/completions", Retry: &retry,
+	}
+	param.ExcludeCapacityRejectedChannel(2201)
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, "default", group)
+	assert.Equal(t, 2202, channel.Id, "the next group must start at its highest priority")
+	assert.Zero(t, param.GetRetry())
+
+	param.IncreaseRetry()
+	channel, group, err = CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, "default", group)
+	assert.Equal(t, 2203, channel.Id, "previous group offsets must not delay priority fallback")
+	assert.Equal(t, 1, param.GetRetry())
+}

@@ -36,10 +36,11 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
     .object({
       name: z.string().min(1, t('Please enter a name')),
       remain_quota_dollars: z.number().optional(),
-      expired_time: z.date().optional(),
+      expired_time: z.date().nullable(),
       unlimited_quota: z.boolean(),
       model_limits: z.array(z.string()),
       allow_ips: z.string().optional(),
+      allow_user_quota_query: z.boolean(),
       group: z.string().optional(),
       token_group_profile_id: z.number().optional(),
       auto_groups_mode: z.enum(['inherit', 'custom']),
@@ -48,7 +49,17 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
-      if (data.group === 'auto') {
+      if (data.group === 'auto' && data.auto_groups_mode === 'custom') {
+        if (data.auto_groups.length === 0) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['auto_groups'],
+            message: t(
+              'Select at least one group or restore the configured order.'
+            ),
+          })
+        }
+
         if (data.auto_groups.length > autoGroupLimit) {
           ctx.addIssue({
             code: 'custom',
@@ -94,10 +105,11 @@ export type ApiKeyFormValues = z.infer<ReturnType<typeof getApiKeyFormSchema>>
 export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   name: '',
   remain_quota_dollars: 10,
-  expired_time: undefined,
+  expired_time: null,
   unlimited_quota: true,
   model_limits: [],
   allow_ips: '',
+  allow_user_quota_query: true,
   group: DEFAULT_GROUP,
 	token_group_profile_id: 0,
   auto_groups_mode: 'inherit',
@@ -107,15 +119,15 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
 }
 
 export function getApiKeyFormDefaultValues(
-  _defaultUseAutoGroup: boolean
+  defaultUseAutoGroup: boolean
 ): ApiKeyFormValues {
   return {
     ...API_KEY_FORM_DEFAULT_VALUES,
-    group: DEFAULT_GROUP,
-	token_group_profile_id: 0,
+    group: defaultUseAutoGroup ? 'auto' : DEFAULT_GROUP,
+    token_group_profile_id: 0,
     auto_groups_mode: 'inherit',
     auto_groups: [],
-    cross_group_retry: false,
+    cross_group_retry: defaultUseAutoGroup,
   }
 }
 
@@ -141,6 +153,7 @@ export function transformFormDataToPayload(
     model_limits_enabled: data.model_limits.length > 0,
     model_limits: data.model_limits.join(','),
     allow_ips: data.allow_ips || '',
+    allow_user_quota_query: data.allow_user_quota_query,
     group: data.group || '',
     token_group_profile_id: data.token_group_profile_id || 0,
     auto_groups:
@@ -176,16 +189,15 @@ export function transformApiKeyToFormDefaults(
       ? 0
       : quotaUnitsToDollars(apiKey.remain_quota),
     expired_time:
-      apiKey.expired_time > 0
-        ? new Date(apiKey.expired_time * 1000)
-        : undefined,
+      apiKey.expired_time > 0 ? new Date(apiKey.expired_time * 1000) : null,
     unlimited_quota: apiKey.unlimited_quota,
     model_limits: apiKey.model_limits
       ? apiKey.model_limits.split(',').filter(Boolean)
       : [],
     allow_ips: apiKey.allow_ips || '',
+    allow_user_quota_query: !!apiKey.allow_user_quota_query,
     group: apiKey.group || DEFAULT_GROUP,
-	token_group_profile_id: apiKey.token_group_profile_id || 0,
+    token_group_profile_id: apiKey.token_group_profile_id || 0,
     auto_groups_mode: autoGroupsMode,
     auto_groups: autoGroups,
     cross_group_retry: !!apiKey.cross_group_retry,

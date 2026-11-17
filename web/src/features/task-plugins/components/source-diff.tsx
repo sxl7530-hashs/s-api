@@ -18,7 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
-type SourceDiffProps = { before: string; after: string }
+import { cn } from '@/lib/utils'
+
+type SourceDiffProps = {
+  before: string
+  after: string
+  className?: string
+  /** Accessible name of the diff; defaults to "Source diff". */
+  label?: string
+  /** Shown when nothing changed; defaults to "No source changes". */
+  emptyText?: string
+}
 
 type DiffLine = { id: string; kind: 'same' | 'added' | 'removed'; text: string }
 
@@ -60,11 +70,24 @@ function diffLines(before: string, after: string): DiffLine[] {
 
 export function SourceDiff(props: SourceDiffProps) {
   const { t } = useTranslation()
+  if (props.before === props.after) {
+    return (
+      <p
+        role='status'
+        className='text-muted-foreground rounded-md border px-3 py-6 text-center text-sm'
+      >
+        {props.emptyText ?? t('No source changes')}
+      </p>
+    )
+  }
   const lines = diffLines(props.before, props.after)
   return (
     <div
-      className='max-h-96 overflow-auto rounded-md border font-mono text-xs'
-      aria-label={t('Source diff')}
+      className={cn(
+        'max-h-96 overflow-auto rounded-md border font-mono text-xs',
+        props.className
+      )}
+      aria-label={props.label ?? t('Source diff')}
     >
       {lines.map((line) => {
         let prefix = ' '

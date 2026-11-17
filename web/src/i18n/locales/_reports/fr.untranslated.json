@@ -1,6 +1,5 @@
 {
-  "Create reusable token presets with model support and ordered routing groups.": "Create reusable token presets with model support and ordered routing groups.",
-  "Create reusable token presets with ordered routing groups.": "Create reusable token presets with ordered routing groups.",
-  "Search and select groups. The selected order is used for routing.": "Search and select groups. The selected order is used for routing.",
-  "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk"
+  "Automatic mode uses this percentage of the disk": "Automatic mode uses this percentage of the disk",
+  "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.": "When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.",
+  "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.": "anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only."
 }

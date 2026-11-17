@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 
@@ -35,33 +36,43 @@ func (a *ResponseAccumulator) WriteString(value string) (int, error) {
 	if a.file == nil {
 		var file *os.File
 		var err error
-		createdOnDisk := false
-		if common.IsDiskCacheEnabled() {
-			_, file, err = common.CreateDiskCacheFile(common.DiskCacheTypeResponse)
-			createdOnDisk = file != nil && err == nil
+		initialSize := int64(a.mem.Len())
+		if !common.TryReserveDiskCache(initialSize) {
+			a.err = common.ErrDiskCacheUnavailable
+			return 0, a.err
 		}
-		if file == nil {
-			file, err = os.CreateTemp("", "new-api-response-*")
-		}
+		_, file, err = common.CreateDiskCacheFile(common.DiskCacheTypeResponse)
 		if err != nil {
+			common.ReleaseDiskCacheReservation(initialSize)
 			a.err = err
 			return 0, err
 		}
 		a.file = file
-		a.diskBacked = createdOnDisk
+		a.diskBacked = true
 		if _, err = a.file.Write(a.mem.Bytes()); err != nil {
+			common.ReleaseDiskCacheReservation(initialSize)
 			a.err = err
 			_ = a.Close()
 			return 0, err
 		}
 		a.fileSize = int64(a.mem.Len())
-		if a.diskBacked {
-			common.IncrementDiskFiles(a.fileSize)
-			a.diskTracked = a.fileSize
-		}
+		common.IncrementDiskFiles(a.fileSize)
+		a.diskTracked = a.fileSize
 		a.mem.Reset()
+		common.ReleaseDiskCacheReservation(initialSize)
+	}
+	maxSize := common.GetDiskCacheMaxRequestBytes()
+	if maxSize > 0 && a.fileSize+int64(len(value)) > maxSize {
+		a.err = fmt.Errorf("%w: response exceeds maximum cache size", common.ErrDiskCacheUnavailable)
+		return 0, a.err
+	}
+	writeSize := int64(len(value))
+	if !common.TryReserveDiskCache(writeSize) {
+		a.err = common.ErrDiskCacheUnavailable
+		return 0, a.err
 	}
 	n, err := a.file.WriteString(value)
+	common.ReleaseDiskCacheReservation(writeSize)
 	a.fileSize += int64(n)
 	if a.diskBacked && n > 0 {
 		common.AddDiskCacheUsage(int64(n))
@@ -122,7 +133,7 @@ func (a *ResponseAccumulator) Close() error {
 		common.DecrementDiskFiles(a.diskTracked)
 		a.diskTracked = 0
 	}
-	if removeErr := os.Remove(name); err == nil {
+	if removeErr := common.RemoveDiskCacheFile(name); err == nil {
 		err = removeErr
 	}
 	a.file = nil

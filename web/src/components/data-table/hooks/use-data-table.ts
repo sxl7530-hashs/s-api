@@ -145,7 +145,9 @@ function useControllableTableState<TValue>(
   return [value, setValue]
 }
 
-function readColumnVisibility(storageKey: string | undefined): VisibilityState {
+export function readColumnVisibility(
+  storageKey: string | undefined
+): VisibilityState {
   if (!storageKey || typeof window === 'undefined') return {}
 
   try {

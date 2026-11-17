@@ -19,13 +19,17 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { z } from 'zod'
 
 import { Dialog } from '@/components/dialog'
 import { PasswordInput } from '@/components/password-input'
+import {
+  PasswordConfirmationStatus,
+  PasswordStrength,
+} from '@/components/password-strength'
 import { Turnstile } from '@/components/turnstile'
 import { Button } from '@/components/ui/button'
 import {
@@ -50,8 +54,9 @@ import {
   saveAffiliateCode,
 } from '@/features/auth/lib/storage'
 import { useStatus } from '@/hooks/use-status'
-import { isAuthBundle } from '@/lib/api'
-import { getServerErrorMessageKey } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
+import { AuthOperationError } from '@/lib/secure-verification'
+import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 export function SignUpForm({
@@ -76,7 +81,7 @@ export function SignUpForm({
     setTurnstileToken,
     validateTurnstile,
   } = useTurnstile()
-  const { redirectToLogin, handleLoginSuccess } = useAuthRedirect()
+  const { redirectToLogin, handleLoginResult } = useAuthRedirect()
   const {
     isSending: isSendingCode,
     secondsLeft,
@@ -95,6 +100,11 @@ export function SignUpForm({
       password: '',
       confirmPassword: '',
     },
+  })
+  const passwordValue = useWatch({ control: form.control, name: 'password' })
+  const confirmationValue = useWatch({
+    control: form.control,
+    name: 'confirmPassword',
   })
 
   const emailValue = form.watch('email')
@@ -173,10 +183,12 @@ export function SignUpForm({
         toast.success(t('Account created! Please sign in'))
         redirectToLogin()
       } else {
-        toast.error(res?.message || t('Failed to create account'))
+        handleServerError(createServerError(res, t('Failed to create account')))
       }
-    } catch {
-      // Errors are handled by global interceptor
+    } catch (error) {
+      handleServerError(
+        AuthOperationError.from(error, t('Failed to create account'))
+      )
     } finally {
       setIsLoading(false)
     }
@@ -215,17 +227,18 @@ export function SignUpForm({
     setIsWeChatSubmitting(true)
     try {
       const res = await wechatLoginByCode(wechatCode)
-      if (res?.success && isAuthBundle(res.data)) {
-        await handleLoginSuccess(res.data)
-        toast.success(t('Signed in via WeChat'))
+      if (res?.success) {
         handleWeChatDialogChange(false)
+        if (await handleLoginResult(res.data)) {
+          toast.success(t('Signed in via WeChat'))
+        }
       } else {
-        if (getServerErrorMessageKey(res)) return
-        toast.error(res?.message || t('Login failed'))
+        handleServerError(createServerError(res, t('Login failed')))
       }
     } catch (error: unknown) {
-      if (getServerErrorMessageKey(error)) return
-      toast.error(t('Login failed'))
+      handleServerError(
+        new AuthOperationError(t('Login failed'), undefined, { cause: error })
+      )
     } finally {
       setIsWeChatSubmitting(false)
     }
@@ -269,12 +282,17 @@ export function SignUpForm({
           render={({ field }) => (
             <FormItem>
               <FormLabel>{t('Password')}</FormLabel>
-              <FormControl>
+              <FormControl describedBy='sign-up-password-strength'>
                 <PasswordInput
-                  placeholder={t('Enter password (8-20 characters)')}
+                  placeholder={t('Enter password (8–128 characters)')}
+                  autoComplete='new-password'
                   {...field}
                 />
               </FormControl>
+              <PasswordStrength
+                id='sign-up-password-strength'
+                value={passwordValue}
+              />
               <FormMessage />
             </FormItem>
           )}
@@ -284,12 +302,22 @@ export function SignUpForm({
         <FormField
           control={form.control}
           name='confirmPassword'
-          render={({ field }) => (
+          render={({ field, fieldState }) => (
             <FormItem>
               <FormLabel>{t('Confirm password')}</FormLabel>
-              <FormControl>
-                <PasswordInput placeholder={t('Confirm password')} {...field} />
+              <FormControl describedBy='sign-up-password-confirmation-status'>
+                <PasswordInput
+                  placeholder={t('Confirm password')}
+                  autoComplete='new-password'
+                  {...field}
+                />
               </FormControl>
+              <PasswordConfirmationStatus
+                id='sign-up-password-confirmation-status'
+                password={passwordValue}
+                confirmation={confirmationValue}
+                hasFieldError={!!fieldState.error}
+              />
               <FormMessage />
             </FormItem>
           )}

@@ -19,6 +19,7 @@
     "dist",
     "build",
     "coverage",
+    "classic",
     ".tanstack",
     ".eslintrc.cjs",
     "**/routeTree.gen.ts",

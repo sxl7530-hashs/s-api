@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 )
@@ -86,7 +87,7 @@ type Properties struct {
 	OriginModelName   string `json:"origin_model_name,omitempty"`
 }
 
-func (m *Properties) Scan(val interface{}) error {
+func (m *Properties) Scan(val any) error {
 	bytesValue := jsonScanBytes(val)
 	if len(bytesValue) == 0 {
 		*m = Properties{}
@@ -131,6 +132,38 @@ type TaskPrivateData struct {
 	PluginState json.RawMessage `json:"plugin_state,omitempty"`
 	// PollFailures counts consecutive unrecognized or transient poll outcomes.
 	PollFailures int `json:"poll_failures,omitempty"`
+	// ResultDiscarded marks an immediate terminal result whose submit route
+	// declared retainResult: false. The upstream snapshot was never written
+	// and every retrieval surface treats the task as not found. The zero
+	// value keeps historical rows retained and retrievable.
+	ResultDiscarded bool `json:"result_discarded,omitempty"`
+	// CredentialAccount is the account of the plugin credential that
+	// submitted the task, which polls the task and fetches its content.
+	CredentialAccount string `json:"credential_account,omitempty"`
+	// RequestPlugins is set when a request plugin instance may report the
+	// task: the task reports once, at its final state.
+	RequestPlugins *TaskRequestPlugins `json:"request_plugins,omitempty"`
+}
+
+// TaskRequestPlugins is what the report of a task needs from its
+// submission. The request id and path are in Execution; the model, group,
+// user, channel and token are on the task.
+type TaskRequestPlugins struct {
+	// Instances are the ids of the report instances that matched.
+	Instances   []string `json:"instances"`
+	Format      string   `json:"format"`
+	ChannelType int      `json:"channel_type,omitempty"`
+	Attempt     int      `json:"attempt,omitempty"`
+	Username    string   `json:"username,omitempty"`
+	TokenName   string   `json:"token_name,omitempty"`
+	// StartedAt is when the submission started, in Unix milliseconds.
+	StartedAt int64 `json:"started_at"`
+	// Request is the client body as a report shows it, inline media
+	// replaced by references; null when it is not JSON or too large.
+	Request json.RawMessage           `json:"request,omitempty"`
+	Media   []jsplugin.TransformMedia `json:"media,omitempty"`
+	// Record is the submission's public record.
+	Record []commonRelay.RequestPluginRecord `json:"record,omitempty"`
 }
 
 type TaskExecutionSnapshot struct {
@@ -166,6 +199,12 @@ type TaskBillingContext struct {
 	TieredSnapshot  *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
 }
 
+// ResultRetrievable reports whether retrieval surfaces (native query routes,
+// protocol retrieve endpoints, artifact projection) may serve this task.
+func (t *Task) ResultRetrievable() bool {
+	return !t.PrivateData.ResultDiscarded
+}
+
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
 // 旧数据没有 UpstreamTaskID 时，TaskID 本身就是上游 ID
 func (t *Task) GetUpstreamTaskID() string {
@@ -190,7 +229,7 @@ func GenerateTaskID() string {
 	return "task_" + key
 }
 
-func (p *TaskPrivateData) Scan(val interface{}) error {
+func (p *TaskPrivateData) Scan(val any) error {
 	bytesValue := jsonScanBytes(val)
 	if len(bytesValue) == 0 {
 		return nil
@@ -202,7 +241,8 @@ func (p TaskPrivateData) Value() (driver.Value, error) {
 	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" &&
 		p.Execution == nil && p.BillingSource == "" && p.SubscriptionId == 0 &&
 		p.TokenId == 0 && p.NodeName == "" && p.BillingContext == nil &&
-		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 {
+		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 &&
+		!p.ResultDiscarded && p.RequestPlugins == nil {
 		return nil, nil
 	}
 	// 同 Properties.Value:string 避免 PG simple protocol 的 bytea 编码。
@@ -230,9 +270,17 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	properties := Properties{}
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
+		// A New API channel may rotate between several gateway tokens, so the
+		// task keeps the key that submitted it and polls with the same identity.
 		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
-			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi {
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi ||
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeNewAPI {
 			privateData.Key = relayInfo.ChannelMeta.ApiKey
+		}
+		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeTaskPlugin {
+			if credential, ok := jsplugin.ParseCredential(relayInfo.ChannelMeta.ApiKey); ok {
+				privateData.CredentialAccount = credential.AccountID
+			}
 		}
 		if relayInfo.UpstreamModelName != "" {
 			properties.UpstreamModelName = relayInfo.UpstreamModelName
@@ -293,7 +341,9 @@ func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQ
 	}
 
 	// 获取数据
-	err = query.Omit("channel_id").Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
+	// Task lists never render the persisted upstream snapshot; the dashboard
+	// loads media through the artifacts endpoint instead.
+	err = query.Omit("channel_id", "data").Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -338,7 +388,7 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 	}
 
 	// 获取数据
-	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
+	err = query.Omit("data").Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -469,8 +519,15 @@ func (Task *Task) Insert() error {
 	return Task.InsertWithContext(context.Background())
 }
 
-func (Task *Task) InsertWithContext(ctx context.Context) error {
-	return DB.WithContext(ctx).Create(Task).Error
+// InsertWithContext creates the row. omitColumns are left out of the INSERT
+// (for example "data" when the submit route discards the upstream snapshot)
+// while the in-memory task keeps its values for presentation.
+func (Task *Task) InsertWithContext(ctx context.Context, omitColumns ...string) error {
+	tx := DB.WithContext(ctx)
+	if len(omitColumns) > 0 {
+		tx = tx.Omit(omitColumns...)
+	}
+	return tx.Create(Task).Error
 }
 
 type taskSnapshot struct {

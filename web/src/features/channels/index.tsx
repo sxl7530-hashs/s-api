@@ -21,14 +21,23 @@ import { Link } from '@tanstack/react-router'
 import { Settings2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { Dialog } from '@/components/dialog'
 import { SectionPageLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { SystemTasksPanel } from '@/features/system-info/components/system-tasks-panel'
+import {
+  hasPermission,
+  ADMIN_PERMISSION_RESOURCES,
+  ADMIN_PERMISSION_ACTIONS,
+} from '@/lib/admin-permissions'
 import { ROLE } from '@/lib/roles'
+import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { getChannelOps } from './api'
@@ -39,12 +48,18 @@ import { ChannelsTable } from './components/channels-table'
 
 export function Channels() {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const canTestModels = hasPermission(
+    user,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.WRITE
+  )
   const isRoot = useAuthStore(
     (state) => state.auth.user?.role === ROLE.SUPER_ADMIN
   )
   const channelOpsQuery = useQuery({
     queryKey: ['channel-ops'],
-    queryFn: getChannelOps,
+    queryFn: async () => requireServerSuccess(await getChannelOps()),
     retry: false,
     staleTime: 5 * 60 * 1000,
   })
@@ -63,8 +78,8 @@ export function Channels() {
               aria-label={t('Retry Settings')}
               render={
                 <Link
-                  to='/system-settings/models/$section'
-                  params={{ section: 'routing-reliability' }}
+                  to='/system-settings/request-policies/$section'
+                  params={{ section: 'routing' }}
                 />
               }
             />
@@ -94,6 +109,19 @@ export function Channels() {
           </span>
         </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
+          {canTestModels && (
+            <Dialog
+              title={t('Selected channel model test')}
+              trigger={
+                <Button variant='outline'>
+                  {t('Selected channel model test')}
+                </Button>
+              }
+              contentClassName='sm:max-w-5xl'
+            >
+              <SystemTasksPanel channelModelTestsOnly />
+            </Dialog>
+          )}
           <ChannelsPrimaryButtons />
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>

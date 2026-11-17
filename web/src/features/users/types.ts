@@ -59,6 +59,7 @@ export const userSchema = z.object({
   last_login_at: z.number().optional(),
   DeletedAt: z.any().nullable().optional(),
   remark: z.string().optional(),
+  aws_direct_passthrough: z.boolean().optional(),
   admin_permissions: z
     .record(z.string(), z.record(z.string(), z.boolean()))
     .optional(),
@@ -118,6 +119,7 @@ export interface SearchUsersParams {
 }
 
 export interface UserFormData {
+  aws_direct_passthrough?: boolean
   username: string
   display_name: string
   password?: string
