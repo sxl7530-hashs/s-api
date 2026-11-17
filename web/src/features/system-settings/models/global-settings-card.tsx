@@ -94,6 +94,8 @@ const schema = z.object({
     pass_through_request_enabled: z.boolean(),
     aws_beta_filter_enabled: z.boolean(),
     aws_beta_blacklist: jsonString,
+    aws_context_management_auto_beta: z.boolean(),
+    aws_context_management_beta_models: jsonString,
     thinking_model_blacklist: jsonString,
     chat_completions_to_responses_policy: jsonString,
     azure_force_background_enabled: z.boolean(),
@@ -114,6 +116,8 @@ type FlatGlobalModelSettings = {
   'global.pass_through_request_enabled': boolean
   'global.aws_beta_filter_enabled': boolean
   'global.aws_beta_blacklist': string
+  'global.aws_context_management_auto_beta': boolean
+  'global.aws_context_management_beta_models': string
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
   'global.azure_force_background_enabled': boolean
@@ -134,6 +138,12 @@ const flattenGlobalValues = (
   'global.aws_beta_blacklist': normalizeJsonText(
     values.global.aws_beta_blacklist,
     '[]'
+  ),
+  'global.aws_context_management_auto_beta':
+    values.global.aws_context_management_auto_beta,
+  'global.aws_context_management_beta_models': normalizeJsonText(
+    values.global.aws_context_management_beta_models,
+    '["*claude-haiku-4-5*", "*claude-sonnet-4-5*"]'
   ),
   'global.thinking_model_blacklist': normalizeJsonText(
     values.global.thinking_model_blacklist,
@@ -243,6 +253,28 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
                 <Claude5CompatSettings
                   value={field.value}
                   onChange={field.onChange}
+                  awsContextManagementAutoBeta={form.watch(
+                    'global.aws_context_management_auto_beta'
+                  )}
+                  onAwsContextManagementAutoBetaChange={(value) =>
+                    form.setValue(
+                      'global.aws_context_management_auto_beta',
+                      value,
+                      {
+                        shouldDirty: true,
+                      }
+                    )
+                  }
+                  awsContextManagementBetaModels={form.watch(
+                    'global.aws_context_management_beta_models'
+                  )}
+                  onAwsContextManagementBetaModelsChange={(value) =>
+                    form.setValue(
+                      'global.aws_context_management_beta_models',
+                      value,
+                      { shouldDirty: true, shouldValidate: true }
+                    )
+                  }
                 />
                 <FormMessage />
               </FormItem>
@@ -480,7 +512,6 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
               </SettingsSwitchItem>
             )}
           />
-
 
           <Separator />
 

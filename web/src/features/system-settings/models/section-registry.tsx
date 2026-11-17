@@ -52,6 +52,12 @@ const MODELS_SECTIONS = [
               settings['global.aws_beta_blacklist'],
               '[]'
             ),
+            aws_context_management_auto_beta:
+              settings['global.aws_context_management_auto_beta'] ?? true,
+            aws_context_management_beta_models: formatJsonForEditor(
+              settings['global.aws_context_management_beta_models'],
+              '["*claude-haiku-4-5*", "*claude-sonnet-4-5*"]'
+            ),
             thinking_model_blacklist: formatJsonForEditor(
               settings['global.thinking_model_blacklist'],
               '[]'

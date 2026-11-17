@@ -226,11 +226,13 @@ type GlobalSettings struct {
 	AzureForceBackgroundEnabled bool `json:"azure_force_background_enabled"`
 	// AwsBetaFilterEnabled strips anthropic-beta values listed in AwsBetaBlacklist
 	// before forwarding to AWS Bedrock (AWS channels only); toggle via settings.
-	AwsBetaFilterEnabled   bool                  `json:"aws_beta_filter_enabled"`
-	AwsBetaBlacklist       []string              `json:"aws_beta_blacklist"`
-	AwsUsageMetricsEnabled bool                  `json:"aws_usage_metrics_enabled"`
-	Claude5Compat          Claude5CompatSettings `json:"claude5_compat"`
-	ChannelNameDisplay     string                `json:"channel_name_display"`
+	AwsBetaFilterEnabled           bool                  `json:"aws_beta_filter_enabled"`
+	AwsBetaBlacklist               []string              `json:"aws_beta_blacklist"`
+	AwsContextManagementAutoBeta   bool                  `json:"aws_context_management_auto_beta"`
+	AwsContextManagementBetaModels []string              `json:"aws_context_management_beta_models"`
+	AwsUsageMetricsEnabled         bool                  `json:"aws_usage_metrics_enabled"`
+	Claude5Compat                  Claude5CompatSettings `json:"claude5_compat"`
+	ChannelNameDisplay             string                `json:"channel_name_display"`
 }
 
 // 默认配置
@@ -258,6 +260,11 @@ var defaultOpenaiSettings = GlobalSettings{
 		"prompt-caching-scope-2026-01-05",
 		"advanced-tool-use-2025-11-20",
 		"redact-thinking-2026-02-12",
+	},
+	AwsContextManagementAutoBeta: true,
+	AwsContextManagementBetaModels: []string{
+		"*claude-haiku-4-5*",
+		"*claude-sonnet-4-5*",
 	},
 	ChannelNameDisplay: `{"enabled":false,"mappings":{}}`,
 }
@@ -328,6 +335,32 @@ func (s *GlobalSettings) FilterAwsBetas(betas []string) []string {
 		}
 	}
 	return filtered
+}
+
+func ShouldAutoAddAwsContextManagementBeta(modelID string) bool {
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+
+	if !globalSettings.AwsContextManagementAutoBeta {
+		return false
+	}
+	matched := false
+	for _, pattern := range globalSettings.AwsContextManagementBetaModels {
+		ok, err := path.Match(strings.TrimSpace(pattern), modelID)
+		if err == nil && ok {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return false
+	}
+	for _, beta := range globalSettings.AwsBetaBlacklist {
+		if strings.TrimSpace(beta) == "context-management-2025-06-27" {
+			return false
+		}
+	}
+	return true
 }
 
 const thinkingBlacklistRegexPrefix = "re:"

@@ -2960,7 +2960,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Các Dự Án Liên Quan",
     "footer.defaultCopyright": "Bản quyền được bảo lưu.",
-    "footer.newapi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
+    "footer.new\u0061pi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Với kênh tùy chỉnh nâng cao, thiết lập này chỉ áp dụng cho các route /v1/responses không chuyển đổi giao thức.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Đối với các kênh được thêm sau ngày 10 tháng 5 năm 2025, không cần loại bỏ \".\" khỏi tên mô hình trong quá trình triển khai",
     "For example, opus-4.6 or gpt-5.5": "Ví dụ: opus-4.6 hoặc gpt-5.5",
@@ -7643,6 +7643,11 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Enable AWS context-management beta": "Bật beta context-management cho AWS",
+    "Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.": "Tự thêm beta tương ứng khi có context_management. Chỉ áp dụng cho kênh AWS; không áp dụng với chuyển tiếp trực tiếp của người dùng.",
+    "AWS context-management beta models": "Mô hình AWS cho beta context-management",
+    "JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.": "Mảng JSON chứa mẫu glob ID mô hình AWS Bedrock được phép tự động thêm beta.",
+    "Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.": "Cần bật khả năng tương thích passthrough AWS Bedrock và passthrough yêu cầu. Không áp dụng cho passthrough trực tiếp của người dùng."
   }
 }

@@ -35,7 +35,14 @@ import { SettingsSwitchField } from '../components/settings-form-layout'
 import { Claude5CapabilitySettings } from './claude5-capability-settings'
 import { Claude5CompatStatistics } from './claude5-compat-statistics'
 
-type Props = { value: string; onChange: (value: string) => void }
+type Props = {
+  value: string
+  onChange: (value: string) => void
+  awsContextManagementAutoBeta: boolean
+  onAwsContextManagementAutoBetaChange: (value: boolean) => void
+  awsContextManagementBetaModels: string
+  onAwsContextManagementBetaModelsChange: (value: string) => void
+}
 
 const thinkingRules = [
   ['thinking_disabled_map', 'Adapt disabled thinking by model'],
@@ -169,6 +176,35 @@ export function Claude5CompatSettings(props: Props) {
             {t('Invalid JSON format')}
           </p>
         )}
+        <div className='space-y-2 rounded-md border px-3'>
+          <SettingsSwitchField
+            controlId={`${id}-context-management-beta`}
+            label={t('Enable AWS context-management beta')}
+            description={t(
+              'Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.'
+            )}
+            checked={props.awsContextManagementAutoBeta}
+            onCheckedChange={props.onAwsContextManagementAutoBetaChange}
+          />
+          <div className='space-y-2 pb-3'>
+            <Label htmlFor={`${id}-context-management-models`}>
+              {t('AWS context-management beta models')}
+            </Label>
+            <JsonCodeEditor
+              id={`${id}-context-management-models`}
+              value={props.awsContextManagementBetaModels}
+              onChange={props.onAwsContextManagementBetaModelsChange}
+              name='aws_context_management_beta_models'
+              placeholder='["*claude-haiku-4-5*", "*claude-sonnet-4-5*"]'
+              heightClassName='h-24 min-h-24 max-h-24'
+            />
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.'
+              )}
+            </p>
+          </div>
+        </div>
         <fieldset disabled={!valid} className='space-y-3'>
           <CompatibilityGroup title={t('Scope and direct passthrough')}>
             {(['target_models', 'target_regions'] as const).map((key) => (

@@ -2960,7 +2960,7 @@
     "footer.columns.related.links.oneApi": "Один API",
     "footer.columns.related.title": "Связанные проекты",
     "footer.defaultCopyright": "Все права защищены.",
-    "footer.newapi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
+    "footer.new\u0061pi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Для расширенных пользовательских каналов это действует только для маршрутов /v1/responses без преобразования протокола.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Для каналов, добавленных после 10 мая 2025 г., не нужно удалять \".\" из имён моделей при развёртывании",
     "For example, opus-4.6 or gpt-5.5": "Например, opus-4.6 или gpt-5.5",
@@ -7643,6 +7643,11 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Enable AWS context-management beta": "Включить beta context-management для AWS",
+    "Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.": "Добавлять beta при наличии context_management. Только для каналов AWS; прямой passthrough пользователя исключён.",
+    "AWS context-management beta models": "Модели AWS для beta context-management",
+    "JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.": "JSON-массив glob-шаблонов ID моделей AWS Bedrock, для которых разрешено добавление beta.",
+    "Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.": "Требуется совместимость passthrough AWS Bedrock и passthrough запросов. Прямой passthrough пользователя не применяется."
   }
 }

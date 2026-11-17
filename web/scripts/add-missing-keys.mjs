@@ -4,6 +4,11 @@ import path from 'node:path'
 const dir = path.resolve('src/i18n/locales')
 const newKeys = {
   en: {
+    'Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.': 'Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.',
+    'Enable AWS context-management beta': 'Enable AWS context-management beta',
+    'Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.': 'Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.',
+    'AWS context-management beta models': 'AWS context-management beta models',
+    'JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.': 'JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.',
     'Enable Claude 5 compatibility': 'Enable Claude 5 compatibility',
     'Apply to AWS direct passthrough users': 'Apply to AWS direct passthrough users',
     'Recover thinking block bindings': 'Recover thinking block bindings',
@@ -90,6 +95,11 @@ const newKeys = {
     'Always keep this space free': 'Always keep this space free',
   },
   zh: {
+    'Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.': '需要启用 AWS Bedrock 透传兼容并使用请求透传。用户级直接透传不受影响。',
+    'Enable AWS context-management beta': '启用 AWS context-management beta',
+    'Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.': '请求包含 context_management 时自动添加对应 beta。仅作用于 AWS 渠道，用户直接透传不受影响。',
+    'AWS context-management beta models': '自动补充 context-management beta 的 AWS 模型',
+    'JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.': '填写 JSON 数组，使用 glob 模式匹配允许自动补充 beta 的 AWS Bedrock 模型 ID。',
     "RPM / TPM": "RPM / TPM",
     "Bedrock model rate limits": "Bedrock 模型级限流",
     "Use mapped upstream model names. Model limits apply in addition to the channel ceiling; unlisted models use channel limits.": "填写映射后的上游模型名。模型限额与渠道总限额同时生效；未配置的模型仅使用渠道限额。",
@@ -159,6 +169,11 @@ const newKeys = {
     'Always keep this space free': '始终保留这部分空间',
   },
   'zh-TW': {
+    'Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.': '需要啟用 AWS Bedrock 直通相容並使用請求直通。使用者層級直接直通不受影響。',
+    'Enable AWS context-management beta': '啟用 AWS context-management beta',
+    'Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.': '請求包含 context_management 時自動新增對應 beta。僅作用於 AWS 渠道，使用者直接透傳不受影響。',
+    'AWS context-management beta models': '自動新增 context-management beta 的 AWS 模型',
+    'JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.': '填寫 JSON 陣列，使用 glob 模式比對允許自動新增 beta 的 AWS Bedrock 模型 ID。',
     "RPM / TPM": "RPM / TPM",
     "Bedrock model rate limits": "Bedrock 模型級限流",
     "Use mapped upstream model names. Model limits apply in addition to the channel ceiling; unlisted models use channel limits.": "填寫映射後的上游模型名稱。模型限額與渠道總限額同時生效；未設定的模型僅使用渠道限額。",
@@ -218,6 +233,11 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': '未知長度請求優先使用磁碟',
   },
   fr: {
+    'Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.': 'Nécessite la compatibilité passthrough AWS Bedrock et le passthrough des requêtes. Le passthrough direct utilisateur est exclu.',
+    'Enable AWS context-management beta': 'Activer le beta context-management AWS',
+    'Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.': 'Ajoute le beta correspondant lorsque context_management est présent. Canaux AWS uniquement ; les utilisateurs en passthrough direct sont exclus.',
+    'AWS context-management beta models': 'Modèles AWS pour le beta context-management',
+    'JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.': 'Tableau JSON de motifs glob d’identifiants de modèles AWS Bedrock autorisés.',
     "RPM / TPM": "RPM / TPM",
     "Bedrock model rate limits": "Limites par modèle Bedrock",
     "Use mapped upstream model names. Model limits apply in addition to the channel ceiling; unlisted models use channel limits.": "Utilisez les noms des modèles amont après mappage. Les limites par modèle s’ajoutent au plafond du canal ; les modèles non listés utilisent les limites du canal.",
@@ -277,6 +297,11 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': 'Utiliser le disque en priorité pour les requêtes de longueur inconnue',
   },
   ja: {
+    'Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.': 'AWS Bedrock の passthrough 互換性とリクエスト passthrough が必要です。ユーザーの直接 passthrough は対象外です。',
+    'Enable AWS context-management beta': 'AWS context-management beta を有効化',
+    'Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.': 'context_management がある場合に対応する beta を追加します。AWS チャネルのみが対象で、ユーザーの直接パススルーは除外されます。',
+    'AWS context-management beta models': '自動追加対象の AWS context-management モデル',
+    'JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.': '自動追加を許可する AWS Bedrock モデル ID の glob パターンを JSON 配列で指定します。',
     "RPM / TPM": "RPM / TPM",
     "Bedrock model rate limits": "Bedrock モデル別レート制限",
     "Use mapped upstream model names. Model limits apply in addition to the channel ceiling; unlisted models use channel limits.": "マッピング後の上流モデル名を使用します。モデル制限とチャネル上限の両方が適用され、未設定モデルにはチャネル制限のみ適用されます。",
@@ -336,6 +361,11 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': '長さ不明のリクエストはディスクを優先',
   },
   ru: {
+    'Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.': 'Требуется совместимость passthrough AWS Bedrock и passthrough запросов. Прямой passthrough пользователя не применяется.',
+    'Enable AWS context-management beta': 'Включить beta context-management для AWS',
+    'Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.': 'Добавлять beta при наличии context_management. Только для каналов AWS; прямой passthrough пользователя исключён.',
+    'AWS context-management beta models': 'Модели AWS для beta context-management',
+    'JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.': 'JSON-массив glob-шаблонов ID моделей AWS Bedrock, для которых разрешено добавление beta.',
     "RPM / TPM": "RPM / TPM",
     "Bedrock model rate limits": "Лимиты моделей Bedrock",
     "Use mapped upstream model names. Model limits apply in addition to the channel ceiling; unlisted models use channel limits.": "Укажите имена моделей после сопоставления. Лимиты модели действуют вместе с общим лимитом канала; для остальных моделей действует только лимит канала.",
@@ -395,6 +425,11 @@ const newKeys = {
     'Use Disk First for Unknown-Length Requests': 'Для запросов неизвестной длины сначала использовать диск',
   },
   vi: {
+    'Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.': 'Cần bật khả năng tương thích passthrough AWS Bedrock và passthrough yêu cầu. Không áp dụng cho passthrough trực tiếp của người dùng.',
+    'Enable AWS context-management beta': 'Bật beta context-management cho AWS',
+    'Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.': 'Tự thêm beta tương ứng khi có context_management. Chỉ áp dụng cho kênh AWS; không áp dụng với chuyển tiếp trực tiếp của người dùng.',
+    'AWS context-management beta models': 'Mô hình AWS cho beta context-management',
+    'JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.': 'Mảng JSON chứa mẫu glob ID mô hình AWS Bedrock được phép tự động thêm beta.',
     "RPM / TPM": "RPM / TPM",
     "Bedrock model rate limits": "Giới hạn theo mô hình Bedrock",
     "Use mapped upstream model names. Model limits apply in addition to the channel ceiling; unlisted models use channel limits.": "Dùng tên mô hình thượng nguồn sau ánh xạ. Áp dụng đồng thời giới hạn mô hình và kênh; mô hình chưa cấu hình chỉ dùng giới hạn kênh.",

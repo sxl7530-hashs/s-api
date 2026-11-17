@@ -493,6 +493,9 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 			if bodyErr != nil {
 				return nil, types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeBadRequestBody, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
+			if info.AwsPassthroughCompatibility {
+				body = ensureAwsContextManagementBeta(body, awsModelId)
+			}
 			if info.IsStream {
 				a.AwsReq = &bedrockruntime.InvokeModelWithResponseStreamInput{ModelId: aws.String(awsModelId), Accept: aws.String("application/json"), ContentType: aws.String("application/json"), Body: body}
 			} else {
@@ -519,6 +522,9 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 			if err != nil {
 				return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeBadRequestBody, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
+			if info.AwsPassthroughCompatibility {
+				awsReq.Body = ensureAwsContextManagementBeta(awsReq.Body, awsModelId)
+			}
 			a.AwsReq = awsReq
 			return nil, nil
 		} else {
@@ -535,10 +541,41 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 			if err != nil {
 				return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeBadRequestBody, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
+			if info.AwsPassthroughCompatibility {
+				awsReq.Body = ensureAwsContextManagementBeta(awsReq.Body, awsModelId)
+			}
 			a.AwsReq = awsReq
 			return nil, nil
 		}
 	}
+}
+
+const awsContextManagementBeta = "context-management-2025-06-27"
+
+func ensureAwsContextManagementBeta(body []byte, modelID string) []byte {
+	if !model_setting.ShouldAutoAddAwsContextManagementBeta(modelID) || !ojson.ValidBytes(body) {
+		return body
+	}
+	doc := ojson.NewDoc(body)
+	if !doc.Get("@this").IsObject() || !doc.Get("context_management").Exists() {
+		return body
+	}
+
+	betaArray := doc.Get("anthropic_beta")
+	betas := make([]string, 0, 1)
+	if betaArray.Exists() {
+		if !betaArray.IsArray() || common.Unmarshal([]byte(betaArray.Raw), &betas) != nil {
+			return body
+		}
+		if slices.Contains(betas, awsContextManagementBeta) {
+			return body
+		}
+	}
+	betas = append(betas, awsContextManagementBeta)
+	if err := relaycommon.SetJSONMember(doc, "", "anthropic_beta", betas); err != nil {
+		return body
+	}
+	return doc.Bytes()
 }
 
 // prepareAwsCompatibilityBody patches only envelope fields. RawMessage preserves

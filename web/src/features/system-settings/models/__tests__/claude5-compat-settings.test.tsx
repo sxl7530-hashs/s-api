@@ -7,10 +7,23 @@ import { Claude5CompatSettings } from '../claude5-compat-settings'
 
 function SettingsFixture(props: { initial?: string }) {
   const [value, setValue] = useState(props.initial ?? '{}')
+  const [autoBeta, setAutoBeta] = useState(true)
+  const [models, setModels] = useState(
+    '["*claude-haiku-4-5*", "*claude-sonnet-4-5*"]'
+  )
   return (
     <>
-      <Claude5CompatSettings value={value} onChange={setValue} />
+      <Claude5CompatSettings
+        value={value}
+        onChange={setValue}
+        awsContextManagementAutoBeta={autoBeta}
+        onAwsContextManagementAutoBetaChange={setAutoBeta}
+        awsContextManagementBetaModels={models}
+        onAwsContextManagementBetaModelsChange={setModels}
+      />
       <output data-testid='saved-settings'>{value}</output>
+      <output data-testid='auto-beta'>{String(autoBeta)}</output>
+      <output data-testid='beta-models'>{models}</output>
     </>
   )
 }
@@ -62,6 +75,27 @@ describe('Bedrock compatibility settings', () => {
       })
     ).not.toBeInTheDocument()
     expect(savedSettings().apply_to_passthrough_users).toBeUndefined()
+  })
+  test('places context-management beta controls inside the collapsed AWS compatibility section', async () => {
+    render(<SettingsFixture />)
+    const user = userEvent.setup()
+    expect(
+      screen.queryByRole('switch', {
+        name: 'Enable AWS context-management beta',
+      })
+    ).not.toBeInTheDocument()
+    await user.click(
+      screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
+    )
+    const toggle = screen.getByRole('switch', {
+      name: 'Enable AWS context-management beta',
+    })
+    expect(toggle).toBeChecked()
+    await user.click(toggle)
+    expect(screen.getByTestId('auto-beta')).toHaveTextContent('false')
+    expect(
+      screen.getByLabelText('AWS context-management beta models')
+    ).toBeInTheDocument()
   })
   test('exposes version warnings and independently configures thinking budget mappings', async () => {
     render(<SettingsFixture />)

@@ -44,7 +44,14 @@ function renderStatistics(settings = false) {
   return render(
     <QueryClientProvider client={client}>
       {settings ? (
-        <Claude5CompatSettings value='{}' onChange={() => {}} />
+        <Claude5CompatSettings
+          value='{}'
+          onChange={() => {}}
+          awsContextManagementAutoBeta={false}
+          onAwsContextManagementAutoBetaChange={() => {}}
+          awsContextManagementBetaModels='[]'
+          onAwsContextManagementBetaModelsChange={() => {}}
+        />
       ) : (
         <Claude5CompatStatistics />
       )}

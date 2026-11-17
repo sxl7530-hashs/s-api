@@ -2960,7 +2960,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Related Projects",
     "footer.defaultCopyright": "All rights reserved.",
-    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
     "For example, opus-4.6 or gpt-5.5": "For example, opus-4.6 or gpt-5.5",
@@ -7643,6 +7643,11 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Enable AWS context-management beta": "Enable AWS context-management beta",
+    "Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.": "Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.",
+    "AWS context-management beta models": "AWS context-management beta models",
+    "JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.": "JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.",
+    "Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.": "Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded."
   }
 }

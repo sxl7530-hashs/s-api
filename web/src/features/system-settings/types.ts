@@ -238,6 +238,8 @@ export type ModelSettings = {
   'global.pass_through_request_enabled': boolean
   'global.aws_beta_filter_enabled': boolean
   'global.aws_beta_blacklist': string
+  'global.aws_context_management_auto_beta': boolean
+  'global.aws_context_management_beta_models': string
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
   'global.azure_force_background_enabled': boolean

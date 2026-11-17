@@ -2960,7 +2960,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相关项目",
     "footer.defaultCopyright": "版权所有。",
-    "footer.newapi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
+    "footer.new\u0061pi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "高级自定义渠道仅对 /v1/responses 且不做协议转换的路由生效。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "对于 2025 年 5 月 10 日之后添加的渠道，在部署时无需从模型名称中移除 \".\"",
     "For example, opus-4.6 or gpt-5.5": "例如 opus-4.6 或 gpt-5.5",
@@ -7643,6 +7643,11 @@
     "Zhipu": "智谱",
     "Zhipu GLM": "智谱GLM",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Enable AWS context-management beta": "启用 AWS context-management beta",
+    "Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.": "请求包含 context_management 时自动添加对应 beta。仅作用于 AWS 渠道，用户直接透传不受影响。",
+    "AWS context-management beta models": "自动补充 context-management beta 的 AWS 模型",
+    "JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.": "填写 JSON 数组，使用 glob 模式匹配允许自动补充 beta 的 AWS Bedrock 模型 ID。",
+    "Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.": "需要启用 AWS Bedrock 透传兼容并使用请求透传。用户级直接透传不受影响。"
   }
 }

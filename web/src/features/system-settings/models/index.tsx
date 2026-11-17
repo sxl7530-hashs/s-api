@@ -30,6 +30,9 @@ const defaultModelSettings: ModelSettings = {
   'global.pass_through_request_enabled': false,
   'global.aws_beta_filter_enabled': true,
   'global.aws_beta_blacklist': '[]',
+  'global.aws_context_management_auto_beta': true,
+  'global.aws_context_management_beta_models':
+    '["*claude-haiku-4-5*", "*claude-sonnet-4-5*"]',
   'global.thinking_model_blacklist': '[]',
   'global.chat_completions_to_responses_policy': '{}',
   'global.azure_force_background_enabled': false,

@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -852,6 +853,201 @@ func TestAwsFormattedRequestFiltersBodyBetasAndHonorsHeaderOverride(t *testing.T
 			}
 			require.NoError(t, common.Unmarshal(encoded, &payload))
 			assert.Equal(t, tc.want, payload.Betas)
+		})
+	}
+}
+
+func TestEnsureAwsContextManagementBeta(t *testing.T) {
+	settings := model_setting.GetGlobalSettings()
+	common.OptionMapRWMutex.Lock()
+	previousEnabled := settings.AwsContextManagementAutoBeta
+	previousModels := slices.Clone(settings.AwsContextManagementBetaModels)
+	previousBlacklist := slices.Clone(settings.AwsBetaBlacklist)
+	settings.AwsContextManagementAutoBeta = true
+	settings.AwsContextManagementBetaModels = []string{"*claude-haiku-4-5*", "*claude-sonnet-4-5*"}
+	settings.AwsBetaBlacklist = nil
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		defer common.OptionMapRWMutex.Unlock()
+		settings.AwsContextManagementAutoBeta = previousEnabled
+		settings.AwsContextManagementBetaModels = previousModels
+		settings.AwsBetaBlacklist = previousBlacklist
+	})
+
+	for _, tc := range []struct {
+		name    string
+		modelID string
+		body    string
+		setup   func()
+		want    string
+	}{
+		{
+			name:    "eligible haiku adds beta and preserves other bytes",
+			modelID: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+			body:    `{"before":{"n":1},"context_management":{"edits":[]},"after":false}`,
+			want:    `{"before":{"n":1},"context_management":{"edits":[]},"after":false,"anthropic_beta":["context-management-2025-06-27"]}`,
+		},
+		{
+			name:    "existing beta is appended",
+			modelID: "anthropic.claude-sonnet-4-5-20250929-v1:0",
+			body:    `{"anthropic_beta":["other-beta"],"context_management":{},"field":9007199254740993}`,
+			want:    `{"anthropic_beta":["other-beta","context-management-2025-06-27"],"context_management":{},"field":9007199254740993}`,
+		},
+		{
+			name:    "existing context beta stays byte identical",
+			modelID: "anthropic.claude-haiku-4-5-20251001-v1:0",
+			body:    `{"context_management":{},"anthropic_beta":["context-management-2025-06-27","other"]}`,
+			want:    `{"context_management":{},"anthropic_beta":["context-management-2025-06-27","other"]}`,
+		},
+		{
+			name:    "missing context management stays byte identical",
+			modelID: "anthropic.claude-haiku-4-5-20251001-v1:0",
+			body:    `{"other":true,"anthropic_beta":["other"]}`,
+			want:    `{"other":true,"anthropic_beta":["other"]}`,
+		},
+		{
+			name:    "stripped claude opus five body stays unchanged",
+			modelID: "anthropic.claude-opus-5-5-20261101-v1:0",
+			body:    `{"messages":[],"anthropic_beta":["other"]}`,
+			want:    `{"messages":[],"anthropic_beta":["other"]}`,
+		},
+		{
+			name:    "model outside allowlist stays unchanged",
+			modelID: "anthropic.claude-opus-4-5-20251101-v1:0",
+			body:    `{"context_management":{},"messages":[]}`,
+			want:    `{"context_management":{},"messages":[]}`,
+		},
+		{
+			name:    "blacklisted beta is not inserted",
+			modelID: "anthropic.claude-haiku-4-5-20251001-v1:0",
+			body:    `{"context_management":{},"messages":[]}`,
+			setup: func() {
+				common.OptionMapRWMutex.Lock()
+				settings.AwsBetaBlacklist = []string{awsContextManagementBeta}
+				common.OptionMapRWMutex.Unlock()
+			},
+			want: `{"context_management":{},"messages":[]}`,
+		},
+		{
+			name:    "disabled setting keeps body unchanged",
+			modelID: "anthropic.claude-haiku-4-5-20251001-v1:0",
+			body:    `{"context_management":{},"messages":[]}`,
+			setup: func() {
+				common.OptionMapRWMutex.Lock()
+				settings.AwsBetaBlacklist = nil
+				settings.AwsContextManagementAutoBeta = false
+				common.OptionMapRWMutex.Unlock()
+			},
+			want: `{"context_management":{},"messages":[]}`,
+		},
+		{
+			name:    "malformed beta list stays unchanged",
+			modelID: "anthropic.claude-haiku-4-5-20251001-v1:0",
+			body:    `{"context_management":{},"anthropic_beta":"not-an-array"}`,
+			setup: func() {
+				common.OptionMapRWMutex.Lock()
+				settings.AwsContextManagementAutoBeta = true
+				settings.AwsBetaBlacklist = nil
+				common.OptionMapRWMutex.Unlock()
+			},
+			want: `{"context_management":{},"anthropic_beta":"not-an-array"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			common.OptionMapRWMutex.Lock()
+			settings.AwsContextManagementAutoBeta = true
+			settings.AwsBetaBlacklist = nil
+			common.OptionMapRWMutex.Unlock()
+			if tc.setup != nil {
+				tc.setup()
+			}
+			got := ensureAwsContextManagementBeta([]byte(tc.body), tc.modelID)
+			assert.Equal(t, tc.want, string(got))
+		})
+	}
+}
+
+func TestAwsDirectPassthroughDoesNotAddContextManagementBeta(t *testing.T) {
+	settings := model_setting.GetGlobalSettings()
+	common.OptionMapRWMutex.Lock()
+	previousEnabled := settings.AwsContextManagementAutoBeta
+	settings.AwsContextManagementAutoBeta = true
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		defer common.OptionMapRWMutex.Unlock()
+		settings.AwsContextManagementAutoBeta = previousEnabled
+	})
+
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+			body := `{"model":"claude-haiku-4-5-20251001","stream":false,"max_tokens":16,"messages":[{"role":"user","content":"hi"}],"context_management":{"edits":[]}}`
+			c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+			c.Request.Body = io.NopCloser(strings.NewReader(body))
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			info := newAwsTestRelayInfo()
+			info.ApiKey = "access-key|secret-key|us-east-1"
+			info.IsStream = stream
+			info.OriginModelName = "claude-haiku-4-5-20251001"
+			info.UpstreamModelName = "anthropic.claude-haiku-4-5-20251001-v1:0"
+			info.ChannelMeta.UpstreamModelName = info.UpstreamModelName
+			info.UserSetting.AwsDirectPassthrough = true
+			info.ChannelSetting.PassThroughBodyEnabled = true
+			adaptor := &Adaptor{}
+			_, err := doAwsClientRequest(c, info, adaptor, strings.NewReader(body))
+			require.NoError(t, err)
+			var outbound []byte
+			if stream {
+				outbound = adaptor.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput).Body
+			} else {
+				outbound = adaptor.AwsReq.(*bedrockruntime.InvokeModelInput).Body
+			}
+			assert.NotContains(t, string(outbound), awsContextManagementBeta)
+			assert.Contains(t, string(outbound), `"context_management"`)
+		})
+	}
+}
+
+func TestAwsContextManagementBetaRequiresPassthroughCompatibility(t *testing.T) {
+	settings := model_setting.GetGlobalSettings()
+	common.OptionMapRWMutex.Lock()
+	previousEnabled := settings.AwsContextManagementAutoBeta
+	previousBlacklist := slices.Clone(settings.AwsBetaBlacklist)
+	settings.AwsContextManagementAutoBeta = true
+	settings.AwsBetaBlacklist = nil
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		defer common.OptionMapRWMutex.Unlock()
+		settings.AwsContextManagementAutoBeta = previousEnabled
+		settings.AwsBetaBlacklist = previousBlacklist
+	})
+
+	for _, compatibility := range []bool{false, true} {
+		t.Run(fmt.Sprintf("compatibility=%v", compatibility), func(t *testing.T) {
+			body := `{"model":"claude-haiku-4-5-20251001","stream":false,"max_tokens":16,"messages":[{"role":"user","content":"hi"}],"context_management":{"edits":[]}}`
+			c := newAwsTestContext(httptest.NewRecorder(), t.Context())
+			c.Request.Body = io.NopCloser(strings.NewReader(body))
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			info := newAwsTestRelayInfo()
+			info.ApiKey = "access-key|secret-key|us-east-1"
+			info.IsStream = false
+			info.OriginModelName = "claude-haiku-4-5-20251001"
+			info.UpstreamModelName = "anthropic.claude-haiku-4-5-20251001-v1:0"
+			info.ChannelMeta.UpstreamModelName = info.UpstreamModelName
+			info.ChannelSetting.PassThroughBodyEnabled = true
+			info.AwsPassthroughCompatibility = compatibility
+			adaptor := &Adaptor{}
+			_, err := doAwsClientRequest(c, info, adaptor, strings.NewReader(body))
+			require.NoError(t, err)
+			req, ok := adaptor.AwsReq.(*bedrockruntime.InvokeModelInput)
+			require.True(t, ok)
+			if compatibility {
+				assert.Contains(t, string(req.Body), awsContextManagementBeta)
+			} else {
+				assert.NotContains(t, string(req.Body), awsContextManagementBeta)
+			}
 		})
 	}
 }
