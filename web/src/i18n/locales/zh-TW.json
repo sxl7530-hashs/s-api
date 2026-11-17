@@ -7648,6 +7648,7 @@
     "Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.": "請求包含 context_management 時自動新增對應 beta。僅作用於 AWS 渠道，使用者直接透傳不受影響。",
     "AWS context-management beta models": "自動新增 context-management beta 的 AWS 模型",
     "JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.": "填寫 JSON 陣列，使用 glob 模式比對允許自動新增 beta 的 AWS Bedrock 模型 ID。",
-    "Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.": "需要啟用 AWS Bedrock 直通相容並使用請求直通。使用者層級直接直通不受影響。"
+    "Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.": "需要啟用 AWS Bedrock 直通相容並使用請求直通。使用者層級直接直通不受影響。",
+    "AWS anthropic-beta handling": "AWS anthropic-beta 處理"
   }
 }

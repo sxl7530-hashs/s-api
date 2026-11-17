@@ -7648,6 +7648,7 @@
     "Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.": "context_management がある場合に対応する beta を追加します。AWS チャネルのみが対象で、ユーザーの直接パススルーは除外されます。",
     "AWS context-management beta models": "自動追加対象の AWS context-management モデル",
     "JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.": "自動追加を許可する AWS Bedrock モデル ID の glob パターンを JSON 配列で指定します。",
-    "Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.": "AWS Bedrock の passthrough 互換性とリクエスト passthrough が必要です。ユーザーの直接 passthrough は対象外です。"
+    "Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.": "AWS Bedrock の passthrough 互換性とリクエスト passthrough が必要です。ユーザーの直接 passthrough は対象外です。",
+    "AWS anthropic-beta handling": "AWS anthropic-beta の処理"
   }
 }

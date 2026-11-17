@@ -5,12 +5,14 @@ import { describe, expect, test } from 'vitest'
 
 import { Claude5CompatSettings } from '../claude5-compat-settings'
 
-function SettingsFixture(props: { initial?: string }) {
+function SettingsFixture(props: { initial?: string; blacklistError?: string }) {
   const [value, setValue] = useState(props.initial ?? '{}')
   const [autoBeta, setAutoBeta] = useState(true)
   const [models, setModels] = useState(
     '["*claude-haiku-4-5*", "*claude-sonnet-4-5*"]'
   )
+  const [betaFilter, setBetaFilter] = useState(true)
+  const [blacklist, setBlacklist] = useState('["prompt-caching-2024-07-31"]')
   return (
     <>
       <Claude5CompatSettings
@@ -20,10 +22,16 @@ function SettingsFixture(props: { initial?: string }) {
         onAwsContextManagementAutoBetaChange={setAutoBeta}
         awsContextManagementBetaModels={models}
         onAwsContextManagementBetaModelsChange={setModels}
+        awsBetaFilterEnabled={betaFilter}
+        onAwsBetaFilterEnabledChange={setBetaFilter}
+        awsBetaBlacklist={blacklist}
+        onAwsBetaBlacklistChange={setBlacklist}
+        awsBetaBlacklistError={props.blacklistError}
       />
       <output data-testid='saved-settings'>{value}</output>
       <output data-testid='auto-beta'>{String(autoBeta)}</output>
       <output data-testid='beta-models'>{models}</output>
+      <output data-testid='beta-filter'>{String(betaFilter)}</output>
     </>
   )
 }
@@ -76,7 +84,7 @@ describe('Bedrock compatibility settings', () => {
     ).not.toBeInTheDocument()
     expect(savedSettings().apply_to_passthrough_users).toBeUndefined()
   })
-  test('places context-management beta controls inside the collapsed AWS compatibility section', async () => {
+  test('places beta controls in a collapsed group inside the AWS compatibility section', async () => {
     render(<SettingsFixture />)
     const user = userEvent.setup()
     expect(
@@ -87,6 +95,16 @@ describe('Bedrock compatibility settings', () => {
     await user.click(
       screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
     )
+    const group = screen.getByRole('button', {
+      name: 'AWS anthropic-beta handling',
+    })
+    expect(group).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      screen.queryByRole('switch', {
+        name: 'Enable AWS anthropic-beta Blacklist',
+      })
+    ).not.toBeInTheDocument()
+    await user.click(group)
     const toggle = screen.getByRole('switch', {
       name: 'Enable AWS context-management beta',
     })
@@ -96,6 +114,26 @@ describe('Bedrock compatibility settings', () => {
     expect(
       screen.getByLabelText('AWS context-management beta models')
     ).toBeInTheDocument()
+    await user.click(
+      screen.getByRole('switch', {
+        name: 'Enable AWS anthropic-beta Blacklist',
+      })
+    )
+    expect(screen.getByTestId('beta-filter')).toHaveTextContent('false')
+    expect(
+      screen.getByLabelText('AWS anthropic-beta Blacklist')
+    ).toBeInTheDocument()
+  })
+  test('shows blacklist validation errors inside the beta group', async () => {
+    render(<SettingsFixture blacklistError='Invalid JSON format' />)
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('button', { name: /AWS Claude 5 Compatibility/ })
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'AWS anthropic-beta handling' })
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('Invalid JSON format')
   })
   test('exposes version warnings and independently configures thinking budget mappings', async () => {
     render(<SettingsFixture />)

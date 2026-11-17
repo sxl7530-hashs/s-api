@@ -7648,6 +7648,7 @@
     "Add the context-management beta when context_management is present. AWS channels only; direct passthrough users are excluded.": "Ajoute le beta correspondant lorsque context_management est présent. Canaux AWS uniquement ; les utilisateurs en passthrough direct sont exclus.",
     "AWS context-management beta models": "Modèles AWS pour le beta context-management",
     "JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.": "Tableau JSON de motifs glob d’identifiants de modèles AWS Bedrock autorisés.",
-    "Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.": "Nécessite la compatibilité passthrough AWS Bedrock et le passthrough des requêtes. Le passthrough direct utilisateur est exclu."
+    "Requires AWS Bedrock Passthrough Compatibility and request passthrough. AWS direct passthrough users are excluded.": "Nécessite la compatibilité passthrough AWS Bedrock et le passthrough des requêtes. Le passthrough direct utilisateur est exclu.",
+    "AWS anthropic-beta handling": "Gestion des anthropic-beta AWS"
   }
 }

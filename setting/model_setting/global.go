@@ -265,6 +265,15 @@ var defaultOpenaiSettings = GlobalSettings{
 	AwsContextManagementBetaModels: []string{
 		"*claude-haiku-4-5*",
 		"*claude-sonnet-4-5*",
+		"*claude-opus-4-6*",
+		"*claude-opus-4-7*",
+		"*claude-opus-4-8*",
+		"*claude-sonnet-4-6*",
+		"*claude-opus-5*",
+		"*claude-sonnet-5*",
+		"*claude-haiku-5*",
+		"*claude-fable-5*",
+		"*claude-mythos-5*",
 	},
 	ChannelNameDisplay: `{"enabled":false,"mappings":{}}`,
 }
@@ -337,30 +346,33 @@ func (s *GlobalSettings) FilterAwsBetas(betas []string) []string {
 	return filtered
 }
 
-func ShouldAutoAddAwsContextManagementBeta(modelID string) bool {
+// AwsContextManagementAutoBetas returns the subset of required betas the
+// gateway may add for modelID: auto insertion must be enabled, the model must
+// match AwsContextManagementBetaModels, and blacklisted betas are never added.
+func AwsContextManagementAutoBetas(modelID string, required []string) []string {
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
 
 	if !globalSettings.AwsContextManagementAutoBeta {
-		return false
+		return nil
 	}
-	matched := false
-	for _, pattern := range globalSettings.AwsContextManagementBetaModels {
+	matched := slices.ContainsFunc(globalSettings.AwsContextManagementBetaModels, func(pattern string) bool {
 		ok, err := path.Match(strings.TrimSpace(pattern), modelID)
-		if err == nil && ok {
-			matched = true
-			break
-		}
-	}
+		return err == nil && ok
+	})
 	if !matched {
-		return false
+		return nil
 	}
-	for _, beta := range globalSettings.AwsBetaBlacklist {
-		if strings.TrimSpace(beta) == "context-management-2025-06-27" {
-			return false
+	allowed := make([]string, 0, len(required))
+	for _, beta := range required {
+		blocked := slices.ContainsFunc(globalSettings.AwsBetaBlacklist, func(item string) bool {
+			return strings.TrimSpace(item) == beta
+		})
+		if !blocked {
+			allowed = append(allowed, beta)
 		}
 	}
-	return true
+	return allowed
 }
 
 const thinkingBlacklistRegexPrefix = "re:"

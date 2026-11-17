@@ -864,7 +864,7 @@ func TestEnsureAwsContextManagementBeta(t *testing.T) {
 	previousModels := slices.Clone(settings.AwsContextManagementBetaModels)
 	previousBlacklist := slices.Clone(settings.AwsBetaBlacklist)
 	settings.AwsContextManagementAutoBeta = true
-	settings.AwsContextManagementBetaModels = []string{"*claude-haiku-4-5*", "*claude-sonnet-4-5*"}
+	settings.AwsContextManagementBetaModels = []string{"*claude-haiku-4-5*", "*claude-sonnet-4-5*", "*claude-opus-4-7*"}
 	settings.AwsBetaBlacklist = nil
 	common.OptionMapRWMutex.Unlock()
 	t.Cleanup(func() {
@@ -911,6 +911,41 @@ func TestEnsureAwsContextManagementBeta(t *testing.T) {
 			modelID: "anthropic.claude-opus-5-5-20261101-v1:0",
 			body:    `{"messages":[],"anthropic_beta":["other"]}`,
 			want:    `{"messages":[],"anthropic_beta":["other"]}`,
+		},
+		{
+			name:    "clear tool uses edit adds context management beta",
+			modelID: "global.anthropic.claude-opus-4-7",
+			body:    `{"context_management":{"edits":[{"type":"clear_tool_uses_20250919"}]}}`,
+			want:    `{"context_management":{"edits":[{"type":"clear_tool_uses_20250919"}]},"anthropic_beta":["context-management-2025-06-27"]}`,
+		},
+		{
+			name:    "compact edit adds compaction beta only",
+			modelID: "global.anthropic.claude-opus-4-7",
+			body:    `{"context_management":{"edits":[{"type":"compact_20260112"}]}}`,
+			want:    `{"context_management":{"edits":[{"type":"compact_20260112"}]},"anthropic_beta":["compact-2026-01-12"]}`,
+		},
+		{
+			name:    "mixed edits add both betas once",
+			modelID: "global.anthropic.claude-opus-4-7",
+			body:    `{"context_management":{"edits":[{"type":"clear_thinking_20251015"},{"type":"compact_20260112"},{"type":"clear_tool_uses_20250919"}]}}`,
+			want:    `{"context_management":{"edits":[{"type":"clear_thinking_20251015"},{"type":"compact_20260112"},{"type":"clear_tool_uses_20250919"}]},"anthropic_beta":["context-management-2025-06-27","compact-2026-01-12"]}`,
+		},
+		{
+			name:    "only the missing beta is appended",
+			modelID: "global.anthropic.claude-opus-4-7",
+			body:    `{"anthropic_beta":["compact-2026-01-12"],"context_management":{"edits":[{"type":"compact_20260112"},{"type":"clear_tool_uses_20250919"}]}}`,
+			want:    `{"anthropic_beta":["compact-2026-01-12","context-management-2025-06-27"],"context_management":{"edits":[{"type":"compact_20260112"},{"type":"clear_tool_uses_20250919"}]}}`,
+		},
+		{
+			name:    "blacklisted compaction beta is skipped while context beta is added",
+			modelID: "global.anthropic.claude-opus-4-7",
+			body:    `{"context_management":{"edits":[{"type":"compact_20260112"},{"type":"clear_tool_uses_20250919"}]}}`,
+			setup: func() {
+				common.OptionMapRWMutex.Lock()
+				settings.AwsBetaBlacklist = []string{awsCompactionBeta}
+				common.OptionMapRWMutex.Unlock()
+			},
+			want: `{"context_management":{"edits":[{"type":"compact_20260112"},{"type":"clear_tool_uses_20250919"}]},"anthropic_beta":["context-management-2025-06-27"]}`,
 		},
 		{
 			name:    "model outside allowlist stays unchanged",

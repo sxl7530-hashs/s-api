@@ -550,10 +550,18 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 	}
 }
 
-const awsContextManagementBeta = "context-management-2025-06-27"
+const (
+	awsContextManagementBeta = "context-management-2025-06-27"
+	awsCompactionBeta        = "compact-2026-01-12"
+)
 
+// ensureAwsContextManagementBeta adds the Bedrock beta that each
+// context_management edit strategy requires. Bedrock rejects the field with
+// "Extra inputs are not permitted" unless the matching beta is present:
+// clear_* edits need context-management-2025-06-27 and compact_* edits need
+// compact-2026-01-12.
 func ensureAwsContextManagementBeta(body []byte, modelID string) []byte {
-	if !model_setting.ShouldAutoAddAwsContextManagementBeta(modelID) || !ojson.ValidBytes(body) {
+	if !ojson.ValidBytes(body) {
 		return body
 	}
 	doc := ojson.NewDoc(body)
@@ -561,17 +569,44 @@ func ensureAwsContextManagementBeta(body []byte, modelID string) []byte {
 		return body
 	}
 
+	required := make([]string, 0, 2)
+	edits := doc.Get("context_management.edits")
+	if edits.IsArray() {
+		for _, edit := range edits.Array() {
+			beta := awsContextManagementBeta
+			if editType := edit.Get("type"); editType.Type == ojson.String && strings.HasPrefix(editType.Str, "compact_") {
+				beta = awsCompactionBeta
+			}
+			if !slices.Contains(required, beta) {
+				required = append(required, beta)
+			}
+		}
+	}
+	if len(required) == 0 {
+		required = append(required, awsContextManagementBeta)
+	}
+	required = model_setting.AwsContextManagementAutoBetas(modelID, required)
+	if len(required) == 0 {
+		return body
+	}
+
 	betaArray := doc.Get("anthropic_beta")
-	betas := make([]string, 0, 1)
+	betas := make([]string, 0, len(required))
 	if betaArray.Exists() {
 		if !betaArray.IsArray() || common.Unmarshal([]byte(betaArray.Raw), &betas) != nil {
 			return body
 		}
-		if slices.Contains(betas, awsContextManagementBeta) {
-			return body
+	}
+	changed := false
+	for _, beta := range required {
+		if !slices.Contains(betas, beta) {
+			betas = append(betas, beta)
+			changed = true
 		}
 	}
-	betas = append(betas, awsContextManagementBeta)
+	if !changed {
+		return body
+	}
 	if err := relaycommon.SetJSONMember(doc, "", "anthropic_beta", betas); err != nil {
 		return body
 	}

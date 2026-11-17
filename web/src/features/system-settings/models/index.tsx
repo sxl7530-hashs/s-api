@@ -32,7 +32,7 @@ const defaultModelSettings: ModelSettings = {
   'global.aws_beta_blacklist': '[]',
   'global.aws_context_management_auto_beta': true,
   'global.aws_context_management_beta_models':
-    '["*claude-haiku-4-5*", "*claude-sonnet-4-5*"]',
+    '["*claude-haiku-4-5*", "*claude-sonnet-4-5*", "*claude-opus-4-6*", "*claude-opus-4-7*", "*claude-opus-4-8*", "*claude-sonnet-4-6*", "*claude-opus-5*", "*claude-sonnet-5*", "*claude-haiku-5*", "*claude-fable-5*", "*claude-mythos-5*"]',
   'global.thinking_model_blacklist': '[]',
   'global.chat_completions_to_responses_policy': '{}',
   'global.azure_force_background_enabled': false,

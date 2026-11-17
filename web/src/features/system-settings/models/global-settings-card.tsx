@@ -143,7 +143,7 @@ const flattenGlobalValues = (
     values.global.aws_context_management_auto_beta,
   'global.aws_context_management_beta_models': normalizeJsonText(
     values.global.aws_context_management_beta_models,
-    '["*claude-haiku-4-5*", "*claude-sonnet-4-5*"]'
+    '["*claude-haiku-4-5*", "*claude-sonnet-4-5*", "*claude-opus-4-6*", "*claude-opus-4-7*", "*claude-opus-4-8*", "*claude-sonnet-4-6*", "*claude-opus-5*", "*claude-sonnet-5*", "*claude-haiku-5*", "*claude-fable-5*", "*claude-mythos-5*"]'
   ),
   'global.thinking_model_blacklist': normalizeJsonText(
     values.global.thinking_model_blacklist,
@@ -275,6 +275,28 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
                       { shouldDirty: true, shouldValidate: true }
                     )
                   }
+                  awsContextManagementBetaModelsError={
+                    form.formState.errors.global
+                      ?.aws_context_management_beta_models?.message
+                  }
+                  awsBetaFilterEnabled={form.watch(
+                    'global.aws_beta_filter_enabled'
+                  )}
+                  onAwsBetaFilterEnabledChange={(value) =>
+                    form.setValue('global.aws_beta_filter_enabled', value, {
+                      shouldDirty: true,
+                    })
+                  }
+                  awsBetaBlacklist={form.watch('global.aws_beta_blacklist')}
+                  onAwsBetaBlacklistChange={(value) =>
+                    form.setValue('global.aws_beta_blacklist', value, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    })
+                  }
+                  awsBetaBlacklistError={
+                    form.formState.errors.global?.aws_beta_blacklist?.message
+                  }
                 />
                 <FormMessage />
               </FormItem>
@@ -308,31 +330,6 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
 
           <FormField
             control={form.control}
-            name='global.aws_beta_filter_enabled'
-            render={({ field }) => (
-              <SettingsSwitchItem>
-                <SettingsSwitchContent>
-                  <FormLabel>
-                    {t('Enable AWS anthropic-beta Blacklist')}
-                  </FormLabel>
-                  <FormDescription>
-                    {t(
-                      'When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.'
-                    )}
-                  </FormDescription>
-                </SettingsSwitchContent>
-                <FormControl>
-                  <Switch
-                    checked={field.value}
-                    onCheckedChange={field.onChange}
-                  />
-                </FormControl>
-              </SettingsSwitchItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
             name='global.aws_usage_metrics_enabled'
             render={({ field }) => (
               <SettingsSwitchItem>
@@ -351,33 +348,6 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
                   />
                 </FormControl>
               </SettingsSwitchItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name='global.aws_beta_blacklist'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('AWS anthropic-beta Blacklist')}</FormLabel>
-                <FormControl>
-                  <JsonCodeEditor
-                    value={field.value}
-                    onChange={(value) => field.onChange(value)}
-                    name={field.name}
-                    onBlur={field.onBlur}
-                    textareaRef={field.ref}
-                    placeholder='["prompt-caching-2024-07-31", "advanced-tool-use-2025-11-20"]'
-                    heightClassName='h-32 min-h-32 max-h-32'
-                  />
-                </FormControl>
-                <FormDescription>
-                  {t(
-                    'anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.'
-                  )}
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
             )}
           />
 

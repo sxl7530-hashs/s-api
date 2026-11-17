@@ -51,6 +51,10 @@ function renderStatistics(settings = false) {
           onAwsContextManagementAutoBetaChange={() => {}}
           awsContextManagementBetaModels='[]'
           onAwsContextManagementBetaModelsChange={() => {}}
+          awsBetaFilterEnabled
+          onAwsBetaFilterEnabledChange={() => {}}
+          awsBetaBlacklist='[]'
+          onAwsBetaBlacklistChange={() => {}}
         />
       ) : (
         <Claude5CompatStatistics />

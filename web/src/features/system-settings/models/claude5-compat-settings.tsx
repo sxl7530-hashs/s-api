@@ -42,6 +42,12 @@ type Props = {
   onAwsContextManagementAutoBetaChange: (value: boolean) => void
   awsContextManagementBetaModels: string
   onAwsContextManagementBetaModelsChange: (value: string) => void
+  awsContextManagementBetaModelsError?: string
+  awsBetaFilterEnabled: boolean
+  onAwsBetaFilterEnabledChange: (value: boolean) => void
+  awsBetaBlacklist: string
+  onAwsBetaBlacklistChange: (value: string) => void
+  awsBetaBlacklistError?: string
 }
 
 const thinkingRules = [
@@ -176,7 +182,39 @@ export function Claude5CompatSettings(props: Props) {
             {t('Invalid JSON format')}
           </p>
         )}
-        <div className='space-y-2 rounded-md border px-3'>
+        <CompatibilityGroup title={t('AWS anthropic-beta handling')}>
+          <SettingsSwitchField
+            controlId={`${id}-beta-filter`}
+            label={t('Enable AWS anthropic-beta Blacklist')}
+            description={t(
+              'When enabled, anthropic-beta values in the blacklist below are stripped before forwarding to AWS Bedrock channels. Enabled by default.'
+            )}
+            checked={props.awsBetaFilterEnabled}
+            onCheckedChange={props.onAwsBetaFilterEnabledChange}
+          />
+          <div className='space-y-2'>
+            <Label htmlFor={`${id}-beta-blacklist`}>
+              {t('AWS anthropic-beta Blacklist')}
+            </Label>
+            <JsonCodeEditor
+              id={`${id}-beta-blacklist`}
+              value={props.awsBetaBlacklist}
+              onChange={props.onAwsBetaBlacklistChange}
+              name='aws_beta_blacklist'
+              placeholder='["prompt-caching-2024-07-31", "advanced-tool-use-2025-11-20"]'
+              heightClassName='h-32 min-h-32 max-h-32'
+            />
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'anthropic-beta values (JSON array) that AWS Bedrock does not support and must not be forwarded, for example prompt-caching-2024-07-31. Applies to AWS channels only.'
+              )}
+            </p>
+            {props.awsBetaBlacklistError && (
+              <p role='alert' className='text-destructive text-sm'>
+                {t(props.awsBetaBlacklistError)}
+              </p>
+            )}
+          </div>
           <SettingsSwitchField
             controlId={`${id}-context-management-beta`}
             label={t('Enable AWS context-management beta')}
@@ -186,7 +224,7 @@ export function Claude5CompatSettings(props: Props) {
             checked={props.awsContextManagementAutoBeta}
             onCheckedChange={props.onAwsContextManagementAutoBetaChange}
           />
-          <div className='space-y-2 pb-3'>
+          <div className='space-y-2'>
             <Label htmlFor={`${id}-context-management-models`}>
               {t('AWS context-management beta models')}
             </Label>
@@ -203,8 +241,13 @@ export function Claude5CompatSettings(props: Props) {
                 'JSON array of AWS Bedrock model ID glob patterns eligible for automatic beta insertion.'
               )}
             </p>
+            {props.awsContextManagementBetaModelsError && (
+              <p role='alert' className='text-destructive text-sm'>
+                {t(props.awsContextManagementBetaModelsError)}
+              </p>
+            )}
           </div>
-        </div>
+        </CompatibilityGroup>
         <fieldset disabled={!valid} className='space-y-3'>
           <CompatibilityGroup title={t('Scope and direct passthrough')}>
             {(['target_models', 'target_regions'] as const).map((key) => (
